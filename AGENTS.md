@@ -295,6 +295,16 @@ BREAKING CHANGE: config.yaml 必须包含 jwt.expire_hour 字段
 - 运行 `go mod tidy`，确保依赖干净
 - 涉及 API 变更时，同步更新 README.md
 
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues — 使用 `gh` CLI 操作。See `docs/agents/issue-tracker.md`.
+
+### Domain docs
+
+单仓布局（single-context）—— `CONTEXT.md` + `docs/adr/` 位于仓库根目录。See `docs/agents/domain.md`.
+
 ## Pull Request 指南
 
 - 描述变更内容与动机，并关联对应 Issue
