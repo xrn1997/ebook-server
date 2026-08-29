@@ -61,10 +61,14 @@ repository/      → 数据访问层（GORM 查询，数据库交互）
 model/           → 数据模型（GORM 实体、请求/响应结构体、错误定义）
 middleware/      → Gin 中间件（JWT 认证、CORS、日志、panic 恢复）
 pkg/             → 公共组件
+  ├── code/      → 内存验证码存储与校验
   ├── database/  → 数据库初始化与连接管理
+  ├── errcode/   → 五位字符串业务码与统一响应 helper
   ├── jwt/       → JWT token 生成与解析
-  └── logger/    → Zap 日志初始化
-sql/             → 数据库初始化脚本
+  ├── logger/    → Zap 日志初始化
+  ├── mail/      → SMTP 邮件发送
+  └── ratelimit/ → 内存固定窗口限流器
+sql/             → 数据库初始化脚本（MySQL 参考，实际用 SQLite + GORM AutoMigrate）
 ```
 
 ### 核心架构模式

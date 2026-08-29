@@ -1,3 +1,4 @@
+// Package repository 实现数据访问层，封装 GORM 数据库操作。
 package repository
 
 import (
@@ -7,8 +8,10 @@ import (
 	"gorm.io/gorm"
 )
 
+// UserRepository 用户数据访问。
 type UserRepository struct{}
 
+// NewUserRepository 创建用户仓库实例。
 func NewUserRepository() *UserRepository {
 	return &UserRepository{}
 }

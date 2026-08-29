@@ -131,6 +131,10 @@ handler 层统一使用 `errcode.Success(c, data)` 和
 
 ### 4. 账号体系
 
+> **注意**：本节已被 [ADR-0002](0002-email-based-registration-and-account-model.md) 更迭。
+> 当前主标识为 `email`，`username` 为展示用名（非唯一、注册时自动生成）。
+> 以下为原决策记录，保留作历史参考。
+
 - **主标识**：用户名（`username`），注册时必填、唯一
 - **邮箱**：注册时必填（改为 `binding:"required,email"`），
   作为密码找回唯一通道；数据库加唯一索引
@@ -139,16 +143,19 @@ handler 层统一使用 `errcode.Success(c, data)` 和
 
 ### 5. 密码管理
 
+> **注意**：「忘记密码」部分已被 ADR-0002 更迭，找回密码不再依赖 `username`，
+> 完全走邮箱。以下 `forgot-password` 请求体已更新为当前实现。
+
 **已登录改密**：`PUT /api/users/me/password`
 - 请求体 `{old_password, new_password}`
 - 服务端校验旧密码，通过后更新哈希
 
 **忘记密码**：
 1. `POST /api/auth/forgot-password/send-code` — 请求体
-   `{username, email}`，校验用户存在且邮箱匹配，生成 6 位验证码
-   （5 分钟有效，存 Redis 或内存 map），通过 SMTP 发送到邮箱
+   `{email}`，校验账号存在后生成 6 位验证码
+   （5 分钟有效，存内存 map），通过 SMTP 发送到邮箱
 2. `POST /api/auth/forgot-password/reset` — 请求体
-   `{username, code, new_password}`，校验验证码，通过后更新密码
+   `{email, code, new_password}`，校验验证码，通过后更新密码
 
 ### 6. 登录/注册响应载荷
 

@@ -6,10 +6,13 @@ import (
 	"gorm.io/gorm"
 )
 
+// Comment 评论实体（GORM 模型）。
+//
+// 每条评论属于一个用户，支持软删除。
 type Comment struct {
 	ID        uint           `json:"id" gorm:"primaryKey"`
-	UserID    uint           `json:"user_id" gorm:"index;not null"`
-	User      User           `json:"user" gorm:"foreignKey:UserID"`
+	UserID    uint           `json:"user_id" gorm:"index;not null"` // 关联 users.uid
+	User      User           `json:"user" gorm:"foreignKey:UserID"` // 所属用户（预加载）
 	Content   string         `json:"content" gorm:"type:text;not null"`
 	CreatedAt time.Time      `json:"created_at"`
 	DeletedAt gorm.DeletedAt `json:"-" gorm:"index"`

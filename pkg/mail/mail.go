@@ -1,3 +1,4 @@
+// Package mail 提供 SMTP 邮件发送能力，支持 TLS/STARTTLS。
 package mail
 
 import (

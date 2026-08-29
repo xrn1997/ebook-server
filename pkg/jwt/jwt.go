@@ -1,3 +1,4 @@
+// Package jwt 提供 JWT access token 的生成与解析。
 package jwt
 
 import (
@@ -7,6 +8,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+// Claims JWT 自定义声明，包含用户 ID 与用户名。
 type Claims struct {
 	UserID   uint   `json:"user_id"`
 	Username string `json:"username"`

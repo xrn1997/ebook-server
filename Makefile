@@ -52,9 +52,11 @@ test-user:
 test-comment:
 	go test -v -run TestComment ./...
 
-# 初始化数据库
+# 数据库初始化（项目使用 SQLite + GORM AutoMigrate，无需手动建表）
+# 以下命令仅供 MySQL 迁移参考，实际开发直接 go run main.go 即可
 db-init:
-	mysql -u root -p < sql/init.sql
+	@echo "项目使用 SQLite，表结构由 GORM AutoMigrate 自动管理"
+	@echo "如需参考 MySQL 建表脚本，请查看 sql/init.sql"
 
 # Docker 构建
 docker:
@@ -62,7 +64,7 @@ docker:
 
 # Docker 运行
 docker-run:
-	docker run -p 8080:8080 --env-file .env ebook-server
+	docker run -p 9090:9090 --env-file .env ebook-server
 
 # 格式化代码
 fmt:

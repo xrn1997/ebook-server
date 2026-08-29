@@ -1,3 +1,4 @@
+// Package database 提供数据库连接初始化与全局访问（SQLite + GORM）。
 package database
 
 import (
@@ -10,8 +11,10 @@ import (
 	"gorm.io/gorm/logger"
 )
 
+// DB 全局数据库连接实例，由 Init 初始化。
 var DB *gorm.DB
 
+// Init 初始化 SQLite 数据库连接并配置连接池。
 func Init() error {
 	dbPath := config.AppConfig.Database.Path
 	if dbPath == "" {
@@ -39,6 +42,7 @@ func Init() error {
 	return nil
 }
 
+// GetDB 返回全局数据库连接实例。
 func GetDB() *gorm.DB {
 	return DB
 }

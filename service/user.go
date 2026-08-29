@@ -5,10 +5,12 @@ import (
 	"ebook-server/repository"
 )
 
+// UserService 用户信息业务服务。
 type UserService struct {
 	userRepo *repository.UserRepository
 }
 
+// NewUserService 创建用户服务实例。
 func NewUserService() *UserService {
 	return &UserService{
 		userRepo: repository.NewUserRepository(),

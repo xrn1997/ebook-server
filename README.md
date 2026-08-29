@@ -24,7 +24,14 @@ ebook-server/
 ├── service/             # 业务逻辑
 ├── repository/          # 数据访问
 ├── pkg/                 # 公共组件
-├── sql/                 # 数据库脚本
+│   ├── code/            # 验证码存储与校验
+│   ├── database/        # 数据库连接初始化
+│   ├── errcode/         # 五位业务码与统一响应
+│   ├── jwt/             # JWT token 生成与解析
+│   ├── logger/          # Zap 日志初始化
+│   ├── mail/            # SMTP 邮件发送
+│   └── ratelimit/       # 内存限流器
+├── sql/                 # 数据库脚本（MySQL 参考，实际用 SQLite）
 ├── Dockerfile           # Docker 构建
 └── Makefile             # 常用命令
 ```
@@ -219,7 +226,7 @@ docker build -t ebook-server .
 ### 运行容器
 
 ```bash
-docker run -p 8080:8080 ebook-server
+docker run -p 9090:9090 ebook-server
 ```
 
 ## 配置说明
@@ -228,8 +235,8 @@ docker run -p 8080:8080 ebook-server
 
 ```yaml
 server:
-  port: 8080          # 服务端口
-  mode: debug         # 运行模式: debug, release, test
+  port: 9090            # 服务端口（config.yaml 默认 9090；代码默认 8080）
+  mode: debug           # 运行模式: debug, release, test
 
 database:
   path: ebook.db      # SQLite 数据库文件路径
@@ -298,18 +305,33 @@ ebook-server/
 ├── model/
 │   └── model_test.go          # 模型测试
 ├── pkg/
+│   ├── code/
+│   │   └── store_test.go      # 验证码存储测试
+│   ├── errcode/
+│   │   └── errcode_test.go    # 业务码测试
 │   ├── jwt/
 │   │   └── jwt_test.go        # JWT 工具测试
-│   └── logger/
-│       └── logger_test.go     # 日志测试
+│   └── ratelimit/
+│       └── limiter_test.go    # 限流器测试
+├── middleware/
+│   ├── auth_test.go           # 认证中间件测试
+│   ├── cors_test.go           # 跨域中间件测试
+│   └── recovery_test.go       # 恢复中间件测试
+├── repository/
+│   ├── user_test.go           # 用户仓库测试
+│   ├── comment_test.go        # 评论仓库测试
+│   ├── log_test.go            # 日志仓库测试
+│   └── refresh_token_test.go  # 刷新令牌仓库测试
 ├── service/
 │   ├── auth_test.go           # 认证服务测试
 │   ├── user_test.go           # 用户服务测试
-│   └── comment_test.go        # 评论服务测试
+│   ├── comment_test.go        # 评论服务测试
+│   └── log_test.go            # 日志服务测试
 └── handler/
     ├── auth_test.go           # 认证接口测试
     ├── user_test.go           # 用户接口测试
-    └── comment_test.go        # 评论接口测试
+    ├── comment_test.go        # 评论接口测试
+    └── log_test.go            # 日志接口测试
 ```
 
 ### 测试覆盖率目标

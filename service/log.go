@@ -5,10 +5,12 @@ import (
 	"ebook-server/repository"
 )
 
+// LogService 操作日志业务服务。
 type LogService struct {
 	logRepo *repository.LogRepository
 }
 
+// NewLogService 创建日志服务实例。
 func NewLogService() *LogService {
 	return &LogService{
 		logRepo: repository.NewLogRepository(),

@@ -1,3 +1,4 @@
+// Package service 实现业务逻辑层，编排认证、用户、评论等业务流程。
 package service
 
 import (
@@ -37,11 +38,13 @@ const (
 	codeKeyForgot   = "forgot:"
 )
 
+// AuthService 认证业务服务，处理注册、登录、token 刷新与密码管理。
 type AuthService struct {
 	userRepo  *repository.UserRepository
 	tokenRepo *repository.RefreshTokenRepository
 }
 
+// NewAuthService 创建认证服务实例。
 func NewAuthService() *AuthService {
 	return &AuthService{
 		userRepo:  repository.NewUserRepository(),

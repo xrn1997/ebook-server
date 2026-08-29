@@ -1,3 +1,4 @@
+// Package ratelimit 提供内存固定窗口限流器，用于发码防轰炸等轻量场景。
 package ratelimit
 
 import (

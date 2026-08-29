@@ -1,3 +1,13 @@
+-- =========================================================
+-- init.sql — MySQL 建表参考脚本
+--
+-- 项目实际使用 SQLite，表结构由 GORM AutoMigrate 在启动时
+-- 自动创建/更新，无需手动执行本脚本。
+--
+-- 本文件仅作 MySQL 迁移或 DBA 审阅参考，保持与 model/ 下
+-- 结构体定义同步。
+-- =========================================================
+
 -- 创建数据库
 CREATE DATABASE IF NOT EXISTS ebook DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 

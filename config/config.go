@@ -1,3 +1,4 @@
+// Package config 提供应用配置加载与管理，支持 YAML 文件 + .env 环境变量覆盖。
 package config
 
 import (
@@ -8,6 +9,7 @@ import (
 	"github.com/spf13/viper"
 )
 
+// Config 应用全局配置（对应 config.yaml 顶层结构）。
 type Config struct {
 	Server   ServerConfig   `mapstructure:"server"`
 	Database DatabaseConfig `mapstructure:"database"`
@@ -15,11 +17,13 @@ type Config struct {
 	SMTP     SMTPConfig     `mapstructure:"smtp"`
 }
 
+// ServerConfig 服务端配置。
 type ServerConfig struct {
 	Port int    `mapstructure:"port"`
 	Mode string `mapstructure:"mode"` // debug, release, test
 }
 
+// DatabaseConfig 数据库配置。
 type DatabaseConfig struct {
 	Path string `mapstructure:"path"` // SQLite 数据库文件路径
 }
@@ -40,8 +44,11 @@ type SMTPConfig struct {
 	Insecure bool   `mapstructure:"insecure"` // 开发环境关闭 TLS 校验
 }
 
+// AppConfig 全局配置实例，由 LoadConfig 初始化后供各层读取。
 var AppConfig *Config
 
+// LoadConfig 从指定路径加载 YAML 配置，并自动读取 .env（若存在）。
+// 环境变量可覆盖 YAML 中的同名键（如 SMTP_PASSWORD → smtp.password）。
 func LoadConfig(path string) error {
 	// 加载 .env（存在才生效），使敏感配置可通过环境变量覆盖（如 SMTP_PASSWORD / JWT_SECRET）
 	_ = godotenv.Load()

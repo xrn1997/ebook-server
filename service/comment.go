@@ -5,10 +5,12 @@ import (
 	"ebook-server/repository"
 )
 
+// CommentService 评论业务服务。
 type CommentService struct {
 	commentRepo *repository.CommentRepository
 }
 
+// NewCommentService 创建评论服务实例。
 func NewCommentService() *CommentService {
 	return &CommentService{
 		commentRepo: repository.NewCommentRepository(),

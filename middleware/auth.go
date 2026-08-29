@@ -1,3 +1,4 @@
+// Package middleware 提供 Gin 中间件：JWT 认证、CORS、请求日志与 panic 恢复。
 package middleware
 
 import (

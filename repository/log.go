@@ -5,8 +5,10 @@ import (
 	"ebook-server/pkg/database"
 )
 
+// LogRepository 操作日志数据访问。
 type LogRepository struct{}
 
+// NewLogRepository 创建日志仓库实例。
 func NewLogRepository() *LogRepository {
 	return &LogRepository{}
 }

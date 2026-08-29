@@ -8,10 +8,12 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// LogHandler 操作日志 HTTP 处理器。
 type LogHandler struct {
 	logService *service.LogService
 }
 
+// NewLogHandler 创建日志处理器实例。
 func NewLogHandler() *LogHandler {
 	return &LogHandler{
 		logService: service.NewLogService(),

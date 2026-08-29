@@ -1,3 +1,4 @@
+// Package model 定义数据模型，包含 GORM 实体、请求/响应结构体与业务错误。
 package model
 
 import (
@@ -6,15 +7,18 @@ import (
 	"gorm.io/gorm"
 )
 
+// User 用户实体（GORM 模型）。
+//
+// Email 为登录主标识（唯一索引），UID 为主键，Username 为展示用名（非唯一）。
 type User struct {
-	UID           uint           `json:"uid" gorm:"primaryKey;autoIncrement"`
-	Email         string         `json:"email" gorm:"uniqueIndex;size:100;not null"`
-	Password      string         `json:"-" gorm:"size:255;not null"` // json:"-" 不返回密码
-	Username      string         `json:"username" gorm:"size:50;not null"`
-	Nickname      string         `json:"nickname" gorm:"size:50"`
-	Avatar        string         `json:"avatar" gorm:"size:255"`
-	LoginAttempts int            `json:"-" gorm:"default:0"` // 连续登录失败次数
-	LockedUntil   *time.Time     `json:"-"`                  // 登录锁定截止时间（nil 表示未锁定）
+	UID           uint           `json:"uid" gorm:"primaryKey;autoIncrement"`                       // 主键，自增
+	Email         string         `json:"email" gorm:"uniqueIndex;size:100;not null"`                 // 登录主标识，唯一
+	Password      string         `json:"-" gorm:"size:255;not null"`                                 // bcrypt 哈希，不序列化到 JSON
+	Username      string         `json:"username" gorm:"size:50;not null"`                           // 展示用名，注册时自动生成，可后改
+	Nickname      string         `json:"nickname" gorm:"size:50"`                                    // 用户昵称
+	Avatar        string         `json:"avatar" gorm:"size:255"`                                     // 头像 URL
+	LoginAttempts int            `json:"-" gorm:"default:0"`                                         // 连续登录失败次数（ADR-0002）
+	LockedUntil   *time.Time     `json:"-"`                                                          // 登录锁定截止时间（nil 表示未锁定）
 	CreatedAt     time.Time      `json:"created_at"`
 	UpdatedAt     time.Time      `json:"updated_at"`
 	DeletedAt     gorm.DeletedAt `json:"-" gorm:"index"`

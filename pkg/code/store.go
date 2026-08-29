@@ -1,3 +1,4 @@
+// Package code 提供内存验证码存储与校验，支持 TTL 过期与重试次数限制。
 package code
 
 import (

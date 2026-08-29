@@ -1,3 +1,6 @@
+// Package errcode 定义五位字符串业务码与统一响应辅助函数。
+//
+// 所有业务端点 HTTP 状态码一律返回 200，成功与失败通过 code + error 表述。
 package errcode
 
 import (

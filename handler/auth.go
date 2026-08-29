@@ -1,3 +1,4 @@
+// Package handler 实现 HTTP API 处理器，负责请求解析、参数校验与响应封装。
 package handler
 
 import (
@@ -9,10 +10,12 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// AuthHandler 认证相关 HTTP 处理器。
 type AuthHandler struct {
 	authService *service.AuthService
 }
 
+// NewAuthHandler 创建认证处理器实例。
 func NewAuthHandler() *AuthHandler {
 	return &AuthHandler{
 		authService: service.NewAuthService(),

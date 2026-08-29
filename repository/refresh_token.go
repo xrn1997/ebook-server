@@ -6,8 +6,10 @@ import (
 	"time"
 )
 
+// RefreshTokenRepository 刷新令牌数据访问。
 type RefreshTokenRepository struct{}
 
+// NewRefreshTokenRepository 创建刷新令牌仓库实例。
 func NewRefreshTokenRepository() *RefreshTokenRepository {
 	return &RefreshTokenRepository{}
 }

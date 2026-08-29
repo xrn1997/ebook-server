@@ -10,10 +10,12 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// CommentHandler 评论 HTTP 处理器。
 type CommentHandler struct {
 	commentService *service.CommentService
 }
 
+// NewCommentHandler 创建评论处理器实例。
 func NewCommentHandler() *CommentHandler {
 	return &CommentHandler{
 		commentService: service.NewCommentService(),

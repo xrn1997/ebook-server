@@ -5,8 +5,10 @@ import (
 	"ebook-server/pkg/database"
 )
 
+// CommentRepository 评论数据访问。
 type CommentRepository struct{}
 
+// NewCommentRepository 创建评论仓库实例。
 func NewCommentRepository() *CommentRepository {
 	return &CommentRepository{}
 }

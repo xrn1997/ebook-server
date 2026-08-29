@@ -21,20 +21,38 @@
 ```
 ebook-server/
 ├── model/
-│   └── model_test.go          # 模型测试
+│   └── model_test.go              # 模型测试
 ├── pkg/
-│   └── jwt/
-│       └── jwt_test.go        # JWT 工具测试
+│   ├── code/
+│   │   └── store_test.go          # 验证码存储测试
+│   ├── errcode/
+│   │   └── errcode_test.go        # 业务码测试
+│   ├── jwt/
+│   │   └── jwt_test.go            # JWT 工具测试
+│   └── ratelimit/
+│       └── limiter_test.go        # 限流器测试
+├── middleware/
+│   ├── auth_test.go               # 认证中间件测试
+│   ├── cors_test.go               # 跨域中间件测试
+│   └── recovery_test.go           # 恢复中间件测试
+├── repository/
+│   ├── user_test.go               # 用户仓库测试
+│   ├── comment_test.go            # 评论仓库测试
+│   ├── log_test.go                # 日志仓库测试
+│   ├── refresh_token_test.go      # 刷新令牌仓库测试
+│   └── test_helper.go             # 测试数据库初始化工具
 ├── service/
-│   ├── auth_test.go           # 认证服务测试
-│   ├── user_test.go           # 用户服务测试
-│   └── comment_test.go        # 评论服务测试
+│   ├── auth_test.go               # 认证服务测试
+│   ├── user_test.go               # 用户服务测试
+│   ├── comment_test.go            # 评论服务测试
+│   └── log_test.go                # 日志服务测试
 ├── handler/
-│   ├── auth_test.go           # 认证接口测试
-│   ├── user_test.go           # 用户接口测试
-│   ├── comment_test.go        # 评论接口测试
-│   └── test_helper.go         # 测试辅助工具
-└── TESTING.md                 # 本文档
+│   ├── auth_test.go               # 认证接口测试
+│   ├── user_test.go               # 用户接口测试
+│   ├── comment_test.go            # 评论接口测试
+│   ├── log_test.go                # 日志接口测试
+│   └── test_helper.go             # 测试辅助工具
+└── TESTING.md                     # 本文档
 ```
 
 ## 运行测试

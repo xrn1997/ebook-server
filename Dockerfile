@@ -26,8 +26,8 @@ COPY --from=builder /app/ebook-server .
 COPY --from=builder /app/config.yaml .
 COPY --from=builder /app/sql ./sql
 
-# 暴露端口
-EXPOSE 8080
+# 暴露端口（与 config.yaml 中 server.port 一致）
+EXPOSE 9090
 
 # 运行
 CMD ["./ebook-server"]

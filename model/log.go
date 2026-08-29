@@ -2,6 +2,9 @@ package model
 
 import "time"
 
+// OperationLog 操作日志实体（GORM 模型）。
+//
+// 记录每次 API 请求的元信息，用于审计与排障。
 type OperationLog struct {
 	ID           uint      `json:"id" gorm:"primaryKey"`
 	UserID       uint      `json:"user_id" gorm:"index"`

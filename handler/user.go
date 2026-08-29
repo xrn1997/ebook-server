@@ -9,11 +9,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// UserHandler 用户信息 HTTP 处理器。
 type UserHandler struct {
 	userService *service.UserService
 	authService *service.AuthService
 }
 
+// NewUserHandler 创建用户处理器实例。
 func NewUserHandler() *UserHandler {
 	return &UserHandler{
 		userService: service.NewUserService(),
