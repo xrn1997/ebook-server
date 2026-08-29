@@ -143,8 +143,8 @@ func (s *AuthService) recordLoginSuccess(user *model.User) (*model.TokenPair, er
 	return s.issueTokens(user)
 }
 
-// Refresh 刷新 token：校验旧 refresh token 后作废并下放新双 token
-func (s *AuthService) Refresh(refreshToken string) (*model.TokenPair, error) {
+// Refresh 刷新 token（ADR-0003）：校验旧 refresh token 后作废，仅下发纯凭证（不含用户资料）
+func (s *AuthService) Refresh(refreshToken string) (*model.TokenPayload, error) {
 	record, err := s.tokenRepo.FindByHash(sha256Hex(refreshToken))
 	if err != nil {
 		if repository.IsRecordNotFound(err) {
@@ -158,12 +158,11 @@ func (s *AuthService) Refresh(refreshToken string) (*model.TokenPair, error) {
 		return nil, err
 	}
 
-	// Rotation：作废旧 token，下发新双 token
+	// Rotation：作废旧 token，下发新双 token（仅凭证，不含用户资料）
 	if err := s.tokenRepo.DeleteByID(record.ID); err != nil {
 		return nil, err
 	}
-
-	return s.issueTokens(user)
+	return s.issueTokenPayload(user.UID, user.Username)
 }
 
 // Logout 登出，作废该用户的所有 refresh token
@@ -266,21 +265,34 @@ func asKey(email string) string {
 	return email
 }
 
-// issueTokens 生成双 token 并落库 refresh token
-func (s *AuthService) issueTokens(user *model.User) (*model.TokenPair, error) {
-	accessToken, err := jwt.GenerateToken(user.UID, user.Username)
+// issueTokenPayload 签发双 token（纯凭证，不含用户资料）——登录复用其凭证部分、刷新直接使用
+func (s *AuthService) issueTokenPayload(uid uint, username string) (*model.TokenPayload, error) {
+	accessToken, err := jwt.GenerateToken(uid, username)
 	if err != nil {
 		return nil, err
 	}
 
-	refreshToken, err := s.newRefreshToken(user.UID)
+	refreshToken, err := s.newRefreshToken(uid)
+	if err != nil {
+		return nil, err
+	}
+
+	return &model.TokenPayload{
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+	}, nil
+}
+
+// issueTokens 生成双 token 并落库 refresh token（登录/注册专用，含用户资料）
+func (s *AuthService) issueTokens(user *model.User) (*model.TokenPair, error) {
+	payload, err := s.issueTokenPayload(user.UID, user.Username)
 	if err != nil {
 		return nil, err
 	}
 
 	return &model.TokenPair{
-		AccessToken:  accessToken,
-		RefreshToken: refreshToken,
+		AccessToken:  payload.AccessToken,
+		RefreshToken: payload.RefreshToken,
 		User:         *user,
 	}, nil
 }

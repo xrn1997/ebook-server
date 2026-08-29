@@ -71,6 +71,12 @@ type TokenPair struct {
 	User         User   `json:"user"`
 }
 
+// TokenPayload 纯凭证载荷（刷新端点用，不含用户资料）
+type TokenPayload struct {
+	AccessToken  string `json:"token"`
+	RefreshToken string `json:"refresh_token"`
+}
+
 // RefreshRequest 刷新 token 请求
 type RefreshRequest struct {
 	RefreshToken string `json:"refresh_token" binding:"required"`
