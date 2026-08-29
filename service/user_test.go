@@ -23,8 +23,8 @@ func setupUserTestDB(t *testing.T) {
 	if config.AppConfig == nil {
 		config.AppConfig = &config.Config{
 			JWT: config.JWTConfig{
-				Secret:     "test-secret",
-				ExpireHour: 1,
+				Secret:    "test-secret",
+				ExpireMin: 1,
 			},
 		}
 	}
@@ -35,7 +35,7 @@ func setupUserTestDB(t *testing.T) {
 	}
 
 	testDB = database.GetDB()
-	testDB.AutoMigrate(&model.User{}, &model.Comment{}, &model.OperationLog{})
+	testDB.AutoMigrate(&model.User{}, &model.Comment{}, &model.OperationLog{}, &model.RefreshToken{})
 }
 
 func cleanupUserTestDB(t *testing.T) {
@@ -55,34 +55,27 @@ func TestUserService_GetByID_Success(t *testing.T) {
 
 	// 先创建用户
 	authService := NewAuthService()
-	req := &model.RegisterRequest{
-		Username: "getbyiduser",
-		Password: "password123",
-	}
-	createdUser, err := authService.Register(req)
-	if err != nil {
-		t.Fatalf("Failed to register user: %v", err)
-	}
+	user := serviceRegister(t, authService, "getbyiduser@example.com", "password123")
 
 	// 获取用户
 	userService := NewUserService()
-	user, err := userService.GetByID(createdUser.ID)
+	got, err := userService.GetByUID(user.UID)
 	if err != nil {
 		t.Fatalf("Failed to get user: %v", err)
 	}
 
-	if user.Username != "getbyiduser" {
-		t.Errorf("Expected username 'getbyiduser', got '%s'", user.Username)
+	if got.Username != user.Username {
+		t.Errorf("Expected username '%s', got '%s'", user.Username, got.Username)
 	}
 }
 
-func TestUserService_GetByID_UserNotFound(t *testing.T) {
+func TestUserService_GetByUID_UserNotFound(t *testing.T) {
 	setupUserTestDB(t)
 	defer cleanupUserTestDB(t)
 
 	userService := NewUserService()
 
-	_, err := userService.GetByID(999999)
+	_, err := userService.GetByUID(999999)
 	if err != model.ErrUserNotFound {
 		t.Errorf("Expected ErrUserNotFound, got %v", err)
 	}
@@ -94,24 +87,17 @@ func TestUserService_Update_Success(t *testing.T) {
 
 	// 创建用户
 	authService := NewAuthService()
-	registerReq := &model.RegisterRequest{
-		Username: "updateuser",
-		Password: "password123",
-		Email:    "old@example.com",
-	}
-	user, err := authService.Register(registerReq)
-	if err != nil {
-		t.Fatalf("Failed to register user: %v", err)
-	}
+	user := serviceRegister(t, authService, "old@example.com", "password123")
 
 	// 更新用户
 	userService := NewUserService()
 	updateReq := &model.UpdateUserRequest{
-		Email:  "new@example.com",
-		Avatar: "https://example.com/new-avatar.jpg",
+		Username: "newuser",
+		Email:    "new@example.com",
+		Avatar:   "https://example.com/new-avatar.jpg",
 	}
 
-	updatedUser, err := userService.Update(user.ID, updateReq)
+	updatedUser, err := userService.Update(user.UID, updateReq)
 	if err != nil {
 		t.Fatalf("Failed to update user: %v", err)
 	}
@@ -147,15 +133,7 @@ func TestUserService_Update_PartialUpdate(t *testing.T) {
 
 	// 创建用户
 	authService := NewAuthService()
-	registerReq := &model.RegisterRequest{
-		Username: "partialupdateuser",
-		Password: "password123",
-		Email:    "original@example.com",
-	}
-	user, err := authService.Register(registerReq)
-	if err != nil {
-		t.Fatalf("Failed to register user: %v", err)
-	}
+	user := serviceRegister(t, authService, "original@example.com", "password123")
 
 	// 只更新头像
 	userService := NewUserService()
@@ -163,7 +141,7 @@ func TestUserService_Update_PartialUpdate(t *testing.T) {
 		Avatar: "https://example.com/avatar.jpg",
 	}
 
-	updatedUser, err := userService.Update(user.ID, updateReq)
+	updatedUser, err := userService.Update(user.UID, updateReq)
 	if err != nil {
 		t.Fatalf("Failed to update user: %v", err)
 	}

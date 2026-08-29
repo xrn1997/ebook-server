@@ -5,17 +5,32 @@ USE ebook;
 
 -- 用户表
 CREATE TABLE IF NOT EXISTS users (
-    id BIGINT PRIMARY KEY AUTO_INCREMENT,
-    username VARCHAR(50) UNIQUE NOT NULL COMMENT '用户名',
+    uid BIGINT PRIMARY KEY AUTO_INCREMENT,
+    email VARCHAR(100) UNIQUE NOT NULL COMMENT '邮箱（登录主标识）',
     password VARCHAR(255) NOT NULL COMMENT '密码',
-    email VARCHAR(100) COMMENT '邮箱',
+    username VARCHAR(50) NOT NULL COMMENT '用户名（可重复）',
+    nickname VARCHAR(50) COMMENT '昵称',
     avatar VARCHAR(255) COMMENT '头像',
+    login_attempts INT DEFAULT 0 COMMENT '连续登录失败次数',
+    locked_until TIMESTAMP NULL COMMENT '登录锁定截止时间',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     deleted_at TIMESTAMP NULL COMMENT '删除时间',
-    INDEX idx_username (username),
+    INDEX idx_email (email),
     INDEX idx_deleted_at (deleted_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户表';
+
+-- 刷新令牌表
+CREATE TABLE IF NOT EXISTS refresh_tokens (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    token_hash VARCHAR(64) UNIQUE NOT NULL COMMENT 'refresh token 的 SHA-256 哈希',
+    user_id BIGINT NOT NULL COMMENT '用户ID',
+    expires_at TIMESTAMP NOT NULL COMMENT '过期时间',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    INDEX idx_user_id (user_id),
+    INDEX idx_expires_at (expires_at),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='刷新令牌表';
 
 -- 评论表
 CREATE TABLE IF NOT EXISTS comments (

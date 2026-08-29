@@ -1,65 +1,11 @@
 package model
 
-import (
-	"net/http"
-
-	"github.com/gin-gonic/gin"
-)
-
-// Response 统一响应结构
+// Response 统一响应信封
+//
+// Code 为五位字符串业务码（"00000" 表示成功），HTTP 状态码恒为 200，
+// 业务层的成功与失败都通过该信封传达，避免移动端对非 2xx 响应直接抛异常导致业务文案丢失。
 type Response struct {
-	Code    int         `json:"code"`
-	Message string      `json:"message"`
-	Data    interface{} `json:"data,omitempty"`
-}
-
-// Success 成功响应
-func Success(c *gin.Context, data interface{}) {
-	c.JSON(http.StatusOK, Response{
-		Code:    200,
-		Message: "success",
-		Data:    data,
-	})
-}
-
-// SuccessWithMessage 成功响应（自定义消息）
-func SuccessWithMessage(c *gin.Context, message string, data interface{}) {
-	c.JSON(http.StatusOK, Response{
-		Code:    200,
-		Message: message,
-		Data:    data,
-	})
-}
-
-// Error 错误响应
-func Error(c *gin.Context, code int, message string) {
-	c.JSON(code, Response{
-		Code:    code,
-		Message: message,
-	})
-}
-
-// BadRequest 400 错误
-func BadRequest(c *gin.Context, message string) {
-	Error(c, http.StatusBadRequest, message)
-}
-
-// Unauthorized 401 错误
-func Unauthorized(c *gin.Context, message string) {
-	Error(c, http.StatusUnauthorized, message)
-}
-
-// Forbidden 403 错误
-func Forbidden(c *gin.Context, message string) {
-	Error(c, http.StatusForbidden, message)
-}
-
-// NotFound 404 错误
-func NotFound(c *gin.Context, message string) {
-	Error(c, http.StatusNotFound, message)
-}
-
-// InternalError 500 错误
-func InternalError(c *gin.Context, message string) {
-	Error(c, http.StatusInternalServerError, message)
+	Code  string      `json:"code"`  // 五位业务码，"00000" 表示成功
+	Error string      `json:"error"` // 业务错误文案（成功时为空串）
+	Data  interface{} `json:"data,omitempty"`
 }

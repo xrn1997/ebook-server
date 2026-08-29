@@ -3,6 +3,7 @@ package handler
 import (
 	"ebook-server/middleware"
 	"ebook-server/model"
+	"ebook-server/pkg/errcode"
 	"ebook-server/service"
 
 	"github.com/gin-gonic/gin"
@@ -10,11 +11,13 @@ import (
 
 type UserHandler struct {
 	userService *service.UserService
+	authService *service.AuthService
 }
 
 func NewUserHandler() *UserHandler {
 	return &UserHandler{
 		userService: service.NewUserService(),
+		authService: service.NewAuthService(),
 	}
 }
 
@@ -29,21 +32,21 @@ func NewUserHandler() *UserHandler {
 func (h *UserHandler) GetMe(c *gin.Context) {
 	userID, exists := middleware.GetCurrentUserID(c)
 	if !exists {
-		model.Unauthorized(c, "未登录")
+		errcode.Error(c, errcode.LoginExpired, "未登录")
 		return
 	}
 
-	user, err := h.userService.GetByID(userID)
+	user, err := h.userService.GetByUID(userID)
 	if err != nil {
 		if err == model.ErrUserNotFound {
-			model.NotFound(c, err.Error())
+			errcode.Error(c, errcode.AccountNotFound, err.Error())
 			return
 		}
-		model.InternalError(c, "获取用户信息失败")
+		errcode.Error(c, errcode.ServerError, "获取用户信息失败")
 		return
 	}
 
-	model.Success(c, user)
+	errcode.Success(c, user)
 }
 
 // UpdateMe 更新当前用户信息
@@ -59,25 +62,60 @@ func (h *UserHandler) GetMe(c *gin.Context) {
 func (h *UserHandler) UpdateMe(c *gin.Context) {
 	userID, exists := middleware.GetCurrentUserID(c)
 	if !exists {
-		model.Unauthorized(c, "未登录")
+		errcode.Error(c, errcode.LoginExpired, "未登录")
 		return
 	}
 
 	var req model.UpdateUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		model.BadRequest(c, "请求参数错误: "+err.Error())
+		errcode.Error(c, errcode.BadRequest, "请求参数错误: "+err.Error())
 		return
 	}
 
 	user, err := h.userService.Update(userID, &req)
 	if err != nil {
 		if err == model.ErrUserNotFound {
-			model.NotFound(c, err.Error())
+			errcode.Error(c, errcode.AccountNotFound, err.Error())
 			return
 		}
-		model.InternalError(c, "更新用户信息失败")
+		errcode.Error(c, errcode.ServerError, "更新用户信息失败")
 		return
 	}
 
-	model.Success(c, user)
+	errcode.Success(c, user)
+}
+
+// ChangePassword 已登录修改密码
+// @Summary 修改密码
+// @Description 校验旧密码后更新密码，并使全部 token 失效
+// @Tags 用户
+// @Accept json
+// @Produce json
+// @Security ApiKeyAuth
+// @Param request body model.ModifyPwdRequest true "改密请求"
+// @Success 200 {object} model.Response
+// @Router /api/users/me/password [put]
+func (h *UserHandler) ChangePassword(c *gin.Context) {
+	userID, exists := middleware.GetCurrentUserID(c)
+	if !exists {
+		errcode.Error(c, errcode.LoginExpired, "未登录")
+		return
+	}
+
+	var req model.ModifyPwdRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		errcode.Error(c, errcode.BadRequest, "请求参数错误: "+err.Error())
+		return
+	}
+
+	if err := h.authService.ChangePassword(userID, req.OldPassword, req.NewPassword); err != nil {
+		if err == model.ErrPasswordWrong {
+			errcode.Error(c, errcode.PasswordWrong, err.Error())
+			return
+		}
+		errcode.Error(c, errcode.ServerError, "修改密码失败")
+		return
+	}
+
+	errcode.Success(c, nil)
 }

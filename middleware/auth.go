@@ -1,7 +1,7 @@
 package middleware
 
 import (
-	"ebook-server/model"
+	"ebook-server/pkg/errcode"
 	"ebook-server/pkg/jwt"
 	"strings"
 
@@ -14,7 +14,7 @@ func JWTAuth() gin.HandlerFunc {
 		// 从 Header 获取 Token
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
-			model.Unauthorized(c, "缺少认证令牌")
+			errcode.Error(c, errcode.LoginExpired, "缺少认证令牌")
 			c.Abort()
 			return
 		}
@@ -22,7 +22,7 @@ func JWTAuth() gin.HandlerFunc {
 		// 解析 Bearer Token
 		parts := strings.SplitN(authHeader, " ", 2)
 		if !(len(parts) == 2 && parts[0] == "Bearer") {
-			model.Unauthorized(c, "认证格式错误")
+			errcode.Error(c, errcode.LoginExpired, "认证格式错误")
 			c.Abort()
 			return
 		}
@@ -30,7 +30,7 @@ func JWTAuth() gin.HandlerFunc {
 		// 解析 Token
 		claims, err := jwt.ParseToken(parts[1])
 		if err != nil {
-			model.Unauthorized(c, "无效的认证令牌")
+			errcode.Error(c, errcode.LoginExpired, "无效或过期的认证令牌")
 			c.Abort()
 			return
 		}

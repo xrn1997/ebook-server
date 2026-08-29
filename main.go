@@ -6,6 +6,7 @@ import (
 	"ebook-server/middleware"
 	"ebook-server/model"
 	"ebook-server/pkg/database"
+	"ebook-server/pkg/errcode"
 	"ebook-server/pkg/logger"
 	"fmt"
 	"log"
@@ -33,7 +34,7 @@ func main() {
 
 	// 自动迁移数据库表
 	db := database.GetDB()
-	db.AutoMigrate(&model.User{}, &model.Comment{}, &model.OperationLog{})
+	db.AutoMigrate(&model.User{}, &model.Comment{}, &model.OperationLog{}, &model.RefreshToken{})
 
 	// 设置 Gin 模式
 	gin.SetMode(config.AppConfig.Server.Mode)
@@ -48,7 +49,7 @@ func main() {
 
 	// 健康检查
 	r.GET("/health", func(c *gin.Context) {
-		model.Success(c, gin.H{"status": "ok"})
+		errcode.Success(c, gin.H{"status": "ok"})
 	})
 
 	// API 路由
@@ -58,8 +59,13 @@ func main() {
 		auth := api.Group("/auth")
 		{
 			authHandler := handler.NewAuthHandler()
+			auth.POST("/send-code", authHandler.SendCode)
 			auth.POST("/register", authHandler.Register)
 			auth.POST("/login", authHandler.Login)
+			auth.POST("/refresh", authHandler.Refresh)
+			auth.POST("/forgot-password/send-code", authHandler.ForgotPasswordSendCode)
+			auth.POST("/forgot-password/reset", authHandler.ForgotPasswordReset)
+			auth.POST("/logout", middleware.JWTAuth(), authHandler.Logout)
 		}
 
 		// 用户相关（需要登录）
@@ -69,6 +75,7 @@ func main() {
 			userHandler := handler.NewUserHandler()
 			users.GET("/me", userHandler.GetMe)
 			users.PUT("/me", userHandler.UpdateMe)
+			users.PUT("/me/password", userHandler.ChangePassword)
 		}
 
 		// 评论相关

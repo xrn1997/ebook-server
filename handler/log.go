@@ -1,7 +1,7 @@
 package handler
 
 import (
-	"ebook-server/model"
+	"ebook-server/pkg/errcode"
 	"ebook-server/service"
 	"strconv"
 
@@ -34,11 +34,11 @@ func (h *LogHandler) GetList(c *gin.Context) {
 
 	result, err := h.logService.GetAll(page, pageSize)
 	if err != nil {
-		model.InternalError(c, "获取日志列表失败")
+		errcode.Error(c, errcode.ServerError, "获取日志列表失败")
 		return
 	}
 
-	model.Success(c, result)
+	errcode.Success(c, result)
 }
 
 // GetMyLogs 获取我的操作日志
@@ -54,13 +54,13 @@ func (h *LogHandler) GetList(c *gin.Context) {
 func (h *LogHandler) GetMyLogs(c *gin.Context) {
 	userID, exists := c.Get("user_id")
 	if !exists {
-		model.Unauthorized(c, "未登录")
+		errcode.Error(c, errcode.LoginExpired, "未登录")
 		return
 	}
 
 	uid, ok := userID.(uint)
 	if !ok {
-		model.InternalError(c, "用户ID类型错误")
+		errcode.Error(c, errcode.ServerError, "用户ID类型错误")
 		return
 	}
 
@@ -69,9 +69,9 @@ func (h *LogHandler) GetMyLogs(c *gin.Context) {
 
 	result, err := h.logService.GetByUserID(uid, page, pageSize)
 	if err != nil {
-		model.InternalError(c, "获取日志列表失败")
+		errcode.Error(c, errcode.ServerError, "获取日志列表失败")
 		return
 	}
 
-	model.Success(c, result)
+	errcode.Success(c, result)
 }

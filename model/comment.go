@@ -27,8 +27,8 @@ type CreateCommentRequest struct {
 
 // CommentListResponse 评论列表响应
 type CommentListResponse struct {
-	Items      []Comment `json:"items"`
-	Total      int64     `json:"total"`
-	Page       int       `json:"page"`
-	PageSize   int       `json:"page_size"`
+	Items    []Comment `json:"items"`
+	Total    int64     `json:"total"`
+	Page     int       `json:"page"`
+	PageSize int       `json:"page_size"`
 }

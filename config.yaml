@@ -7,4 +7,12 @@ database:
 
 jwt:
   secret: your-secret-key-change-this
-  expire_hour: 72
+  expire_min: 120  # access token 有效期（分钟）
+
+smtp:
+  host: smtp.qq.com          # QQ 邮箱；163 则填 smtp.163.com
+  port: 465                  # 465 走 TLS；587 走 STARTTLS
+  username: 572249217@qq.com   # ← 填完整发信邮箱，如 123456789@qq.com
+  password: change-me        # ← 真实授权码放本地 .env 的 SMTP_PASSWORD，勿提交此处
+  from: 572249217@qq.com
+  insecure: false            # 开发环境可临时设为 true 关闭 TLS 校验

@@ -1,8 +1,7 @@
 package middleware
 
 import (
-	"ebook-server/model"
-	"net/http"
+	"ebook-server/pkg/errcode"
 	"runtime/debug"
 
 	"github.com/gin-gonic/gin"
@@ -20,8 +19,8 @@ func Recovery() gin.HandlerFunc {
 					zap.String("stack", string(debug.Stack())),
 				)
 
-				// 返回错误响应
-				model.Error(c, http.StatusInternalServerError, "服务器内部错误")
+				// 返回错误响应（HTTP 恒为 200，业务码标记服务器错误）
+				errcode.Error(c, errcode.ServerError, "服务器内部错误")
 				c.Abort()
 			}
 		}()

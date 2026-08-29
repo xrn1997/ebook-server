@@ -9,8 +9,8 @@ import (
 func setup() {
 	config.AppConfig = &config.Config{
 		JWT: config.JWTConfig{
-			Secret:     "test-secret-key",
-			ExpireHour: 1,
+			Secret:    "test-secret-key",
+			ExpireMin: 1,
 		},
 	}
 }
@@ -73,8 +73,8 @@ func TestParseTokenWrongSecret(t *testing.T) {
 	// Generate token with different secret
 	otherConfig := &config.Config{
 		JWT: config.JWTConfig{
-			Secret:     "other-secret",
-			ExpireHour: 1,
+			Secret:    "other-secret",
+			ExpireMin: 1,
 		},
 	}
 	originalConfig := config.AppConfig
@@ -93,8 +93,8 @@ func TestTokenExpiration(t *testing.T) {
 	// Setup with very short expiration
 	config.AppConfig = &config.Config{
 		JWT: config.JWTConfig{
-			Secret:     "test-secret",
-			ExpireHour: 0, // 0 hours = expired immediately
+			Secret:    "test-secret",
+			ExpireMin: 0, // 0 = 立即过期
 		},
 	}
 

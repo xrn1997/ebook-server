@@ -23,8 +23,8 @@ func setupCommentTestDB(t *testing.T) {
 	if config.AppConfig == nil {
 		config.AppConfig = &config.Config{
 			JWT: config.JWTConfig{
-				Secret:     "test-secret",
-				ExpireHour: 1,
+				Secret:    "test-secret",
+				ExpireMin: 1,
 			},
 		}
 	}
@@ -35,7 +35,7 @@ func setupCommentTestDB(t *testing.T) {
 	}
 
 	testDB = database.GetDB()
-	testDB.AutoMigrate(&model.User{}, &model.Comment{}, &model.OperationLog{})
+	testDB.AutoMigrate(&model.User{}, &model.Comment{}, &model.OperationLog{}, &model.RefreshToken{})
 }
 
 func cleanupCommentTestDB(t *testing.T) {
@@ -55,14 +55,7 @@ func TestCommentService_Create_Success(t *testing.T) {
 
 	// 先创建用户
 	authService := NewAuthService()
-	registerReq := &model.RegisterRequest{
-		Username: "commentuser",
-		Password: "password123",
-	}
-	user, err := authService.Register(registerReq)
-	if err != nil {
-		t.Fatalf("Failed to register user: %v", err)
-	}
+	user := serviceRegister(t, authService, "commentuser@example.com", "password123")
 
 	// 创建评论
 	commentService := NewCommentService()
@@ -70,7 +63,7 @@ func TestCommentService_Create_Success(t *testing.T) {
 		Content: "This is a test comment",
 	}
 
-	comment, err := commentService.Create(user.ID, createReq)
+	comment, err := commentService.Create(user.UID, createReq)
 	if err != nil {
 		t.Fatalf("Failed to create comment: %v", err)
 	}
@@ -79,8 +72,8 @@ func TestCommentService_Create_Success(t *testing.T) {
 		t.Errorf("Expected content '%s', got '%s'", createReq.Content, comment.Content)
 	}
 
-	if comment.UserID != user.ID {
-		t.Errorf("Expected UserID %d, got %d", user.ID, comment.UserID)
+	if comment.UserID != user.UID {
+		t.Errorf("Expected UserID %d, got %d", user.UID, comment.UserID)
 	}
 }
 
@@ -90,20 +83,13 @@ func TestCommentService_GetByID_Success(t *testing.T) {
 
 	// 创建用户和评论
 	authService := NewAuthService()
-	registerReq := &model.RegisterRequest{
-		Username: "getcommentuser",
-		Password: "password123",
-	}
-	user, err := authService.Register(registerReq)
-	if err != nil {
-		t.Fatalf("Failed to register user: %v", err)
-	}
+	user := serviceRegister(t, authService, "getcommentuser@example.com", "password123")
 
 	commentService := NewCommentService()
 	createReq := &model.CreateCommentRequest{
 		Content: "Comment to retrieve",
 	}
-	createdComment, err := commentService.Create(user.ID, createReq)
+	createdComment, err := commentService.Create(user.UID, createReq)
 	if err != nil {
 		t.Fatalf("Failed to create comment: %v", err)
 	}
@@ -139,13 +125,11 @@ func TestCommentService_GetAll_Pagination(t *testing.T) {
 
 	// 创建一些评论
 	authService := NewAuthService()
-	user, _ := authService.Register(&model.RegisterRequest{
-		Username: "pagination_user",
-		Password: "password123",
-	})
+	user := serviceRegister(t, authService, "pagination_user@example.com", "password123")
+	uid := user.UID
 
 	for i := 0; i < 15; i++ {
-		commentService.Create(user.ID, &model.CreateCommentRequest{
+		commentService.Create(uid, &model.CreateCommentRequest{
 			Content: "Comment content",
 		})
 	}
@@ -185,26 +169,19 @@ func TestCommentService_Delete_Success(t *testing.T) {
 
 	// 创建用户和评论
 	authService := NewAuthService()
-	registerReq := &model.RegisterRequest{
-		Username: "deletecommentuser",
-		Password: "password123",
-	}
-	user, err := authService.Register(registerReq)
-	if err != nil {
-		t.Fatalf("Failed to register user: %v", err)
-	}
+	user := serviceRegister(t, authService, "deletecommentuser@example.com", "password123")
 
 	commentService := NewCommentService()
 	createReq := &model.CreateCommentRequest{
 		Content: "Comment to delete",
 	}
-	comment, err := commentService.Create(user.ID, createReq)
+	comment, err := commentService.Create(user.UID, createReq)
 	if err != nil {
 		t.Fatalf("Failed to create comment: %v", err)
 	}
 
 	// 删除评论
-	err = commentService.Delete(comment.ID, user.ID)
+	err = commentService.Delete(comment.ID, user.UID)
 	if err != nil {
 		t.Fatalf("Failed to delete comment: %v", err)
 	}
@@ -222,37 +199,21 @@ func TestCommentService_Delete_NoPermission(t *testing.T) {
 
 	// 创建两个用户
 	authService := NewAuthService()
-
-	user1Req := &model.RegisterRequest{
-		Username: "user1_delete",
-		Password: "password123",
-	}
-	user1, err := authService.Register(user1Req)
-	if err != nil {
-		t.Fatalf("Failed to register user1: %v", err)
-	}
-
-	user2Req := &model.RegisterRequest{
-		Username: "user2_delete",
-		Password: "password123",
-	}
-	user2, err := authService.Register(user2Req)
-	if err != nil {
-		t.Fatalf("Failed to register user2: %v", err)
-	}
+	user1 := serviceRegister(t, authService, "user1_delete@example.com", "password123")
+	user2 := serviceRegister(t, authService, "user2_delete@example.com", "password123")
 
 	// user1 创建评论
 	commentService := NewCommentService()
 	createReq := &model.CreateCommentRequest{
 		Content: "Comment by user1",
 	}
-	comment, err := commentService.Create(user1.ID, createReq)
+	comment, err := commentService.Create(user1.UID, createReq)
 	if err != nil {
 		t.Fatalf("Failed to create comment: %v", err)
 	}
 
 	// user2 尝试删除 user1 的评论
-	err = commentService.Delete(comment.ID, user2.ID)
+	err = commentService.Delete(comment.ID, user2.UID)
 	if err != model.ErrNoPermission {
 		t.Errorf("Expected ErrNoPermission, got %v", err)
 	}

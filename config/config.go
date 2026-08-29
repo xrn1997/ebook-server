@@ -2,7 +2,9 @@ package config
 
 import (
 	"fmt"
+	"strings"
 
+	"github.com/joho/godotenv"
 	"github.com/spf13/viper"
 )
 
@@ -10,6 +12,7 @@ type Config struct {
 	Server   ServerConfig   `mapstructure:"server"`
 	Database DatabaseConfig `mapstructure:"database"`
 	JWT      JWTConfig      `mapstructure:"jwt"`
+	SMTP     SMTPConfig     `mapstructure:"smtp"`
 }
 
 type ServerConfig struct {
@@ -21,23 +24,40 @@ type DatabaseConfig struct {
 	Path string `mapstructure:"path"` // SQLite 数据库文件路径
 }
 
+// JWTConfig 认证配置
 type JWTConfig struct {
-	Secret     string `mapstructure:"secret"`
-	ExpireHour int    `mapstructure:"expire_hour"`
+	Secret    string `mapstructure:"secret"`
+	ExpireMin int    `mapstructure:"expire_min"` // access token 有效期（分钟），默认 120
+}
+
+// SMTPConfig 邮件发送配置
+type SMTPConfig struct {
+	Host     string `mapstructure:"host"`
+	Port     int    `mapstructure:"port"`
+	Username string `mapstructure:"username"`
+	Password string `mapstructure:"password"`
+	From     string `mapstructure:"from"`
+	Insecure bool   `mapstructure:"insecure"` // 开发环境关闭 TLS 校验
 }
 
 var AppConfig *Config
 
 func LoadConfig(path string) error {
+	// 加载 .env（存在才生效），使敏感配置可通过环境变量覆盖（如 SMTP_PASSWORD / JWT_SECRET）
+	_ = godotenv.Load()
+
 	viper.SetConfigFile(path)
 	viper.SetConfigType("yaml")
+	// 开启自动读环境变量，将嵌套键 smtp.password 映射为 SMTP_PASSWORD
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	viper.AutomaticEnv()
 
 	// 设置默认值
 	viper.SetDefault("server.port", 8080)
 	viper.SetDefault("server.mode", "debug")
 	viper.SetDefault("database.path", "ebook.db")
 	viper.SetDefault("jwt.secret", "ebook-secret-key")
-	viper.SetDefault("jwt.expire_hour", 72)
+	viper.SetDefault("jwt.expire_min", 120)
 
 	if err := viper.ReadInConfig(); err != nil {
 		return fmt.Errorf("failed to read config: %w", err)

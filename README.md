@@ -78,8 +78,16 @@ make docker
 
 | 方法 | 路径 | 说明 | 认证 |
 |------|------|------|------|
-| POST | /api/auth/register | 用户注册 | 否 |
-| POST | /api/auth/login | 用户登录 | 否 |
+| POST | /api/auth/send-code | 按邮箱发送验证码 | 否 |
+| POST | /api/auth/register | 注册（邮箱+验证码+密码），激活建号，不发 token | 否 |
+| POST | /api/auth/login | 邮箱+密码登录，返回双 token | 否 |
+| POST | /api/auth/refresh | 刷新 token（轮换） | 否（用 refresh token） |
+| POST | /api/auth/logout | 登出 | 是 |
+| POST | /api/auth/forgot-password/send-code | 忘记密码发邮箱验证码 | 否 |
+| POST | /api/auth/forgot-password/reset | 验证码重置密码 | 否 |
+
+> **账号模型**：`email` 是登录主标识（唯一必填），`uid` 是主键，`username` 非空但
+> 可重复（注册时自动生成，可后改）。详见 [ADR-0002](docs/adr/0002-email-based-registration-and-account-model.md)。
 
 ### 用户相关
 
@@ -87,6 +95,7 @@ make docker
 |------|------|------|------|
 | GET | /api/users/me | 获取当前用户信息 | 是 |
 | PUT | /api/users/me | 更新用户信息 | 是 |
+| PUT | /api/users/me/password | 已登录修改密码 | 是 |
 
 ### 评论相关
 
@@ -106,17 +115,32 @@ make docker
 
 ## 请求示例
 
+> **统一响应信封**：所有业务端点 HTTP 状态码恒为 200，通过 `code` 业务码区分成败
+> （`"00000"` 表示成功），错误文案位于 `error` 字段，可直达移动端 Toast。
+
+### 发送验证码
+
+前端点击「发送验证码」时调用：
+
+```bash
+curl -X POST http://localhost:8080/api/auth/send-code \
+  -H "Content-Type: application/json" \
+  -d '{"email": "test@example.com"}'
+```
+
 ### 注册
 
 ```bash
 curl -X POST http://localhost:8080/api/auth/register \
   -H "Content-Type: application/json" \
   -d '{
-    "username": "testuser",
-    "password": "123456",
-    "email": "test@example.com"
+    "email": "test@example.com",
+    "code": "123456",
+    "password": "123456"
   }'
 ```
+
+注册成功（激活建号，**不发 token**），返回 `code 00000`。
 
 ### 登录
 
@@ -124,9 +148,46 @@ curl -X POST http://localhost:8080/api/auth/register \
 curl -X POST http://localhost:8080/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{
-    "username": "testuser",
+    "email": "test@example.com",
     "password": "123456"
   }'
+```
+
+登录成功（返回双 token）：
+
+```json
+{
+  "code": "00000",
+  "error": "",
+  "data": {
+    "token": "eyJ...",
+    "refresh_token": "a1b2c3...",
+    "user": {
+      "uid": 1,
+      "email": "test@example.com",
+      "username": "user_1a2b3c4d",
+      "nickname": "user_1a2b3c4d",
+      "avatar": ""
+    }
+  }
+}
+```
+
+### 刷新 token
+
+```bash
+curl -X POST http://localhost:8080/api/auth/refresh \
+  -H "Content-Type: application/json" \
+  -d '{"refresh_token": "a1b2c3..."}'
+```
+
+### 已登录修改密码
+
+```bash
+curl -X PUT http://localhost:8080/api/users/me/password \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <access-token>" \
+  -d '{"old_password": "123456", "new_password": "654321"}'
 ```
 
 ### 获取用户信息
@@ -175,8 +236,19 @@ database:
 
 jwt:
   secret: your-secret-key  # JWT 密钥（请修改）
-  expire_hour: 72          # Token 过期时间（小时）
+  expire_min: 120          # access token 过期时间（分钟）
+
+smtp:
+  host: smtp.example.com   # SMTP 服务器（留空则验证码写日志）
+  port: 465                # 465 走 TLS；587 走 STARTTLS
+  username: no-reply@example.com
+  password: change-me      # 真实授权码放 .env 的 SMTP_PASSWORD
+  from: no-reply@example.com
+  insecure: false
 ```
+
+> 敏感项走本地 `.env`（已被 git 排除）：`SMTP_PASSWORD` 覆盖 `smtp.password`，
+> `JWT_SECRET` 覆盖 `jwt.secret`。见 `.env.example`。
 
 ## 开发说明
 

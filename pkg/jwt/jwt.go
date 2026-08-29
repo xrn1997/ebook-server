@@ -13,16 +13,16 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-// GenerateToken 生成 JWT Token
+// GenerateToken 生成 access token（短效，分钟级）
 func GenerateToken(userID uint, username string) (string, error) {
 	secret := config.AppConfig.JWT.Secret
-	expireHour := config.AppConfig.JWT.ExpireHour
+	expireMin := config.AppConfig.JWT.ExpireMin
 
 	claims := Claims{
 		UserID:   userID,
 		Username: username,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Duration(expireHour) * time.Hour)),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Duration(expireMin) * time.Minute)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			Issuer:    "ebook-server",
 		},

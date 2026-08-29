@@ -28,20 +28,20 @@ func TestOperationLogTableName(t *testing.T) {
 
 func TestUserFields(t *testing.T) {
 	user := User{
-		ID:       1,
-		Username: "testuser",
+		UID:      1,
 		Email:    "test@example.com",
+		Username: "testuser",
 		Avatar:   "https://example.com/avatar.jpg",
 	}
 
-	if user.ID != 1 {
-		t.Errorf("Expected ID 1, got %d", user.ID)
-	}
-	if user.Username != "testuser" {
-		t.Errorf("Expected username 'testuser', got '%s'", user.Username)
+	if user.UID != 1 {
+		t.Errorf("Expected UID 1, got %d", user.UID)
 	}
 	if user.Email != "test@example.com" {
 		t.Errorf("Expected email 'test@example.com', got '%s'", user.Email)
+	}
+	if user.Username != "testuser" {
+		t.Errorf("Expected username 'testuser', got '%s'", user.Username)
 	}
 }
 
@@ -86,47 +86,22 @@ func TestOperationLogFields(t *testing.T) {
 	}
 }
 
-func TestRegisterRequestValidation(t *testing.T) {
-	tests := []struct {
-		name     string
-		req      RegisterRequest
-		wantErr  bool
-	}{
-		{
-			name: "valid request",
-			req: RegisterRequest{
-				Username: "testuser",
-				Password: "123456",
-				Email:    "test@example.com",
-			},
-			wantErr: false,
-		},
-		{
-			name: "username too short",
-			req: RegisterRequest{
-				Username: "ab",
-				Password: "123456",
-			},
-			wantErr: true,
-		},
-		{
-			name: "password too short",
-			req: RegisterRequest{
-				Username: "testuser",
-				Password: "123",
-			},
-			wantErr: true,
-		},
+func TestRegisterRequestFields(t *testing.T) {
+	req := RegisterRequest{
+		Email:    "test@example.com",
+		Code:     "123456",
+		Password: "123456",
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Note: This tests the struct definition, not the binding validation
-			// Binding validation is tested in handler tests
-			if tt.req.Username == "" && !tt.wantErr {
-				t.Error("Username should not be empty")
-			}
-		})
+	// 校验结构体字段承载（gin binding 标签在 handler 层触发，这里仅确认结构存在）
+	if req.Email == "" {
+		t.Error("Email should not be empty")
+	}
+	if len(req.Code) != 6 {
+		t.Errorf("Code should be 6-digit, got %q", req.Code)
+	}
+	if req.Password == "" {
+		t.Error("Password should not be empty")
 	}
 }
 
