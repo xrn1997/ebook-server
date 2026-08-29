@@ -1,9 +1,31 @@
-# Binaries
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Project binary
 ebook-server
-ebook-server.exe
+
+# Test binary, built with `go test -c`
+*.test
+
+# Code coverage profiles and other test artifacts
+*.out
+coverage.*
+*.coverprofile
+profile.cov
 
 # Database
 *.db
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+go.work.sum
 
 # Logs
 logs/
@@ -20,9 +42,6 @@ logs/
 # OS
 .DS_Store
 Thumbs.db
-
-# Go
-vendor/
 
 # Backup
 config.yaml.backup
