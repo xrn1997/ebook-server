@@ -1,0 +1,10 @@
+server:
+  port: 9090
+  mode: debug  # debug, release, test
+
+database:
+  path: ebook.db  # SQLite 数据库文件路径
+
+jwt:
+  secret: your-secret-key-change-this
+  expire_hour: 72

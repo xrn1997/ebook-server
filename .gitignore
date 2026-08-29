@@ -1,0 +1,28 @@
+# Binaries
+ebook-server
+ebook-server.exe
+
+# Database
+*.db
+
+# Logs
+logs/
+
+# Environment
+.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Go
+vendor/
+
+# Backup
+config.yaml.backup

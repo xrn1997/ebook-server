@@ -1,0 +1,278 @@
+# ebook-server
+
+一个基于 Go + Gin 的轻量级小说阅读器后端服务。
+
+## 技术栈
+
+- **语言**: Go 1.22
+- **Web 框架**: Gin
+- **ORM**: GORM
+- **认证**: JWT
+- **配置**: Viper
+- **日志**: Zap
+- **数据库**: SQLite（零配置，单文件数据库）
+
+## 项目结构
+
+```
+ebook-server/
+├── main.go              # 程序入口
+├── config/              # 配置管理
+├── middleware/           # 中间件
+├── model/               # 数据模型
+├── handler/             # API 处理器
+├── service/             # 业务逻辑
+├── repository/          # 数据访问
+├── pkg/                 # 公共组件
+├── sql/                 # 数据库脚本
+├── Dockerfile           # Docker 构建
+└── Makefile             # 常用命令
+```
+
+## 快速开始
+
+### 环境要求
+
+- Go 1.22+
+- 无需安装数据库（SQLite 自动创建）
+
+### 安装步骤
+
+1. **克隆项目**
+   ```bash
+   git clone <repository-url>
+   cd ebook-server
+   ```
+
+2. **安装依赖**
+   ```bash
+   go mod tidy
+   ```
+
+3. **运行项目**
+   ```bash
+   go run main.go
+   ```
+
+   首次运行会自动创建 `ebook.db` 数据库文件。
+
+### 使用 Makefile
+
+```bash
+# 构建
+make build
+
+# 运行
+make run
+
+# 清理
+make clean
+
+# Docker 构建
+make docker
+```
+
+## API 接口
+
+### 认证相关
+
+| 方法 | 路径 | 说明 | 认证 |
+|------|------|------|------|
+| POST | /api/auth/register | 用户注册 | 否 |
+| POST | /api/auth/login | 用户登录 | 否 |
+
+### 用户相关
+
+| 方法 | 路径 | 说明 | 认证 |
+|------|------|------|------|
+| GET | /api/users/me | 获取当前用户信息 | 是 |
+| PUT | /api/users/me | 更新用户信息 | 是 |
+
+### 评论相关
+
+| 方法 | 路径 | 说明 | 认证 |
+|------|------|------|------|
+| GET | /api/comments | 获取评论列表 | 否 |
+| POST | /api/comments | 创建评论 | 是 |
+| GET | /api/comments/my | 获取我的评论 | 是 |
+| DELETE | /api/comments/:id | 删除评论 | 是 |
+
+### 日志相关
+
+| 方法 | 路径 | 说明 | 认证 |
+|------|------|------|------|
+| GET | /api/logs | 获取操作日志 | 是 |
+| GET | /api/logs/my | 获取我的操作日志 | 是 |
+
+## 请求示例
+
+### 注册
+
+```bash
+curl -X POST http://localhost:8080/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "testuser",
+    "password": "123456",
+    "email": "test@example.com"
+  }'
+```
+
+### 登录
+
+```bash
+curl -X POST http://localhost:8080/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "testuser",
+    "password": "123456"
+  }'
+```
+
+### 获取用户信息
+
+```bash
+curl http://localhost:8080/api/users/me \
+  -H "Authorization: Bearer <your-token>"
+```
+
+### 创建评论
+
+```bash
+curl -X POST http://localhost:8080/api/comments \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <your-token>" \
+  -d '{
+    "content": "这是一条评论"
+  }'
+```
+
+## Docker 部署
+
+### 构建镜像
+
+```bash
+docker build -t ebook-server .
+```
+
+### 运行容器
+
+```bash
+docker run -p 8080:8080 ebook-server
+```
+
+## 配置说明
+
+配置文件 `config.yaml`：
+
+```yaml
+server:
+  port: 8080          # 服务端口
+  mode: debug         # 运行模式: debug, release, test
+
+database:
+  path: ebook.db      # SQLite 数据库文件路径
+
+jwt:
+  secret: your-secret-key  # JWT 密钥（请修改）
+  expire_hour: 72          # Token 过期时间（小时）
+```
+
+## 开发说明
+
+### 添加新接口
+
+1. 在 `model/` 中定义数据模型
+2. 在 `repository/` 中实现数据访问
+3. 在 `service/` 中实现业务逻辑
+4. 在 `handler/` 中实现 API 处理
+5. 在 `main.go` 中注册路由
+
+### 数据库迁移
+
+项目使用 GORM 自动迁移，启动时会自动创建/更新表结构。
+
+## 测试
+
+### 运行测试
+
+```bash
+# 运行所有测试
+go test ./...
+
+# 运行测试并显示详细信息
+go test -v ./...
+
+# 运行测试并生成覆盖率报告
+go test -cover ./...
+
+# 生成详细的覆盖率报告
+go test -coverprofile=coverage.out ./...
+go tool cover -html=coverage.out -o coverage.html
+
+# 运行指定包的测试
+go test -v ./model/...
+go test -v ./service/...
+go test -v ./handler/...
+
+# 运行指定测试函数
+go test -v -run TestGenerateToken ./pkg/jwt/...
+```
+
+### 测试结构
+
+```
+ebook-server/
+├── model/
+│   └── model_test.go          # 模型测试
+├── pkg/
+│   ├── jwt/
+│   │   └── jwt_test.go        # JWT 工具测试
+│   └── logger/
+│       └── logger_test.go     # 日志测试
+├── service/
+│   ├── auth_test.go           # 认证服务测试
+│   ├── user_test.go           # 用户服务测试
+│   └── comment_test.go        # 评论服务测试
+└── handler/
+    ├── auth_test.go           # 认证接口测试
+    ├── user_test.go           # 用户接口测试
+    └── comment_test.go        # 评论接口测试
+```
+
+### 测试覆盖率目标
+
+- **model**: > 90%
+- **pkg**: > 85%
+- **service**: > 80%
+- **handler**: > 75%
+
+详细测试文档请查看 [TESTING.md](TESTING.md)
+
+### 测试类型
+
+1. **单元测试**: 测试单个函数/方法的逻辑
+2. **集成测试**: 测试模块间的交互
+3. **接口测试**: 测试 HTTP API 的请求和响应
+
+### 使用 testify 增强测试
+
+```bash
+go get -u github.com/stretchr/testify
+```
+
+```go
+import (
+    "github.com/stretchr/testify/assert"
+    "github.com/stretchr/testify/require"
+)
+
+func TestSomething(t *testing.T) {
+    assert.Equal(t, expected, actual)
+    require.NoError(t, err)
+}
+```
+
+## License
+
+MIT
