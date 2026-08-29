@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 
 	"ebook-server/config"
+	"ebook-server/middleware"
 	"ebook-server/model"
 	"ebook-server/pkg/code"
 	"ebook-server/pkg/database"
@@ -31,7 +31,7 @@ func setupHandlerTestDB(t *testing.T) {
 			ExpireMin: 1,
 		},
 		Database: config.DatabaseConfig{
-			Path: "test_handler.db",
+			Path: ":memory:",
 		},
 	}
 
@@ -48,7 +48,6 @@ func cleanupHandlerTestDB(t *testing.T) {
 	sqlDB, _ := database.GetDB().DB()
 	sqlDB.Close()
 	database.DB = nil
-	os.Remove("test_handler.db")
 }
 
 func TestAuthHandler_Register_Success(t *testing.T) {
@@ -298,4 +297,275 @@ func registerRegister(t *testing.T, router *gin.Engine, email string) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	assertErrorCode(t, w.Body.Bytes(), "00000")
+}
+
+func TestAuthHandler_Logout_Success(t *testing.T) {
+	setupHandlerTestDB(t)
+	defer cleanupHandlerTestDB(t)
+
+	router := setupRouter()
+	authHandler := NewAuthHandler()
+	router.POST("/api/auth/register", authHandler.Register)
+	router.POST("/api/auth/login", authHandler.Login)
+	router.POST("/api/auth/logout", middleware.JWTAuth(), authHandler.Logout)
+
+	uid, token := registerUser(t, router, "logout@example.com")
+	_ = uid
+
+	req, _ := http.NewRequest("POST", "/api/auth/logout", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assertErrorCode(t, w.Body.Bytes(), "00000")
+}
+
+func TestAuthHandler_Logout_NoAuth(t *testing.T) {
+	setupHandlerTestDB(t)
+	defer cleanupHandlerTestDB(t)
+
+	router := setupRouter()
+	authHandler := NewAuthHandler()
+	router.POST("/api/auth/logout", authHandler.Logout)
+
+	req, _ := http.NewRequest("POST", "/api/auth/logout", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assertErrorCode(t, w.Body.Bytes(), "A0230")
+}
+
+func TestAuthHandler_Refresh_Success(t *testing.T) {
+	setupHandlerTestDB(t)
+	defer cleanupHandlerTestDB(t)
+
+	router := setupRouter()
+	authHandler := NewAuthHandler()
+	router.POST("/api/auth/register", authHandler.Register)
+	router.POST("/api/auth/login", authHandler.Login)
+	router.POST("/api/auth/refresh", authHandler.Refresh)
+
+	email := "refresh-success@example.com"
+	registerUser(t, router, email)
+
+	// 登录取 refresh token
+	loginBody := map[string]string{"email": email, "password": "password123"}
+	jsonBody, _ := json.Marshal(loginBody)
+	req, _ := http.NewRequest("POST", "/api/auth/login", bytes.NewBuffer(jsonBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	loginData := decodeData(t, w.Body.Bytes())
+	refreshToken := loginData["refresh_token"].(string)
+
+	// 刷新
+	refreshBody := map[string]string{"refresh_token": refreshToken}
+	jsonBody, _ = json.Marshal(refreshBody)
+	req, _ = http.NewRequest("POST", "/api/auth/refresh", bytes.NewBuffer(jsonBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	data := decodeData(t, w.Body.Bytes())
+	if _, ok := data["token"]; !ok {
+		t.Error("Expected token in refresh response")
+	}
+	if _, ok := data["refresh_token"]; !ok {
+		t.Error("Expected refresh_token in refresh response")
+	}
+}
+
+func TestAuthHandler_ForgotPasswordSendCode_Success(t *testing.T) {
+	setupHandlerTestDB(t)
+	defer cleanupHandlerTestDB(t)
+
+	router := setupRouter()
+	authHandler := NewAuthHandler()
+	router.POST("/api/auth/register", authHandler.Register)
+	router.POST("/api/auth/login", authHandler.Login)
+	router.POST("/api/auth/forgot-password/send-code", authHandler.ForgotPasswordSendCode)
+
+	email := "forgot-send@example.com"
+	registerUser(t, router, email)
+
+	body := map[string]string{"email": email}
+	jsonBody, _ := json.Marshal(body)
+	req, _ := http.NewRequest("POST", "/api/auth/forgot-password/send-code", bytes.NewBuffer(jsonBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assertErrorCode(t, w.Body.Bytes(), "00000")
+}
+
+func TestAuthHandler_ForgotPasswordSendCode_RateLimited(t *testing.T) {
+	setupHandlerTestDB(t)
+	defer cleanupHandlerTestDB(t)
+
+	router := setupRouter()
+	authHandler := NewAuthHandler()
+	router.POST("/api/auth/register", authHandler.Register)
+	router.POST("/api/auth/login", authHandler.Login)
+	router.POST("/api/auth/forgot-password/send-code", authHandler.ForgotPasswordSendCode)
+
+	email := "forgot-rate@example.com"
+	registerUser(t, router, email)
+
+	// 第一次成功
+	body := map[string]string{"email": email}
+	jsonBody, _ := json.Marshal(body)
+	req, _ := http.NewRequest("POST", "/api/auth/forgot-password/send-code", bytes.NewBuffer(jsonBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	assertErrorCode(t, w.Body.Bytes(), "00000")
+
+	// 第二次限流
+	jsonBody, _ = json.Marshal(body)
+	req, _ = http.NewRequest("POST", "/api/auth/forgot-password/send-code", bytes.NewBuffer(jsonBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	assertErrorCode(t, w.Body.Bytes(), "A0241")
+}
+
+func TestAuthHandler_ForgotPasswordReset_Success(t *testing.T) {
+	setupHandlerTestDB(t)
+	defer cleanupHandlerTestDB(t)
+
+	router := setupRouter()
+	authHandler := NewAuthHandler()
+	router.POST("/api/auth/register", authHandler.Register)
+	router.POST("/api/auth/login", authHandler.Login)
+	router.POST("/api/auth/forgot-password/reset", authHandler.ForgotPasswordReset)
+
+	email := "forgot-reset@example.com"
+	registerUser(t, router, email)
+
+	// 注入找回密码验证码
+	code.Default().Set("forgot:"+email, testCode)
+
+	body := map[string]string{
+		"email":        email,
+		"code":         testCode,
+		"new_password": "newpass456",
+	}
+	jsonBody, _ := json.Marshal(body)
+	req, _ := http.NewRequest("POST", "/api/auth/forgot-password/reset", bytes.NewBuffer(jsonBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assertErrorCode(t, w.Body.Bytes(), "00000")
+
+	// 验证新密码可以登录
+	loginBody := map[string]string{"email": email, "password": "newpass456"}
+	jsonBody, _ = json.Marshal(loginBody)
+	req, _ = http.NewRequest("POST", "/api/auth/login", bytes.NewBuffer(jsonBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	decodeData(t, w.Body.Bytes())
+}
+
+func TestAuthHandler_ForgotPasswordReset_WrongCode(t *testing.T) {
+	setupHandlerTestDB(t)
+	defer cleanupHandlerTestDB(t)
+
+	router := setupRouter()
+	authHandler := NewAuthHandler()
+	router.POST("/api/auth/register", authHandler.Register)
+	router.POST("/api/auth/login", authHandler.Login)
+	router.POST("/api/auth/forgot-password/reset", authHandler.ForgotPasswordReset)
+
+	email := "forgot-wrong@example.com"
+	registerUser(t, router, email)
+
+	code.Default().Set("forgot:"+email, "000000")
+
+	body := map[string]string{
+		"email":        email,
+		"code":         "111111",
+		"new_password": "newpass456",
+	}
+	jsonBody, _ := json.Marshal(body)
+	req, _ := http.NewRequest("POST", "/api/auth/forgot-password/reset", bytes.NewBuffer(jsonBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assertErrorCode(t, w.Body.Bytes(), "A0132")
+}
+
+func TestAuthHandler_ForgotPasswordReset_InvalidJSON(t *testing.T) {
+	setupHandlerTestDB(t)
+	defer cleanupHandlerTestDB(t)
+
+	router := setupRouter()
+	authHandler := NewAuthHandler()
+	router.POST("/api/auth/forgot-password/reset", authHandler.ForgotPasswordReset)
+
+	req, _ := http.NewRequest("POST", "/api/auth/forgot-password/reset", bytes.NewBuffer([]byte("invalid")))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assertErrorCode(t, w.Body.Bytes(), "A0400")
+}
+
+func TestAuthHandler_ForgotPasswordReset_AccountNotFound(t *testing.T) {
+	setupHandlerTestDB(t)
+	defer cleanupHandlerTestDB(t)
+
+	router := setupRouter()
+	authHandler := NewAuthHandler()
+	router.POST("/api/auth/forgot-password/reset", authHandler.ForgotPasswordReset)
+
+	email := "ghost-forgot@example.com"
+	code.Default().Set("forgot:"+email, testCode)
+
+	body := map[string]string{
+		"email":        email,
+		"code":         testCode,
+		"new_password": "newpass456",
+	}
+	jsonBody, _ := json.Marshal(body)
+	req, _ := http.NewRequest("POST", "/api/auth/forgot-password/reset", bytes.NewBuffer(jsonBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assertErrorCode(t, w.Body.Bytes(), "A0201")
+}
+
+func TestAuthHandler_ForgotPasswordSendCode_InvalidJSON(t *testing.T) {
+	setupHandlerTestDB(t)
+	defer cleanupHandlerTestDB(t)
+
+	router := setupRouter()
+	authHandler := NewAuthHandler()
+	router.POST("/api/auth/forgot-password/send-code", authHandler.ForgotPasswordSendCode)
+
+	req, _ := http.NewRequest("POST", "/api/auth/forgot-password/send-code", bytes.NewBuffer([]byte("invalid")))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assertErrorCode(t, w.Body.Bytes(), "A0400")
+}
+
+func TestAuthHandler_SendCode_InvalidJSON(t *testing.T) {
+	setupHandlerTestDB(t)
+	defer cleanupHandlerTestDB(t)
+
+	router := setupRouter()
+	authHandler := NewAuthHandler()
+	router.POST("/api/auth/send-code", authHandler.SendCode)
+
+	req, _ := http.NewRequest("POST", "/api/auth/send-code", bytes.NewBuffer([]byte("invalid")))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assertErrorCode(t, w.Body.Bytes(), "A0400")
 }

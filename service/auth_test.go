@@ -259,3 +259,94 @@ func TestAuthService_ResetPassword_Success(t *testing.T) {
 		t.Errorf("Expected login with new password after reset, got %v", err)
 	}
 }
+
+func TestAuthService_Logout_Success(t *testing.T) {
+	setupTestDB(t)
+	defer cleanupTestDB(t)
+
+	authService := NewAuthService()
+	email := "svc-logout@example.com"
+	user := serviceRegister(t, authService, email, "password123")
+
+	// 登录生成 token
+	pair, _ := authService.Login(&model.LoginRequest{Email: email, Password: "password123"})
+	if pair.RefreshToken == "" {
+		t.Fatal("Expected refresh token after login")
+	}
+
+	// 登出
+	if err := authService.Logout(user.UID); err != nil {
+		t.Fatalf("Failed to logout: %v", err)
+	}
+
+	// 登出后 refresh token 应失效
+	_, err := authService.Refresh(pair.RefreshToken)
+	if err != model.ErrLoginExpired {
+		t.Errorf("Expected ErrLoginExpired after logout, got %v", err)
+	}
+}
+
+func TestAuthService_ChangePassword_UserNotFound(t *testing.T) {
+	setupTestDB(t)
+	defer cleanupTestDB(t)
+
+	authService := NewAuthService()
+	err := authService.ChangePassword(999999, "old", "new")
+	if err != model.ErrUserNotFound {
+		t.Errorf("Expected ErrUserNotFound, got %v", err)
+	}
+}
+
+func TestAuthService_ChangePassword_WrongOldPassword(t *testing.T) {
+	setupTestDB(t)
+	defer cleanupTestDB(t)
+
+	authService := NewAuthService()
+	email := "svc-changepwd-wrong@example.com"
+	user := serviceRegister(t, authService, email, "password123")
+
+	err := authService.ChangePassword(user.UID, "wrongold", "newpass")
+	if err != model.ErrPasswordWrong {
+		t.Errorf("Expected ErrPasswordWrong, got %v", err)
+	}
+}
+
+func TestAuthService_ResetPassword_WrongCode(t *testing.T) {
+	setupTestDB(t)
+	defer cleanupTestDB(t)
+
+	authService := NewAuthService()
+	email := "svc-reset-wrong@example.com"
+	serviceRegister(t, authService, email, "password123")
+
+	code.Default().Set("forgot:"+email, "000000")
+	err := authService.ResetPassword(email, "111111", "newpass456")
+	if err != model.ErrCodeInvalid {
+		t.Errorf("Expected ErrCodeInvalid, got %v", err)
+	}
+}
+
+func TestAuthService_ResetPassword_AccountNotFound(t *testing.T) {
+	setupTestDB(t)
+	defer cleanupTestDB(t)
+
+	authService := NewAuthService()
+	email := "ghost-reset@example.com"
+
+	code.Default().Set("forgot:"+email, serviceTestCode)
+	err := authService.ResetPassword(email, serviceTestCode, "newpass456")
+	if err != model.ErrAccountNotFound {
+		t.Errorf("Expected ErrAccountNotFound, got %v", err)
+	}
+}
+
+func TestAuthService_Login_InvalidTokenRefresh(t *testing.T) {
+	setupTestDB(t)
+	defer cleanupTestDB(t)
+
+	authService := NewAuthService()
+	_, err := authService.Refresh("nonexistent-token")
+	if err != model.ErrLoginExpired {
+		t.Errorf("Expected ErrLoginExpired, got %v", err)
+	}
+}

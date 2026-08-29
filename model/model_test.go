@@ -26,6 +26,13 @@ func TestOperationLogTableName(t *testing.T) {
 	}
 }
 
+func TestRefreshTokenTableName(t *testing.T) {
+	token := RefreshToken{}
+	if token.TableName() != "refresh_tokens" {
+		t.Errorf("Expected 'refresh_tokens', got '%s'", token.TableName())
+	}
+}
+
 func TestUserFields(t *testing.T) {
 	user := User{
 		UID:      1,

@@ -176,3 +176,77 @@ func TestUserHandler_ChangePassword_WrongOldPassword(t *testing.T) {
 
 	assertErrorCode(t, w.Body.Bytes(), "A0210")
 }
+
+func TestUserHandler_UpdateMe_NoAuth(t *testing.T) {
+	router := setupRouter()
+	userHandler := NewUserHandler()
+	router.PUT("/api/users/me", middleware.JWTAuth(), userHandler.UpdateMe)
+
+	body := map[string]string{"username": "newname"}
+	jsonBody, _ := json.Marshal(body)
+	req, _ := http.NewRequest("PUT", "/api/users/me", bytes.NewBuffer(jsonBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assertErrorCode(t, w.Body.Bytes(), "A0230")
+}
+
+func TestUserHandler_UpdateMe_InvalidJSON(t *testing.T) {
+	setupHandlerTestDB(t)
+	defer cleanupHandlerTestDB(t)
+
+	router := setupRouter()
+	authHandler := NewAuthHandler()
+	userHandler := NewUserHandler()
+	router.POST("/api/auth/register", authHandler.Register)
+	router.POST("/api/auth/login", authHandler.Login)
+	router.PUT("/api/users/me", middleware.JWTAuth(), userHandler.UpdateMe)
+
+	_, token := registerUser(t, router, "invalidjson@example.com")
+
+	req, _ := http.NewRequest("PUT", "/api/users/me", bytes.NewBuffer([]byte("invalid")))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assertErrorCode(t, w.Body.Bytes(), "A0400")
+}
+
+func TestUserHandler_ChangePassword_NoAuth(t *testing.T) {
+	router := setupRouter()
+	userHandler := NewUserHandler()
+	router.PUT("/api/users/me/password", middleware.JWTAuth(), userHandler.ChangePassword)
+
+	body := map[string]string{"old_password": "old", "new_password": "new"}
+	jsonBody, _ := json.Marshal(body)
+	req, _ := http.NewRequest("PUT", "/api/users/me/password", bytes.NewBuffer(jsonBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assertErrorCode(t, w.Body.Bytes(), "A0230")
+}
+
+func TestUserHandler_ChangePassword_InvalidJSON(t *testing.T) {
+	setupHandlerTestDB(t)
+	defer cleanupHandlerTestDB(t)
+
+	router := setupRouter()
+	authHandler := NewAuthHandler()
+	userHandler := NewUserHandler()
+	router.POST("/api/auth/register", authHandler.Register)
+	router.POST("/api/auth/login", authHandler.Login)
+	router.PUT("/api/users/me/password", middleware.JWTAuth(), userHandler.ChangePassword)
+
+	_, token := registerUser(t, router, "invalidpwd@example.com")
+
+	req, _ := http.NewRequest("PUT", "/api/users/me/password", bytes.NewBuffer([]byte("invalid")))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assertErrorCode(t, w.Body.Bytes(), "A0400")
+}

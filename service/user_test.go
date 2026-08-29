@@ -1,57 +1,13 @@
 package service
 
 import (
-	"ebook-server/config"
 	"ebook-server/model"
-	"ebook-server/pkg/database"
 	"testing"
 )
 
-func setupUserTestDB(t *testing.T) {
-	t.Helper()
-
-	// 重置数据库连接
-	if database.DB != nil {
-		sqlDB, _ := database.DB.DB()
-		if sqlDB != nil {
-			sqlDB.Close()
-		}
-		database.DB = nil
-	}
-
-	// 确保配置已初始化
-	if config.AppConfig == nil {
-		config.AppConfig = &config.Config{
-			JWT: config.JWTConfig{
-				Secret:    "test-secret",
-				ExpireMin: 1,
-			},
-		}
-	}
-	config.AppConfig.Database.Path = ":memory:"
-
-	if err := database.Init(); err != nil {
-		t.Fatalf("Failed to init test database: %v", err)
-	}
-
-	testDB = database.GetDB()
-	testDB.AutoMigrate(&model.User{}, &model.Comment{}, &model.OperationLog{}, &model.RefreshToken{})
-}
-
-func cleanupUserTestDB(t *testing.T) {
-	t.Helper()
-	if database.DB != nil {
-		sqlDB, _ := database.DB.DB()
-		if sqlDB != nil {
-			sqlDB.Close()
-		}
-		database.DB = nil
-	}
-}
-
 func TestUserService_GetByID_Success(t *testing.T) {
-	setupUserTestDB(t)
-	defer cleanupUserTestDB(t)
+	setupTestDB(t)
+	defer cleanupTestDB(t)
 
 	// 先创建用户
 	authService := NewAuthService()
@@ -70,8 +26,8 @@ func TestUserService_GetByID_Success(t *testing.T) {
 }
 
 func TestUserService_GetByUID_UserNotFound(t *testing.T) {
-	setupUserTestDB(t)
-	defer cleanupUserTestDB(t)
+	setupTestDB(t)
+	defer cleanupTestDB(t)
 
 	userService := NewUserService()
 
@@ -82,8 +38,8 @@ func TestUserService_GetByUID_UserNotFound(t *testing.T) {
 }
 
 func TestUserService_Update_Success(t *testing.T) {
-	setupUserTestDB(t)
-	defer cleanupUserTestDB(t)
+	setupTestDB(t)
+	defer cleanupTestDB(t)
 
 	// 创建用户
 	authService := NewAuthService()
@@ -112,8 +68,8 @@ func TestUserService_Update_Success(t *testing.T) {
 }
 
 func TestUserService_Update_UserNotFound(t *testing.T) {
-	setupUserTestDB(t)
-	defer cleanupUserTestDB(t)
+	setupTestDB(t)
+	defer cleanupTestDB(t)
 
 	userService := NewUserService()
 
@@ -128,8 +84,8 @@ func TestUserService_Update_UserNotFound(t *testing.T) {
 }
 
 func TestUserService_Update_PartialUpdate(t *testing.T) {
-	setupUserTestDB(t)
-	defer cleanupUserTestDB(t)
+	setupTestDB(t)
+	defer cleanupTestDB(t)
 
 	// 创建用户
 	authService := NewAuthService()
