@@ -90,7 +90,7 @@ sql/             → 数据库初始化脚本（MySQL 参考，实际用 SQLite 
 
 ```
 /health                    → 健康检查（无需认证）
-/api-docs                  → Swagger UI + OpenAPI spec（swag 从 handler 注解生成，`make docs` 更新）
+/api-docs                  → Swagger UI + OpenAPI spec（**公开端口默认关闭**，由 `api_docs.enabled` 控制；后台端口 9091 始终提供，供本机查阅）
 /api/auth/send-code        → 按邮箱发注册/验证码
 /api/auth/register         → 注册（邮箱+验证码+密码），激活建号，不发 token
 /api/auth/login            → 邮箱+密码登录，返回双 token
@@ -103,12 +103,27 @@ sql/             → 数据库初始化脚本（MySQL 参考，实际用 SQLite 
 /api/users/me/data         → 导出我的数据（用户资料+本人评论，需认证）
 /api/users/me/deletion/send-code → 发注销验证码到当前账号邮箱（需认证）
 /api/users/me/deletion     → 注销账号（验证码确认，匿名化并返回数据副本，需认证）
-/api/comments              → 评论列表（公开）/ 创建评论（需认证）
+/api/comments              → 评论列表（公开，支持 chapter_url/book_name 章节过滤）/ 创建评论（需认证，支持章节字段）
 /api/comments/my           → 我的评论（需认证）
-/api/comments/:id          → 删除评论（需认证）
+/api/comments/:id          → 删除评论（需认证，仅本人，非本人 A0303）
+/api/uploads/avatar        → 头像上传（需认证，multipart，返回绝对 URL）
+/uploads/*                 → 上传文件静态访问（公开，仅头像等公开资源）
 /api/logs                  → 操作日志（需认证）
 /api/logs/my               → 我的操作日志（需认证）
 ```
+
+> **后台管理系统（`/admin*`）**：与公开 API 拆分为**独立 Gin 引擎 + 独立监听地址**（网络层隔离）。
+> 公开 API 监听 `0.0.0.0:<server.port>`（默认 9090）；后台默认仅监听
+> `127.0.0.1:<admin.listen_port>`（默认 9091），公网物理上无法连接后台。
+> 后台使用独立 JWT 鉴权（`admin.jwt_secret`，与用户 token 互不可用），登录接口按
+> 来源 IP 限流 5 次/分钟（超限返回 `A0241`）。远程管理请走 SSH 隧道/VPN，
+> 不要直接开放后台端口。需局域网访问时改 `admin.listen_addr` 为内网 IP。
+>
+> **评论与头像契约（ADR-0011）**：评论支持章节归属——`chapter_url`（书源章节 URL，
+> 聚合键）/`chapter_name`/`book_name` 为冗余快照，可选、不校验格式仅限长；
+> 空章节 = 书籍级评论。评论响应用独立视图（user 只含 uid/username/nickname/avatar，
+> add_time 固定上海时区）。头像两步提交：`POST /api/uploads/avatar` 拿 URL →
+> `PUT /api/users/me` 更新；更换头像自动删除本服务旧文件（`upload.dir` 默认 uploads）。
 
 > **注册/账号模型**：`email` 为登录主标识（唯一必填）且**不可变**，`uid` 为主键，`username`
 > 非空但可重复（注册时自动生成，可后改）。改资料时若传了不同的 `email` 返回 `A0113`。
@@ -191,9 +206,20 @@ server:
 database:
   path: ebook.db        # SQLite 数据库文件路径
 
+api_docs:
+  enabled: false        # 公开 API 端口是否提供 Swagger 文档（默认关，防接口清单泄露；联调时改 true）
+
 jwt:
   secret: your-secret-key-change-this  # JWT 密钥（部署时必须修改）
   expire_min: 120                      # access token 过期时间（分钟）
+
+admin:
+  username: admin            # 后台账号
+  password: change-me        # 后台密码（真实值放 .env 的 ADMIN_PASSWORD）
+  jwt_secret: your-admin-secret-change-this  # 管理端 JWT 密钥（.env 的 ADMIN_JWT_SECRET 覆盖）
+  expire_min: 60             # 管理端 token 有效期（分钟）
+  listen_addr: 127.0.0.1     # 后台监听地址：默认仅本机（公网不可达）；局域网访问改内网 IP
+  listen_port: 9091          # 后台监听端口（与公开 API 的 9090 分离）
 
 smtp:
   host: smtp.example.com   # SMTP 服务器
@@ -202,6 +228,9 @@ smtp:
   password: your-smtp-password
   from: no-reply@example.com
   insecure: false          # 开发环境可设为 true 关闭 TLS 校验
+
+upload:
+  dir: uploads             # 上传文件根目录（头像存 <dir>/avatar/，经 /uploads/* 公开）
 ```
 
 > **SMTP 未配置**时，找回密码验证码会退回写入日志（`pkg/mail`），便于本地联调。

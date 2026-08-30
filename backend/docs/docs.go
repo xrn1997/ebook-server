@@ -243,7 +243,7 @@ const docTemplate = `{
         },
         "/api/comments": {
             "get": {
-                "description": "获取所有评论列表",
+                "description": "获取评论列表，可按章节过滤（chapter_url/book_name）",
                 "produces": [
                     "application/json"
                 ],
@@ -252,6 +252,18 @@ const docTemplate = `{
                 ],
                 "summary": "获取评论列表",
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "书源章节 URL（提供则返回该章节评论）",
+                        "name": "chapter_url",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "书名（与 chapter_url 配合二次过滤）",
+                        "name": "book_name",
+                        "in": "query"
+                    },
                     {
                         "type": "integer",
                         "default": 1,
@@ -471,6 +483,43 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/uploads/avatar": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "上传头像图片（multipart/form-data，文件字段名 avatar），返回可访问的图片 URL",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "用户"
+                ],
+                "summary": "上传头像",
+                "parameters": [
+                    {
+                        "type": "file",
+                        "description": "头像图片（jpg/png/webp，≤5MB）",
+                        "name": "avatar",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/model.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/users/me": {
             "get": {
                 "security": [
@@ -669,6 +718,18 @@ const docTemplate = `{
                 "content"
             ],
             "properties": {
+                "book_name": {
+                    "type": "string",
+                    "maxLength": 200
+                },
+                "chapter_name": {
+                    "type": "string",
+                    "maxLength": 200
+                },
+                "chapter_url": {
+                    "type": "string",
+                    "maxLength": 2048
+                },
                 "content": {
                     "type": "string",
                     "maxLength": 1000,

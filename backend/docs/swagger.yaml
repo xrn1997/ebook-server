@@ -2,6 +2,15 @@ basePath: /
 definitions:
   model.CreateCommentRequest:
     properties:
+      book_name:
+        maxLength: 200
+        type: string
+      chapter_name:
+        maxLength: 200
+        type: string
+      chapter_url:
+        maxLength: 2048
+        type: string
       content:
         maxLength: 1000
         minLength: 1
@@ -263,8 +272,16 @@ paths:
       - 认证
   /api/comments:
     get:
-      description: 获取所有评论列表
+      description: 获取评论列表，可按章节过滤（chapter_url/book_name）
       parameters:
+      - description: 书源章节 URL（提供则返回该章节评论）
+        in: query
+        name: chapter_url
+        type: string
+      - description: 书名（与 chapter_url 配合二次过滤）
+        in: query
+        name: book_name
+        type: string
       - default: 1
         description: 页码
         in: query
@@ -407,6 +424,29 @@ paths:
       summary: 获取我的操作日志
       tags:
       - 日志
+  /api/uploads/avatar:
+    post:
+      consumes:
+      - multipart/form-data
+      description: 上传头像图片（multipart/form-data，文件字段名 avatar），返回可访问的图片 URL
+      parameters:
+      - description: 头像图片（jpg/png/webp，≤5MB）
+        in: formData
+        name: avatar
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: 上传头像
+      tags:
+      - 用户
   /api/users/me:
     get:
       description: 获取当前登录用户的信息
