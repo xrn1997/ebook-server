@@ -5,8 +5,16 @@
 *.so
 *.dylib
 
-# Project binary
+# Project binary / 构建产物目录（ADR-0009）
+build/
 ebook-server
+ebook-server.exe
+
+# 后台前端 embed 产物：构建时镜象进 web/，仅保留 .gitkeep 入库
+backend/internal/admin/web/*
+!backend/internal/admin/web/.gitkeep
+frontend/node_modules/
+frontend/dist/
 
 # Test binary, built with `go test -c`
 *.test
