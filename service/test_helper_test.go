@@ -48,9 +48,10 @@ func setupTestDB(t *testing.T) {
 	testCodes = code.NewStore()
 
 	// 测试注入写日志的 Mailer：验证码经 testCodes 直接注入，不走真实邮件
-	testAuth = NewAuthService(users, tokens, testCodes, mail.NewLogMailer())
+	sender := NewVerificationCodeSender(testCodes, mail.NewLogMailer())
+	testAuth = NewAuthService(users, tokens, testCodes, sender)
 	testUsers = NewUserService(users)
-	testAccount = NewAccountService(users, tokens, comments, testCodes, mail.NewLogMailer())
+	testAccount = NewAccountService(users, tokens, comments, testCodes, sender)
 	testComments = NewCommentService(comments)
 	testLogs = NewLogService(logs)
 }

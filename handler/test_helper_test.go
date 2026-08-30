@@ -71,8 +71,9 @@ func newTestApp(t *testing.T) *testApp {
 	testCodes = codes
 
 	// 测试注入写日志的 Mailer：验证码经 codes 直接注入，不走真实邮件
-	authSvc := service.NewAuthService(users, tokens, codes, mail.NewLogMailer())
-	accountSvc := service.NewAccountService(users, tokens, comments, codes, mail.NewLogMailer())
+	sender := service.NewVerificationCodeSender(codes, mail.NewLogMailer())
+	authSvc := service.NewAuthService(users, tokens, codes, sender)
+	accountSvc := service.NewAccountService(users, tokens, comments, codes, sender)
 
 	return &testApp{
 		db:      db,

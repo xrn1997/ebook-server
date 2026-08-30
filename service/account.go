@@ -6,7 +6,6 @@ import (
 
 	"ebook-server/model"
 	"ebook-server/pkg/code"
-	"ebook-server/pkg/ratelimit"
 )
 
 // AccountService 账号生命周期业务服务：数据导出与账号注销（ADR-0005）。
@@ -18,24 +17,18 @@ type AccountService struct {
 	users    UserStore
 	tokens   TokenStore
 	comments CommentStore
-	codes    *code.Store
-	mailer   Mailer
-
-	sendCodeMinute *ratelimit.Limiter // 注销发码限流：每分钟至多 1 次
-	sendCodeHour   *ratelimit.Limiter // 注销发码限流：每小时至多 5 次
+	codes    *code.Store             // 校验验证码（注销）
+	sender   *VerificationCodeSender // 下发验证码（ADR-0008）
 }
 
 // NewAccountService 创建账号生命周期服务实例。
-func NewAccountService(users UserStore, tokens TokenStore, comments CommentStore, codes *code.Store, mailer Mailer) *AccountService {
-	minute, hour := newSendCodeLimiters()
+func NewAccountService(users UserStore, tokens TokenStore, comments CommentStore, codes *code.Store, sender *VerificationCodeSender) *AccountService {
 	return &AccountService{
-		users:          users,
-		tokens:         tokens,
-		comments:       comments,
-		codes:          codes,
-		mailer:         mailer,
-		sendCodeMinute: minute,
-		sendCodeHour:   hour,
+		users:    users,
+		tokens:   tokens,
+		comments: comments,
+		codes:    codes,
+		sender:   sender,
 	}
 }
 
@@ -68,12 +61,7 @@ func (s *AccountService) SendDeletionCode(uid uint) error {
 		return err
 	}
 
-	if err := allowSendCode(s.sendCodeMinute, s.sendCodeHour, sendCodeKey(codeKeyDeletion, user.Email)); err != nil {
-		return err
-	}
-
-	codeVal := s.codes.Save(codeKeyDeletion + user.Email)
-	return s.mailer.SendCode(user.Email, codeVal)
+	return s.sender.Send(FlowDeletion, user.Email)
 }
 
 // Delete 校验注销验证码后匿名化账号，并返回用户数据副本（ADR-0005）。
@@ -93,7 +81,7 @@ func (s *AccountService) Delete(uid uint, codeVal string) (*model.UserDataExport
 		return nil, err
 	}
 
-	switch s.codes.Verify(codeKeyDeletion+user.Email, codeVal) {
+	switch s.codes.Verify(FlowDeletion.prefix()+user.Email, codeVal) {
 	case code.ResultOK:
 		// 校验通过
 	case code.ResultTooManyAttempts:

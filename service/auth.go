@@ -9,7 +9,6 @@ import (
 	"ebook-server/model"
 	"ebook-server/pkg/code"
 	"ebook-server/pkg/jwt"
-	"ebook-server/pkg/ratelimit"
 	"ebook-server/repository"
 
 	"golang.org/x/crypto/bcrypt"
@@ -24,49 +23,31 @@ const (
 	loginLockDuration = 15 * time.Minute
 )
 
-// 验证码存储 key 命名空间，隔离「注册」与「找回密码」两套流程。
-// 同时作为发码限流的键前缀使用（见 sendCodeKey），保证各流程配额独立。
-const (
-	codeKeyRegister = "reg:"
-	codeKeyForgot   = "forgot:"
-	codeKeyDeletion = "del:"
-)
-
 // AuthService 认证业务服务：注册、登录、token 签发与轮换、密码管理。
 //
-// 数据访问依赖以 Store 接口注入，邮件与验证码存储以 adapter/实例注入（ADR-0007）；
-// 发码限流器随实例创建，每个实例拥有独立的配额状态。
+// 数据访问依赖以 Store 接口注入（ADR-0007）；验证码存储仍以具体类型注入（校验用），
+// 下发验证码走 VerificationCodeSender（ADR-0008）。
 // 账号注销与数据导出见 AccountService。
 type AuthService struct {
 	users  UserStore
 	tokens TokenStore
-	codes  *code.Store
-	mailer Mailer
-
-	sendCodeMinute *ratelimit.Limiter // 发码限流：每分钟至多 1 次
-	sendCodeHour   *ratelimit.Limiter // 发码限流：每小时至多 5 次
+	codes  *code.Store             // 校验验证码（注册/找回）
+	sender *VerificationCodeSender // 下发验证码（限流+存码+发信）
 }
 
 // NewAuthService 创建认证服务实例。
-func NewAuthService(users UserStore, tokens TokenStore, codes *code.Store, mailer Mailer) *AuthService {
-	minute, hour := newSendCodeLimiters()
+func NewAuthService(users UserStore, tokens TokenStore, codes *code.Store, sender *VerificationCodeSender) *AuthService {
 	return &AuthService{
-		users:          users,
-		tokens:         tokens,
-		codes:          codes,
-		mailer:         mailer,
-		sendCodeMinute: minute,
-		sendCodeHour:   hour,
+		users:  users,
+		tokens: tokens,
+		codes:  codes,
+		sender: sender,
 	}
 }
 
 // SendCode 发送注册验证码到邮箱（不限账号是否已存在，注册前调用）
 func (s *AuthService) SendCode(email string) error {
-	if err := allowSendCode(s.sendCodeMinute, s.sendCodeHour, sendCodeKey(codeKeyRegister, email)); err != nil {
-		return err
-	}
-	codeVal := s.codes.Save(codeKeyRegister + email)
-	return s.mailer.SendCode(email, codeVal)
+	return s.sender.Send(FlowRegister, email)
 }
 
 // Register 注册：校验验证码 + 密码，激活建号，不发 token
@@ -81,7 +62,7 @@ func (s *AuthService) Register(req *model.RegisterRequest) (*model.User, error) 
 	}
 
 	// 校验注册验证码
-	if s.codes.Verify(codeKeyRegister+req.Email, req.Code) != code.ResultOK {
+	if s.codes.Verify(FlowRegister.prefix()+req.Email, req.Code) != code.ResultOK {
 		return nil, model.ErrCodeInvalid
 	}
 
@@ -210,22 +191,20 @@ func (s *AuthService) ChangePassword(uid uint, oldPassword, newPassword string) 
 
 // SendForgotCode 忘记密码发送验证码（仅账号存在时真实发送，避免枚举）
 func (s *AuthService) SendForgotCode(email string) error {
-	if err := allowSendCode(s.sendCodeMinute, s.sendCodeHour, sendCodeKey(codeKeyForgot, email)); err != nil {
-		return err
-	}
+	// 防枚举（ADR-0006）：账号不存在也返回成功、不发送。这枚存在性检查留在流程调用方，
+	// sender 对账号无感——枚举保护是找回流程的策略，不是「发码」本身的职责。
 	if _, err := s.users.FindByEmail(email); err != nil {
 		if IsRecordNotFound(err) {
 			return nil // 账号不存在也返回成功，不暴露枚举
 		}
 		return err
 	}
-	codeVal := s.codes.Save(codeKeyForgot + email)
-	return s.mailer.SendCode(email, codeVal)
+	return s.sender.Send(FlowForgot, email)
 }
 
 // ResetPassword 验证码重置密码（纯邮箱）
 func (s *AuthService) ResetPassword(email, codeVal, newPassword string) error {
-	switch s.codes.Verify(codeKeyForgot+email, codeVal) {
+	switch s.codes.Verify(FlowForgot.prefix()+email, codeVal) {
 	case code.ResultOK:
 		// 校验通过
 	case code.ResultTooManyAttempts:
@@ -261,15 +240,6 @@ func (s *AuthService) generateUsername() string {
 		return "user00000000"
 	}
 	return "user_" + hex.EncodeToString(buf)
-}
-
-// sendCodeKey 发码限流键：流程前缀 + 邮箱。
-//
-// 必须按流程隔离，否则某一流程（如反复注册）会把同一邮箱的配额打满，
-// 使找回密码等其它流程无法发码——形成跨流程拒绝服务。
-// 前缀直接复用验证码存储命名空间，新增流程时自动获得独立配额。
-func sendCodeKey(flow, email string) string {
-	return flow + email
 }
 
 // issueTokenPayload 签发双 token（纯凭证，不含用户资料）——登录复用其凭证部分、刷新直接使用

@@ -7,10 +7,7 @@
 package service
 
 import (
-	"time"
-
 	"ebook-server/model"
-	"ebook-server/pkg/ratelimit"
 )
 
 // UserStore 账号存储。登录主标识（email）的唯一性约束由实现保证（ADR-0002/0004）。
@@ -55,20 +52,4 @@ type LogStore interface {
 // 它是 service 的依赖视角，不是邮件库的能力清单（ADR-0007）。
 type Mailer interface {
 	SendCode(to, codeVal string) error
-}
-
-// newSendCodeLimiters 创建一对新的发码限流器（ADR-0002：每分钟 1 次、每小时 5 次）。
-//
-// 随 service 实例创建而非包级共享，使每个实例（含测试实例）拥有独立配额状态；
-// 限流键自带流程前缀（见 sendCodeKey），多个实例并存不会互相放大配额。
-func newSendCodeLimiters() (minute, hour *ratelimit.Limiter) {
-	return ratelimit.New(1, time.Minute), ratelimit.New(5, time.Hour)
-}
-
-// allowSendCode 发码频率限流：两道窗口任一超限即拒绝。
-func allowSendCode(minute, hour *ratelimit.Limiter, key string) error {
-	if !minute.Allow(key) || !hour.Allow(key) {
-		return model.ErrAttemptTooMany
-	}
-	return nil
 }

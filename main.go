@@ -54,10 +54,13 @@ func main() {
 	codeStore := code.NewStore()
 	mailer := newMailer(config.AppConfig)
 
+	// 验证码发送模块全局唯一，注入认证/账号两模块（ADR-0008）
+	sender := service.NewVerificationCodeSender(codeStore, mailer)
+
 	// 业务服务
-	authService := service.NewAuthService(userRepo, tokenRepo, codeStore, mailer)
+	authService := service.NewAuthService(userRepo, tokenRepo, codeStore, sender)
 	userService := service.NewUserService(userRepo)
-	accountService := service.NewAccountService(userRepo, tokenRepo, commentRepo, codeStore, mailer)
+	accountService := service.NewAccountService(userRepo, tokenRepo, commentRepo, codeStore, sender)
 	commentService := service.NewCommentService(commentRepo)
 	logService := service.NewLogService(logRepo)
 
