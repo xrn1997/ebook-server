@@ -17,6 +17,21 @@ import (
 	"gorm.io/gorm"
 )
 
+// TestMimeType ES module 必须返回 JS MIME，否则浏览器拒绝执行导致白屏（回归保护）。
+func TestMimeType(t *testing.T) {
+	cases := []struct{ name, want string }{
+		{"assets/index-abc.js", "text/javascript; charset=utf-8"},
+		{"assets/app-abc.css", "text/css; charset=utf-8"},
+		{"assets/app-abc.json", "application/json; charset=utf-8"},
+		{"assets/logo.svg", "image/svg+xml"},
+	}
+	for _, c := range cases {
+		if got := mimeType(c.name, nil); got != c.want {
+			t.Errorf("mimeType(%q) = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
 // setup 组装后台测试环境：独立 :memory: 库 + 独立配置 + 后台路由。
 func setup(t *testing.T) (*gin.Engine, *gorm.DB) {
 	t.Helper()

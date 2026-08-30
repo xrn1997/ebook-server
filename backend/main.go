@@ -144,10 +144,10 @@ func main() {
 			api.GET("/comments", adminHandler.ListComments)
 		}
 
-		// 内嵌前端（SPA 首页 + 静态资产）
+		// 内嵌前端（SPA 首页 + 静态资产 /admin/assets/*）
 		adm.GET("", admin.ServeFrontend)
 		adm.GET("/", admin.ServeFrontend)
-		adm.StaticFS("/assets", admin.StaticFiles())
+		adm.GET("/assets/*filepath", admin.ServeAssets)
 	}
 
 	// 启动服务器
