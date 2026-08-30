@@ -94,3 +94,36 @@ func TestLimiter_AllowAt_PartialWindowExpiry(t *testing.T) {
 		t.Error("Should be allowed after first hit expired")
 	}
 }
+
+// TestLimiter_Peek 只判断不记录：Peek 本身不消耗配额，也不受后续 Allow 记录影响判定。
+func TestLimiter_Peek(t *testing.T) {
+	l := New(3, time.Minute)
+	now := time.Now()
+
+	// 空窗口不锁定
+	if l.PeekAt("k", now) {
+		t.Error("empty window should not be limited")
+	}
+	// Peek 不记录：连续 Peek 不改变状态
+	if l.PeekAt("k", now.Add(1*time.Second)) {
+		t.Error("Peek must not record hits")
+	}
+
+	// 2 次命中仍未达上限
+	l.AllowAt("k", now.Add(2*time.Second))
+	l.AllowAt("k", now.Add(3*time.Second))
+	if l.PeekAt("k", now.Add(4*time.Second)) {
+		t.Error("2 hits < limit 3 should not be limited")
+	}
+
+	// 第 3 次命中后锁定
+	l.AllowAt("k", now.Add(5*time.Second))
+	if !l.PeekAt("k", now.Add(6*time.Second)) {
+		t.Error("3 hits should be limited")
+	}
+
+	// 窗口过期后解除
+	if l.PeekAt("k", now.Add(2*time.Minute)) {
+		t.Error("window expired should reset")
+	}
+}

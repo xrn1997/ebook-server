@@ -13,6 +13,7 @@ import (
 //
 // 负责用户资料操作（获取/更新信息、修改密码）；
 // 账号生命周期（数据导出、注销）由 AccountHandler 负责。
+// 头像文件清理由 service 层编排（ADR-0011），本层只做协议转换。
 type UserHandler struct {
 	userService *service.UserService
 	authService *service.AuthService

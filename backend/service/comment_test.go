@@ -24,52 +24,100 @@ func TestCommentService_Create_Success(t *testing.T) {
 		t.Fatalf("Failed to create comment: %v", err)
 	}
 
+	// Create 返回响应视图（ADR-0011）：content 透传，作者经 user.uid 呈现
 	if comment.Content != createReq.Content {
 		t.Errorf("Expected content '%s', got '%s'", createReq.Content, comment.Content)
 	}
 
-	if comment.UserID != user.UID {
-		t.Errorf("Expected UserID %d, got %d", user.UID, comment.UserID)
+	if comment.User.UID != user.UID {
+		t.Errorf("Expected User UID %d, got %d", user.UID, comment.User.UID)
 	}
 }
 
-func TestCommentService_GetByID_Success(t *testing.T) {
+// TestCommentService_Create_WithChapter 创建带章节归属的评论（ADR-0011）。
+func TestCommentService_Create_WithChapter(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	// 创建用户和评论
 	authService := testAuth
-	user := serviceRegister(t, authService, "getcommentuser@example.com", "password123")
+	user := serviceRegister(t, authService, "chapter_user@example.com", "password123")
 
 	commentService := testComments
 	createReq := &model.CreateCommentRequest{
-		Content: "Comment to retrieve",
+		Content:     "章节评论",
+		ChapterURL:  "https://src.example.com/book/1/2.html",
+		ChapterName: "第二章",
+		BookName:    "天启之书",
 	}
-	createdComment, err := commentService.Create(user.UID, createReq)
+	comment, err := commentService.Create(user.UID, createReq)
 	if err != nil {
-		t.Fatalf("Failed to create comment: %v", err)
+		t.Fatalf("Failed to create chapter comment: %v", err)
 	}
 
-	// 获取评论
-	comment, err := commentService.GetByID(createdComment.ID)
-	if err != nil {
-		t.Fatalf("Failed to get comment: %v", err)
-	}
-
-	if comment.ID != createdComment.ID {
-		t.Errorf("Expected ID %d, got %d", createdComment.ID, comment.ID)
+	if comment.ChapterURL != createReq.ChapterURL ||
+		comment.ChapterName != createReq.ChapterName ||
+		comment.BookName != createReq.BookName {
+		t.Errorf("chapter fields not persisted: %+v", comment)
 	}
 }
 
-func TestCommentService_GetByID_NotFound(t *testing.T) {
+// TestCommentService_GetByChapter 按章节聚合键查询（ADR-0011）。
+func TestCommentService_GetByChapter(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
+	authService := testAuth
+	user := serviceRegister(t, authService, "chapter_list@example.com", "password123")
 	commentService := testComments
 
-	_, err := commentService.GetByID(999999)
-	if err != model.ErrCommentNotFound {
-		t.Errorf("Expected ErrCommentNotFound, got %v", err)
+	urlA := "https://src.example.com/book/1/2.html"
+	urlB := "https://src.example.com/book/1/3.html"
+	// 章节 A 两条、章节 B 一条、书籍级一条
+	for i := 0; i < 2; i++ {
+		commentService.Create(user.UID, &model.CreateCommentRequest{Content: "A", ChapterURL: urlA, BookName: "书A"})
+	}
+	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "B", ChapterURL: urlB, BookName: "书B"})
+	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "通用"})
+
+	result, err := commentService.GetByChapter(urlA, "", 1, 10)
+	if err != nil {
+		t.Fatalf("Failed to get chapter comments: %v", err)
+	}
+	if result.Total != 2 || len(result.Items) != 2 {
+		t.Errorf("Expected 2 comments for chapter A, got total=%d len=%d", result.Total, len(result.Items))
+	}
+
+	// book_name 二次过滤：传错书名应过滤干净
+	result, err = commentService.GetByChapter(urlA, "书B", 1, 10)
+	if err != nil {
+		t.Fatalf("Failed to get filtered comments: %v", err)
+	}
+	if result.Total != 0 {
+		t.Errorf("Expected 0 comments for wrong book filter, got %d", result.Total)
+	}
+}
+
+// TestCommentService_GetByBook 按书名单独过滤（ADR-0011：book_name 不依赖 chapter_url）。
+func TestCommentService_GetByBook(t *testing.T) {
+	setupTestDB(t)
+	defer cleanupTestDB(t)
+
+	authService := testAuth
+	user := serviceRegister(t, authService, "book_filter@example.com", "password123")
+	commentService := testComments
+
+	// 书A 两个不同章节 + 书B 一条 + 无章节一条
+	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "A1", ChapterURL: "https://s/book/1/1.html", BookName: "书A"})
+	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "A2", ChapterURL: "https://s/book/1/2.html", BookName: "书A"})
+	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "B", ChapterURL: "https://s/book/2/1.html", BookName: "书B"})
+	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "无章节"})
+
+	result, err := commentService.GetByBook("书A", 1, 10)
+	if err != nil {
+		t.Fatalf("Failed to get book comments: %v", err)
+	}
+	if result.Total != 2 || len(result.Items) != 2 {
+		t.Errorf("Expected 2 comments for 书A, got total=%d len=%d", result.Total, len(result.Items))
 	}
 }
 
@@ -142,10 +190,15 @@ func TestCommentService_Delete_Success(t *testing.T) {
 		t.Fatalf("Failed to delete comment: %v", err)
 	}
 
-	// 验证删除
-	_, err = commentService.GetByID(comment.ID)
-	if err != model.ErrCommentNotFound {
-		t.Errorf("Expected ErrCommentNotFound after deletion, got %v", err)
+	// 验证删除：软删后全局列表不再包含该评论
+	list, err := commentService.GetAll(1, 100)
+	if err != nil {
+		t.Fatalf("Failed to list comments: %v", err)
+	}
+	for _, item := range list.Items {
+		if item.ID == comment.ID {
+			t.Error("deleted comment should not appear in list")
+		}
 	}
 }
 
@@ -170,8 +223,8 @@ func TestCommentService_Delete_NoPermission(t *testing.T) {
 
 	// user2 尝试删除 user1 的评论
 	err = commentService.Delete(comment.ID, user2.UID)
-	if err != model.ErrNoPermission {
-		t.Errorf("Expected ErrNoPermission, got %v", err)
+	if err != model.ErrCommentNotOwner {
+		t.Errorf("Expected ErrCommentNotOwner, got %v", err)
 	}
 }
 

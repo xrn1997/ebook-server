@@ -5,6 +5,9 @@ server:
 database:
   path: ebook.db  # SQLite 数据库文件路径
 
+api_docs:
+  enabled: false   # 公开 API 端口是否提供 Swagger 文档：默认关闭（防接口清单泄露）；联调/内网开放时改 true
+
 jwt:
   secret: your-secret-key-change-this
   expire_min: 120  # access token 有效期（分钟）
@@ -13,7 +16,9 @@ admin:
   username: admin
   password: change-me-admin      # ← 真实密码放本地 .env 的 ADMIN_PASSWORD，勿提交此处
   jwt_secret: your-admin-secret-change-this  # ← 管理端 JWT 密钥，.env 的 ADMIN_JWT_SECRET 覆盖
-  expire_min: 240                # 管理端 token 有效期（分钟）
+  expire_min: 60                 # 管理端 token 有效期（分钟）
+  listen_addr: 127.0.0.1         # 后台监听地址：默认仅本机 127.0.0.1（公网不可达）；需局域网访问改为内网 IP
+  listen_port: 9091              # 后台监听端口（与公开 API 的 9090 分离）
 
 smtp:
   host: smtp.example.com     # SMTP 服务器（如 smtp.qq.com / smtp.163.com）

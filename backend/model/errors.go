@@ -9,6 +9,9 @@ var (
 	ErrCommentNotFound    = errors.New("评论不存在")
 	ErrNoPermission       = errors.New("无权限操作")
 	ErrInvalidToken       = errors.New("无效的令牌")
+	// ErrCommentNotOwner 删除评论时发现非本人（ADR-0011：仅本人可删，映射 A0303）。
+	// 与通用 ErrNoPermission 分离：评论域的「非本人」是专门业务语义，客户端需据此提示。
+	ErrCommentNotOwner = errors.New("无权删除该评论")
 
 	// 认证/账号体系错误（ADR-0001 / ADR-0002）
 	ErrAccountNotFound = errors.New("账户不存在")

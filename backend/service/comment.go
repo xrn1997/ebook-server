@@ -30,10 +30,13 @@ func normalizePage(page, pageSize int) (int, int) {
 }
 
 // Create 创建评论
-func (s *CommentService) Create(userID uint, req *model.CreateCommentRequest) (*model.Comment, error) {
+func (s *CommentService) Create(userID uint, req *model.CreateCommentRequest) (*model.CommentResponse, error) {
 	comment := &model.Comment{
-		UserID:  userID,
-		Content: req.Content,
+		UserID:      userID,
+		Content:     req.Content,
+		ChapterURL:  req.ChapterURL,
+		ChapterName: req.ChapterName,
+		BookName:    req.BookName,
 	}
 
 	if err := s.comments.Create(comment); err != nil {
@@ -41,19 +44,24 @@ func (s *CommentService) Create(userID uint, req *model.CreateCommentRequest) (*
 	}
 
 	// 重新查询以加载关联的用户信息
-	return s.comments.FindByID(comment.ID)
-}
-
-// GetByID 根据 ID 获取评论
-func (s *CommentService) GetByID(id uint) (*model.Comment, error) {
-	comment, err := s.comments.FindByID(id)
+	created, err := s.comments.FindByID(comment.ID)
 	if err != nil {
-		if IsRecordNotFound(err) {
-			return nil, model.ErrCommentNotFound
-		}
 		return nil, err
 	}
-	return comment, nil
+	resp := model.NewCommentResponse(created)
+	return &resp, nil
+}
+
+// GetByBook 按书名获取评论列表（聚合某书全部章节评论，ADR-0011）。
+func (s *CommentService) GetByBook(bookName string, page, pageSize int) (*model.CommentListResponse, error) {
+	page, pageSize = normalizePage(page, pageSize)
+
+	comments, total, err := s.comments.FindByBook(bookName, page, pageSize)
+	if err != nil {
+		return nil, err
+	}
+
+	return toListResponse(comments, total, page, pageSize), nil
 }
 
 // GetByUserID 根据用户 ID 获取评论列表
@@ -65,12 +73,21 @@ func (s *CommentService) GetByUserID(userID uint, page, pageSize int) (*model.Co
 		return nil, err
 	}
 
-	return &model.CommentListResponse{
-		Items:    comments,
-		Total:    total,
-		Page:     page,
-		PageSize: pageSize,
-	}, nil
+	return toListResponse(comments, total, page, pageSize), nil
+}
+
+// GetByChapter 按章节聚合键获取评论列表（ADR-0011）。
+//
+// chapterURL 必填（由调用方保证非空），bookName 可选二次过滤。
+func (s *CommentService) GetByChapter(chapterURL, bookName string, page, pageSize int) (*model.CommentListResponse, error) {
+	page, pageSize = normalizePage(page, pageSize)
+
+	comments, total, err := s.comments.FindByChapter(chapterURL, bookName, page, pageSize)
+	if err != nil {
+		return nil, err
+	}
+
+	return toListResponse(comments, total, page, pageSize), nil
 }
 
 // GetAll 获取所有评论列表
@@ -82,15 +99,27 @@ func (s *CommentService) GetAll(page, pageSize int) (*model.CommentListResponse,
 		return nil, err
 	}
 
+	return toListResponse(comments, total, page, pageSize), nil
+}
+
+// toListResponse 把实体列表转换为响应视图列表（ADR-0011 契约）。
+func toListResponse(comments []model.Comment, total int64, page, pageSize int) *model.CommentListResponse {
+	items := make([]model.CommentResponse, 0, len(comments))
+	for i := range comments {
+		items = append(items, model.NewCommentResponse(&comments[i]))
+	}
 	return &model.CommentListResponse{
-		Items:    comments,
+		Items:    items,
 		Total:    total,
 		Page:     page,
 		PageSize: pageSize,
-	}, nil
+	}
 }
 
-// Delete 删除评论
+// Delete 删除评论（仅本人可删，ADR-0011）。
+//
+// 非本人返回 model.ErrCommentNotOwner（映射 A0303）——与通用 ErrNoPermission
+// 分离，客户端可据此给出「无权删除他人评论」的明确提示。
 func (s *CommentService) Delete(commentID, userID uint) error {
 	// 检查权限
 	canDelete, err := s.comments.CanDelete(commentID, userID)
@@ -101,7 +130,7 @@ func (s *CommentService) Delete(commentID, userID uint) error {
 		return err
 	}
 	if !canDelete {
-		return model.ErrNoPermission
+		return model.ErrCommentNotOwner
 	}
 
 	return s.comments.Delete(commentID)

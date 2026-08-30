@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"testing"
 
@@ -42,6 +43,93 @@ func TestCommentHandler_GetList_Success(t *testing.T) {
 		t.Fatalf("Expected status 200, got %d", w.Code)
 	}
 	decodeData(t, w.Body.Bytes())
+}
+
+// TestCommentHandler_Create_WithChapter 创建章节评论并校验响应视图契约（ADR-0011）：
+// user 只含 uid/username/nickname/avatar 四字段（无 email），add_time 为格式化字符串。
+func TestCommentHandler_Create_WithChapter(t *testing.T) {
+	app := newTestApp(t)
+
+	router := setupRouter()
+	authHandler := app.auth
+	commentHandler := app.comment
+	router.POST("/api/auth/register", authHandler.Register)
+	router.POST("/api/auth/login", authHandler.Login)
+	router.POST("/api/comments", middleware.JWTAuth(), commentHandler.Create)
+
+	_, token := registerUser(t, router, "chapter_create@example.com")
+
+	body := map[string]interface{}{
+		"content":      "章节评论内容",
+		"chapter_url":  "https://src.example.com/book/1/2.html",
+		"chapter_name": "第二章",
+		"book_name":    "天启之书",
+	}
+	jsonBody, _ := json.Marshal(body)
+	req, _ := http.NewRequest("POST", "/api/comments", bytes.NewBuffer(jsonBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	data := decodeData(t, w.Body.Bytes())
+	if data["chapter_url"] != body["chapter_url"] || data["book_name"] != body["book_name"] {
+		t.Errorf("chapter fields missing in response: %v", data)
+	}
+	user := data["user"].(map[string]interface{})
+	for _, key := range []string{"uid", "username", "nickname", "avatar"} {
+		if _, ok := user[key]; !ok {
+			t.Errorf("user view missing key %q: %v", key, user)
+		}
+	}
+	if _, leaked := user["email"]; leaked {
+		t.Error("user view must not leak email")
+	}
+	if _, ok := data["add_time"]; !ok {
+		t.Error("add_time missing in response")
+	}
+}
+
+// TestCommentHandler_GetList_ByChapter 按 chapter_url 过滤章节评论（ADR-0011）。
+func TestCommentHandler_GetList_ByChapter(t *testing.T) {
+	app := newTestApp(t)
+
+	router := setupRouter()
+	authHandler := app.auth
+	commentHandler := app.comment
+	router.POST("/api/auth/register", authHandler.Register)
+	router.POST("/api/auth/login", authHandler.Login)
+	router.POST("/api/comments", middleware.JWTAuth(), commentHandler.Create)
+	router.GET("/api/comments", commentHandler.GetList)
+
+	_, token := registerUser(t, router, "chapter_list_h@example.com")
+
+	urlA := "https://src.example.com/book/1/2.html"
+	create := func(m map[string]string) {
+		jsonBody, _ := json.Marshal(m)
+		req, _ := http.NewRequest("POST", "/api/comments", bytes.NewBuffer(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+	}
+	create(map[string]string{"content": "A1", "chapter_url": urlA})
+	create(map[string]string{"content": "A2", "chapter_url": urlA})
+	create(map[string]string{"content": "通用"})
+
+	// 按章节过滤：只返回该章节的 2 条
+	req, _ := http.NewRequest("GET", "/api/comments?chapter_url="+url.QueryEscape(urlA), nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	var resp map[string]interface{}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["code"] != "00000" {
+		t.Fatalf("list by chapter failed: %v", resp)
+	}
+	data := resp["data"].(map[string]interface{})
+	if data["total"].(float64) != 2 {
+		t.Errorf("Expected total 2 for chapter filter, got %v", data["total"])
+	}
 }
 
 func TestCommentHandler_GetList_Empty(t *testing.T) {
@@ -216,13 +304,13 @@ func TestCommentHandler_Delete_NoPermission(t *testing.T) {
 	data := decodeData(t, w.Body.Bytes())
 	commentID := uint(data["id"].(float64))
 
-	// user2 尝试删除 user1 的评论
+	// user2 尝试删除 user1 的评论（ADR-0011：仅本人可删，专用码 A0303）
 	req, _ = http.NewRequest("DELETE", "/api/comments/"+strconv.Itoa(int(commentID)), nil)
 	req.Header.Set("Authorization", "Bearer "+token2)
 	w = httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	assertErrorCode(t, w.Body.Bytes(), "A0403")
+	assertErrorCode(t, w.Body.Bytes(), "A0303")
 }
 
 func TestCommentHandler_GetMyComments_Success(t *testing.T) {
@@ -392,5 +480,6 @@ func TestCommentHandler_Delete_NotFound(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	assertErrorCode(t, w.Body.Bytes(), "A0404")
+	// 评论不存在 → 评论域专用码 A0304（ADR-0011）
+	assertErrorCode(t, w.Body.Bytes(), "A0304")
 }

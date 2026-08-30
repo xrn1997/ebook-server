@@ -114,7 +114,7 @@ func TestRegisterRequestFields(t *testing.T) {
 
 func TestCommentListResponse(t *testing.T) {
 	response := CommentListResponse{
-		Items:    []Comment{},
+		Items:    []CommentResponse{},
 		Total:    0,
 		Page:     1,
 		PageSize: 10,
@@ -125,6 +125,38 @@ func TestCommentListResponse(t *testing.T) {
 	}
 	if response.PageSize != 10 {
 		t.Errorf("Expected PageSize 10, got %d", response.PageSize)
+	}
+}
+
+// TestNewCommentResponse 评论响应视图契约（ADR-0011）：
+// user 只含 4 个展示字段（不含 email），add_time 固定上海时区格式。
+func TestNewCommentResponse(t *testing.T) {
+	created := time.Date(2026, 8, 30, 20, 0, 0, 0, time.UTC)
+	c := &Comment{
+		ID:          7,
+		UserID:      3,
+		User:        User{UID: 3, Email: "leak@example.com", Username: "user03", Nickname: "昵称", Avatar: "http://x/a.png"},
+		Content:     "好文",
+		ChapterURL:  "https://src.example.com/book/1/2.html",
+		ChapterName: "第三章",
+		BookName:    "天启之书",
+		CreatedAt:   created,
+	}
+	resp := NewCommentResponse(c)
+
+	if resp.ID != 7 || resp.Content != "好文" {
+		t.Errorf("unexpected base fields: %+v", resp)
+	}
+	if resp.ChapterURL != c.ChapterURL || resp.ChapterName != "第三章" || resp.BookName != "天启之书" {
+		t.Errorf("chapter fields not carried: %+v", resp)
+	}
+	// user 视图四字段 + 不泄露 email
+	if resp.User.UID != 3 || resp.User.Username != "user03" || resp.User.Nickname != "昵称" || resp.User.Avatar != "http://x/a.png" {
+		t.Errorf("user view mismatch: %+v", resp.User)
+	}
+	// add_time：UTC 20:00 → 上海 +8 → 次日 04:00
+	if resp.AddTime != "2026-08-31 04:00:00" {
+		t.Errorf("add_time = %q, want 2026-08-31 04:00:00", resp.AddTime)
 	}
 }
 

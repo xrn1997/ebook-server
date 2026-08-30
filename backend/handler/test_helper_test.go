@@ -11,6 +11,7 @@ import (
 	"ebook-server/pkg/code"
 	"ebook-server/pkg/mail"
 	"ebook-server/pkg/testdb"
+	"ebook-server/pkg/upload"
 	"ebook-server/repository"
 	"ebook-server/service"
 
@@ -53,6 +54,7 @@ type testApp struct {
 	account *AccountHandler
 	comment *CommentHandler
 	log     *LogHandler
+	uploads *UploadHandler
 }
 
 // newTestApp 组装本测试专用的处理器集合。
@@ -74,15 +76,17 @@ func newTestApp(t *testing.T) *testApp {
 	sender := service.NewVerificationCodeSender(codes, mail.NewLogMailer())
 	authSvc := service.NewAuthService(users, tokens, codes, sender)
 	accountSvc := service.NewAccountService(users, tokens, comments, codes, sender)
+	uploads := upload.New(t.TempDir())
 
 	return &testApp{
 		db:      db,
 		codes:   codes,
 		auth:    NewAuthHandler(authSvc),
-		user:    NewUserHandler(service.NewUserService(users), authSvc),
+		user:    NewUserHandler(service.NewUserService(users, uploads), authSvc),
 		account: NewAccountHandler(accountSvc),
 		comment: NewCommentHandler(service.NewCommentService(comments)),
 		log:     NewLogHandler(service.NewLogService(logs)),
+		uploads: NewUploadHandler(uploads),
 	}
 }
 

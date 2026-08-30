@@ -19,6 +19,14 @@ type UserStore interface {
 	ExistsByEmail(email string) (bool, error)
 }
 
+// AvatarCleaner 头像文件清理（consumer-defined，ADR-0007）。
+//
+// 由 pkg/upload.Store 满足：只删本服务 uploads/avatar 目录内的文件，
+// 外部 URL 不做任何操作；删除失败返回 error 由调用方记录。
+type AvatarCleaner interface {
+	DeleteAvatar(url string) error
+}
+
 // TokenStore refresh token 存储。签发即落库、轮换即作废（ADR-0003）。
 type TokenStore interface {
 	Create(token *model.RefreshToken) error
@@ -32,6 +40,10 @@ type CommentStore interface {
 	Create(comment *model.Comment) error
 	FindByID(id uint) (*model.Comment, error)
 	FindAll(page, pageSize int) ([]model.Comment, int64, error)
+	// FindByChapter 按章节聚合键查评论（chapterURL 精确匹配，bookName 可选二次过滤）。
+	FindByChapter(chapterURL, bookName string, page, pageSize int) ([]model.Comment, int64, error)
+	// FindByBook 按书名查评论（聚合某书全部章节评论，供 book_name 单独过滤）。
+	FindByBook(bookName string, page, pageSize int) ([]model.Comment, int64, error)
 	FindByUserID(userID uint, page, pageSize int) ([]model.Comment, int64, error)
 	FindAllByUserID(userID uint) ([]model.Comment, error)
 	Delete(id uint) error

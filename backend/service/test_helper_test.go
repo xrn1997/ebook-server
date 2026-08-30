@@ -7,6 +7,7 @@ import (
 	"ebook-server/pkg/code"
 	"ebook-server/pkg/mail"
 	"ebook-server/pkg/testdb"
+	"ebook-server/pkg/upload"
 	"ebook-server/repository"
 
 	"gorm.io/gorm"
@@ -50,7 +51,7 @@ func setupTestDB(t *testing.T) {
 	// 测试注入写日志的 Mailer：验证码经 testCodes 直接注入，不走真实邮件
 	sender := NewVerificationCodeSender(testCodes, mail.NewLogMailer())
 	testAuth = NewAuthService(users, tokens, testCodes, sender)
-	testUsers = NewUserService(users)
+	testUsers = NewUserService(users, upload.New(t.TempDir()))
 	testAccount = NewAccountService(users, tokens, comments, testCodes, sender)
 	testComments = NewCommentService(comments)
 	testLogs = NewLogService(logs)

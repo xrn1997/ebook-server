@@ -11,10 +11,12 @@ import (
 	"ebook-server/pkg/errcode"
 	"ebook-server/pkg/logger"
 	"ebook-server/pkg/mail"
+	"ebook-server/pkg/upload"
 	"ebook-server/repository"
 	"ebook-server/service"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 
 	// 引入 swag 生成的文档（swag init 产物），供 gin-swagger 提供 OpenAPI 3.0 spec。
@@ -75,9 +77,12 @@ func main() {
 	// 验证码发送模块全局唯一，注入认证/账号两模块（ADR-0008）
 	sender := service.NewVerificationCodeSender(codeStore, mailer)
 
+	// 文件上传存储（ADR-0011）：供头像上传 handler 与用户资料更新（旧头像清理）共用
+	uploadStore := upload.New(config.AppConfig.Upload.Dir)
+
 	// 业务服务
 	authService := service.NewAuthService(userRepo, tokenRepo, codeStore, sender)
-	userService := service.NewUserService(userRepo)
+	userService := service.NewUserService(userRepo, uploadStore)
 	accountService := service.NewAccountService(userRepo, tokenRepo, commentRepo, codeStore, sender)
 	commentService := service.NewCommentService(commentRepo)
 	logService := service.NewLogService(logRepo)
@@ -97,8 +102,14 @@ func main() {
 		errcode.Success(c, gin.H{"status": "ok"})
 	})
 
-	// API 文档（Swagger UI + OpenAPI 3.0 spec，由 handler 注解 + swag init 生成）
-	r.GET("/api-docs/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	// API 文档（Swagger UI + OpenAPI spec）：公开端口默认不提供（api_docs.enabled=false，
+	// 防接口清单泄露，见 config.APIDocsConfig）。联调/内网开放时改配置为 true。
+	if config.AppConfig.APIDocs.Enabled {
+		registerSwagger(r)
+	}
+
+	// 文件上传（ADR-0011）：uploads/ 目录经 /uploads/* 公开访问（仅头像等公开资源）
+	r.Static("/uploads", config.AppConfig.Upload.Dir)
 
 	// API 路由
 	api := r.Group("/api")
@@ -131,6 +142,10 @@ func main() {
 			users.POST("/me/deletion", accountHandler.DeleteAccount)
 		}
 
+		// 文件上传（ADR-0011）：头像两步提交的第一步「传文件拿 URL」
+		uploadHandler := handler.NewUploadHandler(uploadStore)
+		api.POST("/uploads/avatar", middleware.JWTAuth(), uploadHandler.UploadAvatar)
+
 		// 评论相关
 		comments := api.Group("/comments")
 		{
@@ -152,8 +167,18 @@ func main() {
 	}
 
 	// ── 后台管理系统（ADR-0009：独立表面，独立鉴权）───────────────────────
+	// 后台与公开 API 拆成两个 Gin 引擎、两个监听地址，实现网络层隔离：
+	// 公开 API 监听 0.0.0.0:<server.port>，后台默认仅监听 127.0.0.1:<admin.listen_port>，
+	// 公网物理上无法连接后台。远程管理请走 SSH 隧道/VPN，不要直接开放后台端口。
 	adminHandler := admin.NewHandler(userRepo, commentRepo, logRepo)
-	adm := r.Group("/admin")
+
+	admEngine := gin.New()
+	// 后台引擎：只挂 Recovery + Logger。不挂 CORS（前端与后台同源嵌入，无需跨域）；
+	// 不挂 OperationLog（后台自身流量刻意不入审计库，见 middleware/operationlog.go）。
+	admEngine.Use(middleware.Recovery())
+	admEngine.Use(middleware.Logger())
+
+	adm := admEngine.Group("/admin")
 	{
 		// 后台 API
 		adm.POST("/api/login", adminHandler.Login)
@@ -173,12 +198,43 @@ func main() {
 		adm.GET("/assets/*filepath", admin.ServeAssets)
 	}
 
-	// 启动服务器
+	// 后台引擎始终挂 Swagger 文档：默认仅监听 127.0.0.1（本机），无公开风险；
+	// 前端「API 文档」页以 iframe 内嵌 /api-docs/index.html，需同端口可访问。
+	// 公开端口的文档由 api_docs.enabled 控制（默认关闭），两个表面互不影响。
+	registerSwagger(admEngine)
+
+	// 启动后台服务器（独立监听地址；goroutine 内运行，主协程继续启动公开 API）
+	adminAddr := fmt.Sprintf("%s:%d", config.AppConfig.Admin.ListenAddr, config.AppConfig.Admin.ListenPort)
+	adminSrv := &http.Server{Addr: adminAddr, Handler: admEngine}
+	go func() {
+		fmt.Printf("Admin server starting on %s...\n", adminAddr)
+		if err := adminSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Failed to start admin server: %v", err)
+		}
+	}()
+
+	// 启动公开 API 服务器
 	port := config.AppConfig.Server.Port
 	fmt.Printf("Server starting on port %d...\n", port)
 	if err := r.Run(fmt.Sprintf(":%d", port)); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
+}
+
+// registerSwagger 在指定引擎上注册 API 文档路由（Swagger UI + OpenAPI spec）。
+//
+// 主引擎（公开 API）与后台引擎各挂一份：gin-swagger 对根路径（/api-docs、/api-docs/）
+// 返回 404 是其固有行为，这里统一 301 到 index.html，保证浏览器直接打开 /api-docs
+// 即可看到文档；后台前端「API 文档」页以 iframe 内嵌 /api-docs/index.html，同端口
+// 注册才能加载（ADR-0009 端口分离后的适配）。
+func registerSwagger(e *gin.Engine) {
+	e.GET("/api-docs/*any", func(c *gin.Context) {
+		if p := c.Param("any"); p == "" || p == "/" {
+			c.Redirect(http.StatusMovedPermanently, "/api-docs/index.html")
+			return
+		}
+		ginSwagger.WrapHandler(swaggerFiles.Handler)(c)
+	})
 }
 
 // newMailer 按配置装配验证码邮件 adapter（ADR-0007：装配知识集中在 main.go）。

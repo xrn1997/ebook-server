@@ -31,6 +31,56 @@ func (r *CommentRepository) FindByID(id uint) (*model.Comment, error) {
 	return &comment, nil
 }
 
+// FindByChapter 按章节聚合键查找评论（分页）。
+//
+// chapterURL 精确匹配（聚合键，ADR-0011）；bookName 可选二次过滤；
+// 排序与全局列表一致（created_at DESC）。bookName 为空时不参与过滤。
+func (r *CommentRepository) FindByChapter(chapterURL, bookName string, page, pageSize int) ([]model.Comment, int64, error) {
+	var comments []model.Comment
+	var total int64
+
+	query := r.db.Model(&model.Comment{}).Where("chapter_url = ?", chapterURL)
+	if bookName != "" {
+		query = query.Where("book_name = ?", bookName)
+	}
+
+	// 获取总数
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	// 分页查询
+	offset := (page - 1) * pageSize
+	if err := query.Preload("User").Order("created_at DESC").Offset(offset).Limit(pageSize).Find(&comments).Error; err != nil {
+		return nil, 0, err
+	}
+
+	return comments, total, nil
+}
+
+// FindByBook 按书名查找评论（分页），聚合该书的全部章节评论。
+//
+// book_name 精确匹配；排序与全局列表一致（created_at DESC）。
+func (r *CommentRepository) FindByBook(bookName string, page, pageSize int) ([]model.Comment, int64, error) {
+	var comments []model.Comment
+	var total int64
+
+	query := r.db.Model(&model.Comment{}).Where("book_name = ?", bookName)
+
+	// 获取总数
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	// 分页查询
+	offset := (page - 1) * pageSize
+	if err := query.Preload("User").Order("created_at DESC").Offset(offset).Limit(pageSize).Find(&comments).Error; err != nil {
+		return nil, 0, err
+	}
+
+	return comments, total, nil
+}
+
 // FindByUserID 根据用户 ID 查找评论
 func (r *CommentRepository) FindByUserID(userID uint, page, pageSize int) ([]model.Comment, int64, error) {
 	var comments []model.Comment

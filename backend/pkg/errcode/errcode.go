@@ -30,6 +30,12 @@ const (
 	AccountLocked   = "A0242" // 账号已锁定
 	MailSendFailed  = "C0503" // 邮件发送失败
 
+	// 评论域业务码（ADR-0011）
+	CommentContentEmpty   = "A0301" // 评论内容为空（预留：content 由 binding required 兜底，暂不启用）
+	CommentChapterInvalid = "A0302" // chapter_url 非法/章节不存在（预留：后端无书源数据，不做存在性校验）
+	CommentNotOwner       = "A0303" // 无权删除评论（非本人）
+	CommentNotFoundErr    = "A0304" // 评论不存在
+
 	// 通用兜底错误
 	BadRequest  = "A0400" // 请求参数错误
 	NotFound    = "A0404" // 资源不存在
@@ -57,7 +63,8 @@ var errorCodes = map[error]string{
 	model.ErrAttemptTooMany:  AttemptTooMany,
 	model.ErrAccountLocked:   AccountLocked,
 	model.ErrMailSendFailed:  MailSendFailed,
-	model.ErrCommentNotFound: NotFound,
+	model.ErrCommentNotFound: CommentNotFoundErr,
+	model.ErrCommentNotOwner: CommentNotOwner,
 	model.ErrNoPermission:    Forbidden,
 }
 

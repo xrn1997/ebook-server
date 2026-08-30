@@ -36,18 +36,38 @@ func (l *Limiter) AllowAt(key string, now time.Time) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	old := now.Add(-l.window)
-	kept := l.hits[key][:0]
-	for _, t := range l.hits[key] {
-		if t.After(old) {
-			kept = append(kept, t)
-		}
-	}
-	l.hits[key] = kept
-
-	if len(kept) >= l.limit {
+	l.hits[key] = trimHits(l.hits[key], now, l.window)
+	if len(l.hits[key]) >= l.limit {
 		return false
 	}
 	l.hits[key] = append(l.hits[key], now)
 	return true
+}
+
+// Peek 判断 key 在窗口内是否已达上限，**不记录**本次访问。
+//
+// 配合「先检查后记录」的语义使用：登录限流只在密码校验失败时记录失败次数，
+// 请求到达时先 Peek 判断是否已锁定——成功登录因此不会被计入配额。
+func (l *Limiter) Peek(key string) bool {
+	return l.PeekAt(key, time.Now())
+}
+
+// PeekAt 便于测试指定时刻
+func (l *Limiter) PeekAt(key string, now time.Time) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.hits[key] = trimHits(l.hits[key], now, l.window)
+	return len(l.hits[key]) >= l.limit
+}
+
+// trimHits 清理窗口外的命中记录，返回保留在窗口内的部分。
+func trimHits(hits []time.Time, now time.Time, window time.Duration) []time.Time {
+	old := now.Add(-window)
+	kept := hits[:0]
+	for _, t := range hits {
+		if t.After(old) {
+			kept = append(kept, t)
+		}
+	}
+	return kept
 }

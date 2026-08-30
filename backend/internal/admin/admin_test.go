@@ -110,6 +110,42 @@ func TestAdminLogin_WrongPassword(t *testing.T) {
 	}
 }
 
+// TestAdminLogin_RateLimit 失败尝试限流（ADR-0010 验收项）：
+// 连续 5 次错误密码后第 6 次起返回 A0241；已锁定窗口内即使密码正确也被拒。
+func TestAdminLogin_RateLimit(t *testing.T) {
+	r, _ := setup(t)
+
+	for i := 1; i <= 6; i++ {
+		resp := perform(r, http.MethodPost, "/admin/api/login", `{"username":"admin","password":"wrong"}`, "")
+		if i <= 5 {
+			if resp["code"] != "A0403" {
+				t.Errorf("attempt #%d expected A0403, got %v", i, resp["code"])
+			}
+		} else if resp["code"] != "A0241" {
+			t.Errorf("attempt #%d expected A0241 (rate limited), got %v", i, resp["code"])
+		}
+	}
+
+	// 已锁定窗口内：正确密码同样被拒（A0241）
+	resp := perform(r, http.MethodPost, "/admin/api/login", `{"username":"admin","password":"pass123"}`, "")
+	if resp["code"] != "A0241" {
+		t.Errorf("locked window should reject correct password with A0241, got %v", resp["code"])
+	}
+}
+
+// TestAdminLogin_SuccessNotCounted 成功登录不消耗限流配额：
+// 连续多次成功登录（超过 limit）不应触发限流。
+func TestAdminLogin_SuccessNotCounted(t *testing.T) {
+	r, _ := setup(t)
+
+	for i := 0; i < loginLimiterLimit+3; i++ {
+		resp := perform(r, http.MethodPost, "/admin/api/login", `{"username":"admin","password":"pass123"}`, "")
+		if resp["code"] != "00000" {
+			t.Fatalf("successful login #%d should not be rate-limited, got %v", i+1, resp["code"])
+		}
+	}
+}
+
 func TestAdminAuth_RequiresToken(t *testing.T) {
 	r, _ := setup(t)
 	resp := perform(r, http.MethodGet, "/admin/api/stats", "", "")

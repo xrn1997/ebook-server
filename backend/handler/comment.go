@@ -56,9 +56,11 @@ func (h *CommentHandler) Create(c *gin.Context) {
 
 // GetList 获取评论列表
 // @Summary 获取评论列表
-// @Description 获取所有评论列表
+// @Description 获取评论列表，可按章节过滤（chapter_url/book_name）
 // @Tags 评论
 // @Produce json
+// @Param chapter_url query string false "书源章节 URL（提供则返回该章节评论）"
+// @Param book_name query string false "书名（与 chapter_url 配合二次过滤）"
 // @Param page query int false "页码" default(1)
 // @Param page_size query int false "每页数量" default(10)
 // @Success 200 {object} model.Response
@@ -67,7 +69,17 @@ func (h *CommentHandler) GetList(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
 
-	result, err := h.commentService.GetAll(page, pageSize)
+	// 章节/书名过滤（ADR-0011）：chapter_url 精确匹配章节，book_name 可单独过滤全书
+	var result *model.CommentListResponse
+	var err error
+	switch {
+	case c.Query("chapter_url") != "":
+		result, err = h.commentService.GetByChapter(c.Query("chapter_url"), c.Query("book_name"), page, pageSize)
+	case c.Query("book_name") != "":
+		result, err = h.commentService.GetByBook(c.Query("book_name"), page, pageSize)
+	default:
+		result, err = h.commentService.GetAll(page, pageSize)
+	}
 	if err != nil {
 		errcode.Respond(c, err, "获取评论列表失败")
 		return
