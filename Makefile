@@ -8,7 +8,7 @@ FRONTEND := frontend
 GOOS := $(shell go env GOOS)
 OUT_BIN := $(if $(filter windows,$(GOOS)),build/ebook-server.exe,build/ebook-server)
 
-.PHONY: build run clean test frontend-build frontend-dev all fmt deps linux windows \
+.PHONY: build run clean test frontend-build frontend-dev all fmt deps docs linux windows \
 	test-coverage test-verbose test-model test-pkg test-service test-handler \
 	test-auth test-user test-comment db-init docker docker-run
 
@@ -37,6 +37,10 @@ run:
 # 前端开发服务器（热更新，连后端需自行配置 /admin/api 代理）
 frontend-dev:
 	npm --prefix $(FRONTEND) run dev
+
+# 重新生成 API 文档（swag init）：handler 注解变动后需重跑，产物入 backend/docs/
+docs:
+	cd $(BACKEND) && swag init -g main.go --parseDependency --parseInternal
 
 # 清理：删除产物与 embed 镜像，恢复仅 .gitkeep
 clean:

@@ -17,8 +17,25 @@ import (
 	"log"
 	"os"
 
+	// 引入 swag 生成的文档（swag init 产物），供 gin-swagger 提供 OpenAPI 3.0 spec。
+	_ "ebook-server/docs"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
+
 	"github.com/gin-gonic/gin"
 )
+
+// 以下为 swag 通用的 API 文档元信息（与各 handler 上的 Swagger 注释搭配，
+// push swag init 扫描生成 docs/）。
+//
+// @title ebook-server API
+// @version 1.0.0
+// @description 电子书阅读器后端 API（账号/认证/评论/操作日志）。业务响应用统一信封 {code,error,data}，HTTP 恒为 200；需认证的接口用 Bearer access token。
+// @BasePath /
+//
+// @securityDefinitions.apikey ApiKeyAuth
+// @in header
+// @name Authorization
 
 func main() {
 	// 加载配置
@@ -79,6 +96,9 @@ func main() {
 	r.GET("/health", func(c *gin.Context) {
 		errcode.Success(c, gin.H{"status": "ok"})
 	})
+
+	// API 文档（Swagger UI + OpenAPI 3.0 spec，由 handler 注解 + swag init 生成）
+	r.GET("/api-docs/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	// API 路由
 	api := r.Group("/api")

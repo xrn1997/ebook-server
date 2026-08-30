@@ -5,6 +5,7 @@ import Dashboard from './views/Dashboard.vue'
 import Users from './views/Users.vue'
 import Comments from './views/Comments.vue'
 import Logs from './views/Logs.vue'
+import ApiDocs from './views/ApiDocs.vue'
 
 const routes = [
   { path: '/login', name: 'login', component: Login },
@@ -12,6 +13,7 @@ const routes = [
   { path: '/users', component: Users },
   { path: '/comments', component: Comments },
   { path: '/logs', component: Logs },
+  { path: '/api-docs', component: ApiDocs },
 ]
 
 const router = createRouter({

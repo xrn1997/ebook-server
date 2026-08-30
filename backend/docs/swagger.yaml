@@ -1,0 +1,531 @@
+basePath: /
+definitions:
+  model.CreateCommentRequest:
+    properties:
+      content:
+        maxLength: 1000
+        minLength: 1
+        type: string
+    required:
+    - content
+    type: object
+  model.DeleteAccountRequest:
+    properties:
+      code:
+        type: string
+    required:
+    - code
+    type: object
+  model.LoginRequest:
+    properties:
+      email:
+        type: string
+      password:
+        type: string
+    required:
+    - email
+    - password
+    type: object
+  model.ModifyPwdRequest:
+    properties:
+      new_password:
+        maxLength: 50
+        minLength: 6
+        type: string
+      old_password:
+        maxLength: 50
+        minLength: 6
+        type: string
+    required:
+    - new_password
+    - old_password
+    type: object
+  model.RefreshRequest:
+    properties:
+      refresh_token:
+        type: string
+    required:
+    - refresh_token
+    type: object
+  model.RegisterRequest:
+    properties:
+      code:
+        type: string
+      email:
+        type: string
+      password:
+        maxLength: 50
+        minLength: 6
+        type: string
+    required:
+    - code
+    - email
+    - password
+    type: object
+  model.ResetPasswordRequest:
+    properties:
+      code:
+        type: string
+      email:
+        type: string
+      new_password:
+        maxLength: 50
+        minLength: 6
+        type: string
+    required:
+    - code
+    - email
+    - new_password
+    type: object
+  model.Response:
+    properties:
+      code:
+        description: 五位业务码，"00000" 表示成功
+        type: string
+      data: {}
+      error:
+        description: 业务错误文案（成功时为空串）
+        type: string
+    type: object
+  model.SendCodeRequest:
+    properties:
+      email:
+        type: string
+    required:
+    - email
+    type: object
+  model.UpdateUserRequest:
+    properties:
+      avatar:
+        type: string
+      email:
+        type: string
+      nickname:
+        maxLength: 50
+        minLength: 1
+        type: string
+      username:
+        maxLength: 50
+        minLength: 3
+        type: string
+    type: object
+info:
+  contact: {}
+  description: 电子书阅读器后端 API（账号/认证/评论/操作日志）。业务响应用统一信封 {code,error,data}，HTTP 恒为 200；需认证的接口用
+    Bearer access token。
+  title: ebook-server API
+  version: 1.0.0
+paths:
+  /api/auth/forgot-password/reset:
+    post:
+      consumes:
+      - application/json
+      description: 使用邮箱验证码重置密码
+      parameters:
+      - description: 重置密码请求
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/model.ResetPasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.Response'
+      summary: 验证码重置密码
+      tags:
+      - 认证
+  /api/auth/forgot-password/send-code:
+    post:
+      consumes:
+      - application/json
+      description: 校验账号存在后向邮箱发送验证码（不存在也返回成功，防枚举）
+      parameters:
+      - description: 发送验证码请求
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/model.SendCodeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.Response'
+      summary: 忘记密码发送验证码
+      tags:
+      - 认证
+  /api/auth/login:
+    post:
+      consumes:
+      - application/json
+      description: 邮箱+密码登录，返回双 token
+      parameters:
+      - description: 登录请求
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/model.LoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.Response'
+      summary: 登录
+      tags:
+      - 认证
+  /api/auth/logout:
+    post:
+      description: 作废当前用户的所有 refresh token
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: 登出
+      tags:
+      - 认证
+  /api/auth/refresh:
+    post:
+      consumes:
+      - application/json
+      description: 使用 refresh token 换发新双 token（轮换）
+      parameters:
+      - description: 刷新请求
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/model.RefreshRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.Response'
+      summary: 刷新 token
+      tags:
+      - 认证
+  /api/auth/register:
+    post:
+      consumes:
+      - application/json
+      description: 校验邮箱验证码并创建已激活账号，不发 token
+      parameters:
+      - description: 注册请求
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/model.RegisterRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.Response'
+      summary: 注册
+      tags:
+      - 认证
+  /api/auth/send-code:
+    post:
+      consumes:
+      - application/json
+      description: 按邮箱发送 6 位注册验证码
+      parameters:
+      - description: 发送验证码请求
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/model.SendCodeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.Response'
+      summary: 发送验证码
+      tags:
+      - 认证
+  /api/comments:
+    get:
+      description: 获取所有评论列表
+      parameters:
+      - default: 1
+        description: 页码
+        in: query
+        name: page
+        type: integer
+      - default: 10
+        description: 每页数量
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.Response'
+      summary: 获取评论列表
+      tags:
+      - 评论
+    post:
+      consumes:
+      - application/json
+      description: 创建新评论
+      parameters:
+      - description: 评论内容
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/model.CreateCommentRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: 创建评论
+      tags:
+      - 评论
+  /api/comments/{id}:
+    delete:
+      description: 删除指定评论
+      parameters:
+      - description: 评论ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: 删除评论
+      tags:
+      - 评论
+  /api/comments/my:
+    get:
+      description: 获取当前用户的评论列表
+      parameters:
+      - default: 1
+        description: 页码
+        in: query
+        name: page
+        type: integer
+      - default: 10
+        description: 每页数量
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: 获取我的评论列表
+      tags:
+      - 评论
+  /api/logs:
+    get:
+      description: 获取所有操作日志列表
+      parameters:
+      - default: 1
+        description: 页码
+        in: query
+        name: page
+        type: integer
+      - default: 10
+        description: 每页数量
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: 获取操作日志列表
+      tags:
+      - 日志
+  /api/logs/my:
+    get:
+      description: 获取当前用户的操作日志
+      parameters:
+      - default: 1
+        description: 页码
+        in: query
+        name: page
+        type: integer
+      - default: 10
+        description: 每页数量
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: 获取我的操作日志
+      tags:
+      - 日志
+  /api/users/me:
+    get:
+      description: 获取当前登录用户的信息
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: 获取当前用户信息
+      tags:
+      - 用户
+    put:
+      consumes:
+      - application/json
+      description: 更新当前登录用户的信息
+      parameters:
+      - description: 更新请求
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/model.UpdateUserRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: 更新当前用户信息
+      tags:
+      - 用户
+  /api/users/me/data:
+    get:
+      description: 返回用户资料与本人评论的完整副本，不含密码与操作日志（ADR-0005）
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: 导出我的数据
+      tags:
+      - 用户
+  /api/users/me/deletion:
+    post:
+      consumes:
+      - application/json
+      description: 校验邮箱验证码后匿名化账号，并在响应中返回用户数据副本。此操作不可撤销（ADR-0005）
+      parameters:
+      - description: 注销请求
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/model.DeleteAccountRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: 注销账号
+      tags:
+      - 用户
+  /api/users/me/deletion/send-code:
+    post:
+      description: 向当前登录账号的邮箱发送 6 位注销验证码（ADR-0005）
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: 发送注销验证码
+      tags:
+      - 用户
+  /api/users/me/password:
+    put:
+      consumes:
+      - application/json
+      description: 校验旧密码后更新密码，并使全部 token 失效
+      parameters:
+      - description: 改密请求
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/model.ModifyPwdRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: 修改密码
+      tags:
+      - 用户
+securityDefinitions:
+  ApiKeyAuth:
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

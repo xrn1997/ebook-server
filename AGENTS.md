@@ -46,6 +46,7 @@ make build       # 构建
 make run         # 运行
 make clean       # 清理
 make docker      # Docker 构建
+make docs        # 重新生成 API 文档（swag init，产物入 backend/docs/）
 ```
 
 ## 项目架构
@@ -89,6 +90,7 @@ sql/             → 数据库初始化脚本（MySQL 参考，实际用 SQLite 
 
 ```
 /health                    → 健康检查（无需认证）
+/api-docs                  → Swagger UI + OpenAPI spec（swag 从 handler 注解生成，`make docs` 更新）
 /api/auth/send-code        → 按邮箱发注册/验证码
 /api/auth/register         → 注册（邮箱+验证码+密码），激活建号，不发 token
 /api/auth/login            → 邮箱+密码登录，返回双 token
