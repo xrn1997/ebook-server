@@ -46,12 +46,12 @@ type Store struct {
 }
 
 // New 创建存储实例，并确保头像目录存在（启动即建，省去首次上传失败）。
+// 目录可能在运行期被外部清理（git clean 等），SaveAvatar 写盘前会再兜底一次。
 func New(root string) *Store {
 	s := &Store{
 		root:      root,
 		avatarDir: filepath.Join(root, AvatarSubdir),
 	}
-	// 建目录失败不阻断启动：SaveAvatar 时仍会再尝试
 	_ = os.MkdirAll(s.avatarDir, 0o755)
 	return s
 }
@@ -81,6 +81,11 @@ func (s *Store) SaveAvatar(header *multipart.FileHeader) (string, error) {
 
 	name := newAvatarName(ext)
 	dstPath := filepath.Join(s.avatarDir, name)
+	// 写盘前兜底确保目录存在（目录可能在运行期被清理）；MkdirAll 幂等，已存在时零开销。
+	// 与 New() 的启动建目录互补：目录缺失时此处自动重建，不再依赖重启。
+	if err := os.MkdirAll(s.avatarDir, 0o755); err != nil {
+		return "", fmt.Errorf("ensure avatar dir: %w", err)
+	}
 	dst, err := os.OpenFile(dstPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return "", fmt.Errorf("create avatar file: %w", err)

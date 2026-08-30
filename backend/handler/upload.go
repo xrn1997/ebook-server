@@ -4,9 +4,11 @@ import (
 	"net/http"
 
 	"ebook-server/pkg/errcode"
+	"ebook-server/pkg/logger"
 	"ebook-server/pkg/upload"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 )
 
 // UploadHandler 文件上传 HTTP 处理器（ADR-0011）。
@@ -50,6 +52,8 @@ func (h *UploadHandler) UploadAvatar(c *gin.Context) {
 			errcode.Error(c, errcode.BadRequest, err.Error())
 			return
 		}
+		// 记录具体错误（目录缺失/权限/磁盘等），否则用户侧只能看到兜底文案，难以定位
+		logger.Error("保存头像失败", zap.Error(err))
 		errcode.Error(c, errcode.ServerError, "头像保存失败")
 		return
 	}
