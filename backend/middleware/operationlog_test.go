@@ -96,3 +96,29 @@ func TestOperationLog_FiltersAdminRequests(t *testing.T) {
 		t.Errorf("admin request must not be recorded, got %+v", w.log)
 	}
 }
+
+// TestOperationLog_CapturesBusinessCode HTTP 恒 200，但应从响应信封提取业务码/文案入审计。
+func TestOperationLog_CapturesBusinessCode(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := &fakeLogWriter{}
+	r := gin.New()
+	r.Use(OperationLog(w))
+	r.GET("/api/auth/send-code", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"code": "C0500", "error": "发送验证码失败"})
+	})
+
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/auth/send-code", nil))
+	if w.log == nil {
+		t.Fatal("expected operation log written")
+	}
+	if w.log.ErrorCode != "C0500" {
+		t.Errorf("expected ErrorCode C0500, got %q", w.log.ErrorCode)
+	}
+	if w.log.ErrorMessage != "发送验证码失败" {
+		t.Errorf("expected ErrorMessage captured, got %q", w.log.ErrorMessage)
+	}
+	// 响应必须仍能如实转发（拦截后 body 可见）
+	if w.log.ResponseCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.log.ResponseCode)
+	}
+}
