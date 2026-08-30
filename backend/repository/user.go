@@ -57,6 +57,32 @@ func (r *UserRepository) ExistsByEmail(email string) (bool, error) {
 	return count > 0, err
 }
 
+// Count 统计账号总数（管理后台用）。
+func (r *UserRepository) Count() (int64, error) {
+	var count int64
+	err := r.db.Model(&model.User{}).Count(&count).Error
+	return count, err
+}
+
+// FindAll 分页列出账号（管理后台用）。
+//
+// 返回列表与总数；`model.User.Password` 等字段带 `json:"-"`，序列化时不会出网。
+func (r *UserRepository) FindAll(page, pageSize int) ([]model.User, int64, error) {
+	var users []model.User
+	var total int64
+
+	query := r.db.Model(&model.User{})
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	offset := (page - 1) * pageSize
+	if err := query.Order("created_at DESC").Offset(offset).Limit(pageSize).Find(&users).Error; err != nil {
+		return nil, 0, err
+	}
+	return users, total, nil
+}
+
 // IsRecordNotFound 检查错误是否为记录未找到。
 //
 // gorm 的哨兵错误经此一个函数暴露给 service 层，是 gorm 类型越过 seam 的唯一窄口；

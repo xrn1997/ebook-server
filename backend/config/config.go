@@ -15,6 +15,15 @@ type Config struct {
 	Database DatabaseConfig `mapstructure:"database"`
 	JWT      JWTConfig      `mapstructure:"jwt"`
 	SMTP     SMTPConfig     `mapstructure:"smtp"`
+	Admin    AdminConfig    `mapstructure:"admin"` // 后台管理系统（ADR-0009）
+}
+
+// AdminConfig 后台管理系统配置（ADR-0009）。密码/密钥经 .env 覆盖。
+type AdminConfig struct {
+	Username  string `mapstructure:"username"`
+	Password  string `mapstructure:"password"`
+	JWTSecret string `mapstructure:"jwt_secret"`
+	ExpireMin int    `mapstructure:"expire_min"` // 管理端 token 有效期（分钟）
 }
 
 // ServerConfig 服务端配置。
@@ -65,6 +74,12 @@ func LoadConfig(path string) error {
 	viper.SetDefault("database.path", "ebook.db")
 	viper.SetDefault("jwt.secret", "ebook-secret-key")
 	viper.SetDefault("jwt.expire_min", 120)
+
+	// 后台管理系统默认值（ADR-0009）；部署时需通过 ADMIN_PASSWORD / ADMIN_JWT_SECRET 覆盖
+	viper.SetDefault("admin.username", "admin")
+	viper.SetDefault("admin.password", "admin123-dev")
+	viper.SetDefault("admin.jwt_secret", "ebook-admin-secret-key")
+	viper.SetDefault("admin.expire_min", 240)
 
 	if err := viper.ReadInConfig(); err != nil {
 		return fmt.Errorf("failed to read config: %w", err)

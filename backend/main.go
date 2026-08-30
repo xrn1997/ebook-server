@@ -3,6 +3,7 @@ package main
 import (
 	"ebook-server/config"
 	"ebook-server/handler"
+	"ebook-server/internal/admin"
 	"ebook-server/middleware"
 	"ebook-server/model"
 	"ebook-server/pkg/code"
@@ -126,6 +127,27 @@ func main() {
 			logs.GET("", logHandler.GetList)
 			logs.GET("/my", logHandler.GetMyLogs)
 		}
+	}
+
+	// ── 后台管理系统（ADR-0009：独立表面，独立鉴权）───────────────────────
+	adminHandler := admin.NewHandler(userRepo, commentRepo)
+	adm := r.Group("/admin")
+	{
+		// 后台 API
+		adm.POST("/api/login", adminHandler.Login)
+
+		api := adm.Group("/api")
+		api.Use(admin.AuthMiddleware())
+		{
+			api.GET("/stats", adminHandler.Stats)
+			api.GET("/users", adminHandler.ListUsers)
+			api.GET("/comments", adminHandler.ListComments)
+		}
+
+		// 内嵌前端（SPA 首页 + 静态资产）
+		adm.GET("", admin.ServeFrontend)
+		adm.GET("/", admin.ServeFrontend)
+		adm.StaticFS("/assets", admin.StaticFiles())
 	}
 
 	// 启动服务器

@@ -1,0 +1,5 @@
+# embed 目录占位。
+#
+# 本目录是 go:embed 的目标：全新 clone 时仅此文件保证 `//go:embed all:web` 可编译；
+# 前端真实产物由 `make frontend-build` + `make build` 在构建时镜象进本目录（已 gitignore）。
+# 未构建前端时 GET /admin 会返回"前端资源缺失"提示。
