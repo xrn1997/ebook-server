@@ -5,13 +5,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
-	"ebook-server/config"
 	"ebook-server/middleware"
-	"ebook-server/model"
-	"ebook-server/pkg/code"
-	"ebook-server/pkg/database"
 
 	"github.com/gin-gonic/gin"
 )
@@ -21,46 +18,18 @@ func setupRouter() *gin.Engine {
 	return gin.New()
 }
 
-func setupHandlerTestDB(t *testing.T) {
-	t.Helper()
-
-	config.AppConfig = &config.Config{
-		Server: config.ServerConfig{Mode: "test"},
-		JWT: config.JWTConfig{
-			Secret:    "test-secret",
-			ExpireMin: 1,
-		},
-		Database: config.DatabaseConfig{
-			Path: ":memory:",
-		},
-	}
-
-	if err := database.Init(); err != nil {
-		t.Fatalf("Failed to init test database: %v", err)
-	}
-
-	db := database.GetDB()
-	db.AutoMigrate(&model.User{}, &model.Comment{}, &model.OperationLog{}, &model.RefreshToken{})
-}
-
-func cleanupHandlerTestDB(t *testing.T) {
-	t.Helper()
-	sqlDB, _ := database.GetDB().DB()
-	sqlDB.Close()
-	database.DB = nil
-}
+// setupHandlerTestDB / cleanupHandlerTestDB 已由 test_helper_test.go 的 newTestApp 取代
 
 func TestAuthHandler_Register_Success(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
+	authHandler := app.auth
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
 
 	email := "reg-success@example.com"
-	code.Default().Set("reg:"+email, testCode)
+	testCodes.Set("reg:"+email, testCode)
 
 	body := map[string]string{"email": email, "code": testCode, "password": "password123"}
 	jsonBody, _ := json.Marshal(body)
@@ -82,11 +51,10 @@ func TestAuthHandler_Register_Success(t *testing.T) {
 }
 
 func TestAuthHandler_Register_InvalidBody(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
+	authHandler := app.auth
 	router.POST("/api/auth/register", authHandler.Register)
 
 	req, _ := http.NewRequest("POST", "/api/auth/register", bytes.NewBuffer([]byte("{}")))
@@ -98,11 +66,10 @@ func TestAuthHandler_Register_InvalidBody(t *testing.T) {
 }
 
 func TestAuthHandler_Register_InvalidJSON(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
+	authHandler := app.auth
 	router.POST("/api/auth/register", authHandler.Register)
 
 	req, _ := http.NewRequest("POST", "/api/auth/register", bytes.NewBuffer([]byte("invalid json")))
@@ -114,15 +81,14 @@ func TestAuthHandler_Register_InvalidJSON(t *testing.T) {
 }
 
 func TestAuthHandler_Register_WrongCode(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
+	authHandler := app.auth
 	router.POST("/api/auth/register", authHandler.Register)
 
 	email := "reg-wrongcode@example.com"
-	code.Default().Set("reg:"+email, "000000")
+	testCodes.Set("reg:"+email, "000000")
 
 	body := map[string]string{"email": email, "code": "111111", "password": "password123"}
 	jsonBody, _ := json.Marshal(body)
@@ -135,18 +101,17 @@ func TestAuthHandler_Register_WrongCode(t *testing.T) {
 }
 
 func TestAuthHandler_Register_DuplicateEmail(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
+	authHandler := app.auth
 	router.POST("/api/auth/register", authHandler.Register)
 
 	email := "reg-dup@example.com"
 	registerRegister(t, router, email)
 
 	// 再次注册同邮箱
-	code.Default().Set("reg:"+email, testCode)
+	testCodes.Set("reg:"+email, testCode)
 	body := map[string]string{"email": email, "code": testCode, "password": "password123"}
 	jsonBody, _ := json.Marshal(body)
 	req, _ := http.NewRequest("POST", "/api/auth/register", bytes.NewBuffer(jsonBody))
@@ -158,11 +123,10 @@ func TestAuthHandler_Register_DuplicateEmail(t *testing.T) {
 }
 
 func TestAuthHandler_Login_Success(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
+	authHandler := app.auth
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
 
@@ -186,11 +150,10 @@ func TestAuthHandler_Login_Success(t *testing.T) {
 }
 
 func TestAuthHandler_Login_WrongPassword(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
+	authHandler := app.auth
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
 
@@ -208,11 +171,10 @@ func TestAuthHandler_Login_WrongPassword(t *testing.T) {
 }
 
 func TestAuthHandler_Login_Nonexistent(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
+	authHandler := app.auth
 	router.POST("/api/auth/login", authHandler.Login)
 
 	body := map[string]string{"email": "ghost@example.com", "password": "password123"}
@@ -226,11 +188,10 @@ func TestAuthHandler_Login_Nonexistent(t *testing.T) {
 }
 
 func TestAuthHandler_Login_MissingFields(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
+	authHandler := app.auth
 	router.POST("/api/auth/login", authHandler.Login)
 
 	body := map[string]string{"password": "password123"}
@@ -244,11 +205,10 @@ func TestAuthHandler_Login_MissingFields(t *testing.T) {
 }
 
 func TestAuthHandler_SendCode_RateLimited(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
+	authHandler := app.auth
 	router.POST("/api/auth/send-code", authHandler.SendCode)
 
 	email := "rate@example.com"
@@ -269,11 +229,10 @@ func TestAuthHandler_SendCode_RateLimited(t *testing.T) {
 }
 
 func TestAuthHandler_Refresh_InvalidToken(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
+	authHandler := app.auth
 	router.POST("/api/auth/refresh", authHandler.Refresh)
 
 	body := map[string]string{"refresh_token": "bogus-token"}
@@ -289,7 +248,7 @@ func TestAuthHandler_Refresh_InvalidToken(t *testing.T) {
 // registerRegister 仅执行注册（不登录），用于注册场景测试
 func registerRegister(t *testing.T, router *gin.Engine, email string) {
 	t.Helper()
-	code.Default().Set("reg:"+email, testCode)
+	testCodes.Set("reg:"+email, testCode)
 	body := map[string]string{"email": email, "code": testCode, "password": "password123"}
 	jsonBody, _ := json.Marshal(body)
 	req, _ := http.NewRequest("POST", "/api/auth/register", bytes.NewBuffer(jsonBody))
@@ -300,11 +259,10 @@ func registerRegister(t *testing.T, router *gin.Engine, email string) {
 }
 
 func TestAuthHandler_Logout_Success(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
+	authHandler := app.auth
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
 	router.POST("/api/auth/logout", middleware.JWTAuth(), authHandler.Logout)
@@ -321,11 +279,10 @@ func TestAuthHandler_Logout_Success(t *testing.T) {
 }
 
 func TestAuthHandler_Logout_NoAuth(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
+	authHandler := app.auth
 	router.POST("/api/auth/logout", authHandler.Logout)
 
 	req, _ := http.NewRequest("POST", "/api/auth/logout", nil)
@@ -336,11 +293,10 @@ func TestAuthHandler_Logout_NoAuth(t *testing.T) {
 }
 
 func TestAuthHandler_Refresh_Success(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
+	authHandler := app.auth
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
 	router.POST("/api/auth/refresh", authHandler.Refresh)
@@ -376,11 +332,10 @@ func TestAuthHandler_Refresh_Success(t *testing.T) {
 }
 
 func TestAuthHandler_ForgotPasswordSendCode_Success(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
+	authHandler := app.auth
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
 	router.POST("/api/auth/forgot-password/send-code", authHandler.ForgotPasswordSendCode)
@@ -399,11 +354,10 @@ func TestAuthHandler_ForgotPasswordSendCode_Success(t *testing.T) {
 }
 
 func TestAuthHandler_ForgotPasswordSendCode_RateLimited(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
+	authHandler := app.auth
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
 	router.POST("/api/auth/forgot-password/send-code", authHandler.ForgotPasswordSendCode)
@@ -430,11 +384,10 @@ func TestAuthHandler_ForgotPasswordSendCode_RateLimited(t *testing.T) {
 }
 
 func TestAuthHandler_ForgotPasswordReset_Success(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
+	authHandler := app.auth
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
 	router.POST("/api/auth/forgot-password/reset", authHandler.ForgotPasswordReset)
@@ -443,7 +396,7 @@ func TestAuthHandler_ForgotPasswordReset_Success(t *testing.T) {
 	registerUser(t, router, email)
 
 	// 注入找回密码验证码
-	code.Default().Set("forgot:"+email, testCode)
+	testCodes.Set("forgot:"+email, testCode)
 
 	body := map[string]string{
 		"email":        email,
@@ -469,11 +422,10 @@ func TestAuthHandler_ForgotPasswordReset_Success(t *testing.T) {
 }
 
 func TestAuthHandler_ForgotPasswordReset_WrongCode(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
+	authHandler := app.auth
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
 	router.POST("/api/auth/forgot-password/reset", authHandler.ForgotPasswordReset)
@@ -481,7 +433,7 @@ func TestAuthHandler_ForgotPasswordReset_WrongCode(t *testing.T) {
 	email := "forgot-wrong@example.com"
 	registerUser(t, router, email)
 
-	code.Default().Set("forgot:"+email, "000000")
+	testCodes.Set("forgot:"+email, "000000")
 
 	body := map[string]string{
 		"email":        email,
@@ -498,11 +450,10 @@ func TestAuthHandler_ForgotPasswordReset_WrongCode(t *testing.T) {
 }
 
 func TestAuthHandler_ForgotPasswordReset_InvalidJSON(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
+	authHandler := app.auth
 	router.POST("/api/auth/forgot-password/reset", authHandler.ForgotPasswordReset)
 
 	req, _ := http.NewRequest("POST", "/api/auth/forgot-password/reset", bytes.NewBuffer([]byte("invalid")))
@@ -514,15 +465,14 @@ func TestAuthHandler_ForgotPasswordReset_InvalidJSON(t *testing.T) {
 }
 
 func TestAuthHandler_ForgotPasswordReset_AccountNotFound(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
+	authHandler := app.auth
 	router.POST("/api/auth/forgot-password/reset", authHandler.ForgotPasswordReset)
 
 	email := "ghost-forgot@example.com"
-	code.Default().Set("forgot:"+email, testCode)
+	testCodes.Set("forgot:"+email, testCode)
 
 	body := map[string]string{
 		"email":        email,
@@ -535,15 +485,20 @@ func TestAuthHandler_ForgotPasswordReset_AccountNotFound(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	assertErrorCode(t, w.Body.Bytes(), "A0201")
+	// 未认证端点不得返回 A0201（ADR-0006：该码仅用于已认证上下文）。
+	// "验证码通过但账号不存在"属异常态，对外统一按服务器错误处理。
+	resp := w.Body.Bytes()
+	assertErrorCode(t, resp, "C0500")
+	if strings.Contains(string(resp), "账户不存在") {
+		t.Errorf("response must not leak account existence: %s", resp)
+	}
 }
 
 func TestAuthHandler_ForgotPasswordSendCode_InvalidJSON(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
+	authHandler := app.auth
 	router.POST("/api/auth/forgot-password/send-code", authHandler.ForgotPasswordSendCode)
 
 	req, _ := http.NewRequest("POST", "/api/auth/forgot-password/send-code", bytes.NewBuffer([]byte("invalid")))
@@ -555,11 +510,10 @@ func TestAuthHandler_ForgotPasswordSendCode_InvalidJSON(t *testing.T) {
 }
 
 func TestAuthHandler_SendCode_InvalidJSON(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
+	authHandler := app.auth
 	router.POST("/api/auth/send-code", authHandler.SendCode)
 
 	req, _ := http.NewRequest("POST", "/api/auth/send-code", bytes.NewBuffer([]byte("invalid")))

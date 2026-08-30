@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"ebook-server/middleware"
 	"ebook-server/pkg/errcode"
 	"ebook-server/service"
 	"strconv"
@@ -14,9 +15,9 @@ type LogHandler struct {
 }
 
 // NewLogHandler 创建日志处理器实例。
-func NewLogHandler() *LogHandler {
+func NewLogHandler(logService *service.LogService) *LogHandler {
 	return &LogHandler{
-		logService: service.NewLogService(),
+		logService: logService,
 	}
 }
 
@@ -36,7 +37,7 @@ func (h *LogHandler) GetList(c *gin.Context) {
 
 	result, err := h.logService.GetAll(page, pageSize)
 	if err != nil {
-		errcode.Error(c, errcode.ServerError, "获取日志列表失败")
+		errcode.Respond(c, err, "获取日志列表失败")
 		return
 	}
 
@@ -54,15 +55,11 @@ func (h *LogHandler) GetList(c *gin.Context) {
 // @Success 200 {object} model.Response
 // @Router /api/logs/my [get]
 func (h *LogHandler) GetMyLogs(c *gin.Context) {
-	userID, exists := c.Get("user_id")
+	// 经 middleware 访问器读取上下文，不手搓 context key——
+	// 当前账号的契约只应存在一处（middleware/auth.go）
+	uid, exists := middleware.GetCurrentUserID(c)
 	if !exists {
 		errcode.Error(c, errcode.LoginExpired, "未登录")
-		return
-	}
-
-	uid, ok := userID.(uint)
-	if !ok {
-		errcode.Error(c, errcode.ServerError, "用户ID类型错误")
 		return
 	}
 
@@ -71,7 +68,7 @@ func (h *LogHandler) GetMyLogs(c *gin.Context) {
 
 	result, err := h.logService.GetByUserID(uid, page, pageSize)
 	if err != nil {
-		errcode.Error(c, errcode.ServerError, "获取日志列表失败")
+		errcode.Respond(c, err, "获取日志列表失败")
 		return
 	}
 

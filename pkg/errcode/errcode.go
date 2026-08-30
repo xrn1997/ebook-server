@@ -18,6 +18,7 @@ const (
 	UsernameInvalid = "A0110" // 用户名格式不合规
 	UsernameExists  = "A0111" // 用户名已存在
 	EmailExists     = "A0112" // 邮箱已被注册
+	EmailImmutable  = "A0113" // 登录主标识不可变更（ADR-0004）
 	PasswordInvalid = "A0120" // 密码格式不合规
 	CodeInvalid     = "A0132" // 验证码错误
 	EmailInvalid    = "A0153" // 邮箱格式错误
@@ -35,6 +36,55 @@ const (
 	Forbidden   = "A0403" // 无权限
 	ServerError = "C0500" // 服务器内部错误
 )
+
+// errorCodes 领域 sentinel 错误到业务码的唯一映射表。
+//
+// 此前这份映射散落在各 handler 的手写 switch 里，新增错误要改多处，
+// 漏一处就静默退化成 C0500。集中成表后，handler 一律走 From/Respond。
+//
+// 注意：个别端点需要**覆盖**默认映射（例如登录为防枚举把「账号不存在」
+// 映射成 A0210，见 ADR-0006）。覆盖必须写在调用点并注明理由——
+// 只改这张表而不同步端点，会静默破坏防枚举。
+var errorCodes = map[error]string{
+	model.ErrUsernameExists:  UsernameExists,
+	model.ErrEmailExists:     EmailExists,
+	model.ErrEmailImmutable:  EmailImmutable,
+	model.ErrCodeInvalid:     CodeInvalid,
+	model.ErrAccountNotFound: AccountNotFound,
+	model.ErrUserNotFound:    AccountNotFound,
+	model.ErrPasswordWrong:   PasswordWrong,
+	model.ErrLoginExpired:    LoginExpired,
+	model.ErrAttemptTooMany:  AttemptTooMany,
+	model.ErrAccountLocked:   AccountLocked,
+	model.ErrMailSendFailed:  MailSendFailed,
+	model.ErrCommentNotFound: NotFound,
+	model.ErrNoPermission:    Forbidden,
+}
+
+// From 返回 err 对应的业务码，未登记的 err 一律落通用码 ServerError。
+//
+// 未登记的错误不能回传其 error 文案（可能含驱动/网络细节），
+// 调用方应对 ServerError 使用兜底文案（见 Respond）。
+func From(err error) string {
+	if code, ok := errorCodes[err]; ok {
+		return code
+	}
+	return ServerError
+}
+
+// Respond 把 err 翻译成统一信封：已登记的 err 透出其文案，未登记的只回兜底文案。
+//
+// 这是 handler 处理业务错误的标准写法：
+//
+//	errcode.Respond(c, err, "获取用户信息失败")
+func Respond(c *gin.Context, err error, fallbackMessage string) {
+	code := From(err)
+	message := fallbackMessage
+	if code != ServerError {
+		message = err.Error()
+	}
+	Error(c, code, message)
+}
 
 // Success 成功响应
 func Success(c *gin.Context, data interface{}) {

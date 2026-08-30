@@ -60,7 +60,7 @@ func LoadConfig(path string) error {
 	viper.AutomaticEnv()
 
 	// 设置默认值
-	viper.SetDefault("server.port", 8080)
+	viper.SetDefault("server.port", 9090)
 	viper.SetDefault("server.mode", "debug")
 	viper.SetDefault("database.path", "ebook.db")
 	viper.SetDefault("jwt.secret", "ebook-secret-key")

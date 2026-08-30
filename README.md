@@ -101,8 +101,18 @@ make docker
 | 方法 | 路径 | 说明 | 认证 |
 |------|------|------|------|
 | GET | /api/users/me | 获取当前用户信息 | 是 |
-| PUT | /api/users/me | 更新用户信息 | 是 |
+| PUT | /api/users/me | 更新用户信息（`email` 不可变更，传不同值返回 `A0113`） | 是 |
 | PUT | /api/users/me/password | 已登录修改密码 | 是 |
+| GET | /api/users/me/data | 导出我的数据（用户资料 + 本人评论） | 是 |
+| POST | /api/users/me/deletion/send-code | 发送注销验证码到当前账号邮箱 | 是 |
+| POST | /api/users/me/deletion | 注销账号（验证码确认，匿名化并返回数据副本） | 是 |
+
+> **账号注销说明**（[ADR-0005](docs/adr/0005-account-deletion-by-anonymization.md)）
+>
+> * 注销采用**匿名化**而非删除：改写 `email` 为占位值、清空密码与头像，账号不可再登录
+> * 同一邮箱注销后可以**重新注册**（占位 email 释放了唯一索引）
+> * **公开评论与操作日志保留**——评论作者将显示为"已注销用户"
+> * **不可撤销**：注销前请先用 `GET /api/users/me/data` 导出数据，注销响应也会带上同一份副本
 
 ### 评论相关
 
@@ -130,7 +140,7 @@ make docker
 前端点击「发送验证码」时调用：
 
 ```bash
-curl -X POST http://localhost:8080/api/auth/send-code \
+curl -X POST http://localhost:9090/api/auth/send-code \
   -H "Content-Type: application/json" \
   -d '{"email": "test@example.com"}'
 ```
@@ -138,7 +148,7 @@ curl -X POST http://localhost:8080/api/auth/send-code \
 ### 注册
 
 ```bash
-curl -X POST http://localhost:8080/api/auth/register \
+curl -X POST http://localhost:9090/api/auth/register \
   -H "Content-Type: application/json" \
   -d '{
     "email": "test@example.com",
@@ -152,7 +162,7 @@ curl -X POST http://localhost:8080/api/auth/register \
 ### 登录
 
 ```bash
-curl -X POST http://localhost:8080/api/auth/login \
+curl -X POST http://localhost:9090/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{
     "email": "test@example.com",
@@ -183,7 +193,7 @@ curl -X POST http://localhost:8080/api/auth/login \
 ### 刷新 token
 
 ```bash
-curl -X POST http://localhost:8080/api/auth/refresh \
+curl -X POST http://localhost:9090/api/auth/refresh \
   -H "Content-Type: application/json" \
   -d '{"refresh_token": "a1b2c3..."}'
 ```
@@ -191,7 +201,7 @@ curl -X POST http://localhost:8080/api/auth/refresh \
 ### 已登录修改密码
 
 ```bash
-curl -X PUT http://localhost:8080/api/users/me/password \
+curl -X PUT http://localhost:9090/api/users/me/password \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <access-token>" \
   -d '{"old_password": "123456", "new_password": "654321"}'
@@ -200,14 +210,14 @@ curl -X PUT http://localhost:8080/api/users/me/password \
 ### 获取用户信息
 
 ```bash
-curl http://localhost:8080/api/users/me \
+curl http://localhost:9090/api/users/me \
   -H "Authorization: Bearer <your-token>"
 ```
 
 ### 创建评论
 
 ```bash
-curl -X POST http://localhost:8080/api/comments \
+curl -X POST http://localhost:9090/api/comments \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <your-token>" \
   -d '{
@@ -235,7 +245,7 @@ docker run -p 9090:9090 ebook-server
 
 ```yaml
 server:
-  port: 9090            # 服务端口（config.yaml 默认 9090；代码默认 8080）
+  port: 9090            # 服务端口（config.yaml 与代码默认值一致，均为 9090）
   mode: debug           # 运行模式: debug, release, test
 
 database:

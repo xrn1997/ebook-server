@@ -9,7 +9,7 @@ func TestLogRepository_Create(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	repo := NewLogRepository()
+	repo := NewLogRepository(testDB)
 	log := &model.OperationLog{
 		UserID:       1,
 		Username:     "testuser",
@@ -31,7 +31,7 @@ func TestLogRepository_FindAll(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	repo := NewLogRepository()
+	repo := NewLogRepository(testDB)
 	for i := 0; i < 15; i++ {
 		repo.Create(&model.OperationLog{
 			UserID:       1,
@@ -66,7 +66,7 @@ func TestLogRepository_FindByUserID(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	repo := NewLogRepository()
+	repo := NewLogRepository(testDB)
 	// 用户1的日志
 	for i := 0; i < 8; i++ {
 		repo.Create(&model.OperationLog{
@@ -122,7 +122,7 @@ func TestLogRepository_FindAll_Empty(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	repo := NewLogRepository()
+	repo := NewLogRepository(testDB)
 	logs, total, err := repo.FindAll(1, 10)
 	if err != nil {
 		t.Fatalf("Failed to find logs: %v", err)

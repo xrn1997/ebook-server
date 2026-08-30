@@ -10,11 +10,11 @@ func TestCommentService_Create_Success(t *testing.T) {
 	defer cleanupTestDB(t)
 
 	// 先创建用户
-	authService := NewAuthService()
+	authService := testAuth
 	user := serviceRegister(t, authService, "commentuser@example.com", "password123")
 
 	// 创建评论
-	commentService := NewCommentService()
+	commentService := testComments
 	createReq := &model.CreateCommentRequest{
 		Content: "This is a test comment",
 	}
@@ -38,10 +38,10 @@ func TestCommentService_GetByID_Success(t *testing.T) {
 	defer cleanupTestDB(t)
 
 	// 创建用户和评论
-	authService := NewAuthService()
+	authService := testAuth
 	user := serviceRegister(t, authService, "getcommentuser@example.com", "password123")
 
-	commentService := NewCommentService()
+	commentService := testComments
 	createReq := &model.CreateCommentRequest{
 		Content: "Comment to retrieve",
 	}
@@ -65,7 +65,7 @@ func TestCommentService_GetByID_NotFound(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	commentService := NewCommentService()
+	commentService := testComments
 
 	_, err := commentService.GetByID(999999)
 	if err != model.ErrCommentNotFound {
@@ -77,10 +77,10 @@ func TestCommentService_GetAll_Pagination(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	commentService := NewCommentService()
+	commentService := testComments
 
 	// 创建一些评论
-	authService := NewAuthService()
+	authService := testAuth
 	user := serviceRegister(t, authService, "pagination_user@example.com", "password123")
 	uid := user.UID
 
@@ -124,10 +124,10 @@ func TestCommentService_Delete_Success(t *testing.T) {
 	defer cleanupTestDB(t)
 
 	// 创建用户和评论
-	authService := NewAuthService()
+	authService := testAuth
 	user := serviceRegister(t, authService, "deletecommentuser@example.com", "password123")
 
-	commentService := NewCommentService()
+	commentService := testComments
 	createReq := &model.CreateCommentRequest{
 		Content: "Comment to delete",
 	}
@@ -154,12 +154,12 @@ func TestCommentService_Delete_NoPermission(t *testing.T) {
 	defer cleanupTestDB(t)
 
 	// 创建两个用户
-	authService := NewAuthService()
+	authService := testAuth
 	user1 := serviceRegister(t, authService, "user1_delete@example.com", "password123")
 	user2 := serviceRegister(t, authService, "user2_delete@example.com", "password123")
 
 	// user1 创建评论
-	commentService := NewCommentService()
+	commentService := testComments
 	createReq := &model.CreateCommentRequest{
 		Content: "Comment by user1",
 	}
@@ -179,7 +179,7 @@ func TestCommentService_Delete_CommentNotFound(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	commentService := NewCommentService()
+	commentService := testComments
 
 	err := commentService.Delete(999999, 1)
 	if err != model.ErrCommentNotFound {
@@ -191,10 +191,10 @@ func TestCommentService_GetByUserID_Success(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	authService := NewAuthService()
+	authService := testAuth
 	user := serviceRegister(t, authService, "getbyuserid@example.com", "password123")
 
-	commentService := NewCommentService()
+	commentService := testComments
 	for i := 0; i < 5; i++ {
 		commentService.Create(user.UID, &model.CreateCommentRequest{Content: "Comment"})
 	}
@@ -219,7 +219,7 @@ func TestCommentService_GetByUserID_Empty(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	commentService := NewCommentService()
+	commentService := testComments
 	result, err := commentService.GetByUserID(999, 1, 10)
 	if err != nil {
 		t.Fatalf("Failed to get comments: %v", err)
@@ -236,9 +236,9 @@ func TestCommentService_GetAll_PaginationBoundaries(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	authService := NewAuthService()
+	authService := testAuth
 	user := serviceRegister(t, authService, "bounds@example.com", "password123")
-	commentService := NewCommentService()
+	commentService := testComments
 
 	for i := 0; i < 3; i++ {
 		commentService.Create(user.UID, &model.CreateCommentRequest{Content: "Comment"})

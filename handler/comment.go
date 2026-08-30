@@ -16,9 +16,9 @@ type CommentHandler struct {
 }
 
 // NewCommentHandler 创建评论处理器实例。
-func NewCommentHandler() *CommentHandler {
+func NewCommentHandler(commentService *service.CommentService) *CommentHandler {
 	return &CommentHandler{
-		commentService: service.NewCommentService(),
+		commentService: commentService,
 	}
 }
 
@@ -47,7 +47,7 @@ func (h *CommentHandler) Create(c *gin.Context) {
 
 	comment, err := h.commentService.Create(userID, &req)
 	if err != nil {
-		errcode.Error(c, errcode.ServerError, "创建评论失败")
+		errcode.Respond(c, err, "创建评论失败")
 		return
 	}
 
@@ -69,7 +69,7 @@ func (h *CommentHandler) GetList(c *gin.Context) {
 
 	result, err := h.commentService.GetAll(page, pageSize)
 	if err != nil {
-		errcode.Error(c, errcode.ServerError, "获取评论列表失败")
+		errcode.Respond(c, err, "获取评论列表失败")
 		return
 	}
 
@@ -98,7 +98,7 @@ func (h *CommentHandler) GetMyComments(c *gin.Context) {
 
 	result, err := h.commentService.GetByUserID(userID, page, pageSize)
 	if err != nil {
-		errcode.Error(c, errcode.ServerError, "获取评论列表失败")
+		errcode.Respond(c, err, "获取评论列表失败")
 		return
 	}
 
@@ -128,15 +128,7 @@ func (h *CommentHandler) Delete(c *gin.Context) {
 	}
 
 	if err := h.commentService.Delete(uint(id), userID); err != nil {
-		if err == model.ErrCommentNotFound {
-			errcode.Error(c, errcode.NotFound, err.Error())
-			return
-		}
-		if err == model.ErrNoPermission {
-			errcode.Error(c, errcode.Forbidden, err.Error())
-			return
-		}
-		errcode.Error(c, errcode.ServerError, "删除评论失败")
+		errcode.Respond(c, err, "删除评论失败")
 		return
 	}
 

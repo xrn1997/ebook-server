@@ -8,15 +8,13 @@ import (
 
 	"ebook-server/middleware"
 	"ebook-server/model"
-	"ebook-server/pkg/database"
 )
 
 func TestLogHandler_GetList_Empty(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	logHandler := NewLogHandler()
+	logHandler := app.log
 	router.GET("/api/logs", logHandler.GetList)
 
 	req, _ := http.NewRequest("GET", "/api/logs", nil)
@@ -34,11 +32,10 @@ func TestLogHandler_GetList_Empty(t *testing.T) {
 }
 
 func TestLogHandler_GetList_WithData(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	// 直接通过数据库创建日志数据
-	db := database.GetDB()
+	db := app.db
 	for i := 0; i < 5; i++ {
 		db.Create(&model.OperationLog{
 			UserID:       1,
@@ -51,7 +48,7 @@ func TestLogHandler_GetList_WithData(t *testing.T) {
 	}
 
 	router := setupRouter()
-	logHandler := NewLogHandler()
+	logHandler := app.log
 	router.GET("/api/logs", logHandler.GetList)
 
 	req, _ := http.NewRequest("GET", "/api/logs?page=1&page_size=3", nil)
@@ -72,12 +69,11 @@ func TestLogHandler_GetList_WithData(t *testing.T) {
 }
 
 func TestLogHandler_GetMyLogs_Success(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
-	logHandler := NewLogHandler()
+	authHandler := app.auth
+	logHandler := app.log
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
 	router.GET("/api/logs/my", middleware.JWTAuth(), logHandler.GetMyLogs)
@@ -85,7 +81,7 @@ func TestLogHandler_GetMyLogs_Success(t *testing.T) {
 	uid, token := registerUser(t, router, "mylog@example.com")
 
 	// 直接通过数据库创建该用户的日志
-	db := database.GetDB()
+	db := app.db
 	for i := 0; i < 3; i++ {
 		db.Create(&model.OperationLog{
 			UserID:       uid,
@@ -119,11 +115,10 @@ func TestLogHandler_GetMyLogs_Success(t *testing.T) {
 }
 
 func TestLogHandler_GetMyLogs_NoAuth(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	logHandler := NewLogHandler()
+	logHandler := app.log
 	router.GET("/api/logs/my", middleware.JWTAuth(), logHandler.GetMyLogs)
 
 	req, _ := http.NewRequest("GET", "/api/logs/my", nil)
@@ -134,19 +129,18 @@ func TestLogHandler_GetMyLogs_NoAuth(t *testing.T) {
 }
 
 func TestLogHandler_GetMyLogs_Pagination(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
-	logHandler := NewLogHandler()
+	authHandler := app.auth
+	logHandler := app.log
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
 	router.GET("/api/logs/my", middleware.JWTAuth(), logHandler.GetMyLogs)
 
 	uid, token := registerUser(t, router, "logpage@example.com")
 
-	db := database.GetDB()
+	db := app.db
 	for i := 0; i < 10; i++ {
 		db.Create(&model.OperationLog{
 			UserID:       uid,

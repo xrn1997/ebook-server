@@ -5,9 +5,13 @@ import (
 	"ebook-server/handler"
 	"ebook-server/middleware"
 	"ebook-server/model"
+	"ebook-server/pkg/code"
 	"ebook-server/pkg/database"
 	"ebook-server/pkg/errcode"
 	"ebook-server/pkg/logger"
+	"ebook-server/pkg/mail"
+	"ebook-server/repository"
+	"ebook-server/service"
 	"fmt"
 	"log"
 	"os"
@@ -39,6 +43,24 @@ func main() {
 	// 设置 Gin 模式
 	gin.SetMode(config.AppConfig.Server.Mode)
 
+	// ── 装配依赖（ADR-0007：main.go 是唯一装配点）───────────────────────────
+	// 数据访问：gorm adapter，共享同一连接
+	userRepo := repository.NewUserRepository(db)
+	tokenRepo := repository.NewRefreshTokenRepository(db)
+	commentRepo := repository.NewCommentRepository(db)
+	logRepo := repository.NewLogRepository(db)
+
+	// 验证码存储全局唯一（注册/找回/注销共用）；邮件按配置选择 adapter
+	codeStore := code.NewStore()
+	mailer := newMailer(config.AppConfig)
+
+	// 业务服务
+	authService := service.NewAuthService(userRepo, tokenRepo, codeStore, mailer)
+	userService := service.NewUserService(userRepo)
+	accountService := service.NewAccountService(userRepo, tokenRepo, commentRepo, codeStore, mailer)
+	commentService := service.NewCommentService(commentRepo)
+	logService := service.NewLogService(logRepo)
+
 	// 创建 Gin 引擎
 	r := gin.New()
 
@@ -58,7 +80,7 @@ func main() {
 		// 认证相关（不需要登录）
 		auth := api.Group("/auth")
 		{
-			authHandler := handler.NewAuthHandler()
+			authHandler := handler.NewAuthHandler(authService)
 			auth.POST("/send-code", authHandler.SendCode)
 			auth.POST("/register", authHandler.Register)
 			auth.POST("/login", authHandler.Login)
@@ -72,27 +94,32 @@ func main() {
 		users := api.Group("/users")
 		users.Use(middleware.JWTAuth())
 		{
-			userHandler := handler.NewUserHandler()
+			userHandler := handler.NewUserHandler(userService, authService)
 			users.GET("/me", userHandler.GetMe)
 			users.PUT("/me", userHandler.UpdateMe)
 			users.PUT("/me/password", userHandler.ChangePassword)
+
+			accountHandler := handler.NewAccountHandler(accountService)
+			users.GET("/me/data", accountHandler.ExportMyData)
+			users.POST("/me/deletion/send-code", accountHandler.SendDeletionCode)
+			users.POST("/me/deletion", accountHandler.DeleteAccount)
 		}
 
 		// 评论相关
 		comments := api.Group("/comments")
 		{
-			commentHandler := handler.NewCommentHandler()
-			comments.GET("", commentHandler.GetList)                              // 公开
-			comments.POST("", middleware.JWTAuth(), commentHandler.Create)        // 需要登录
+			commentHandler := handler.NewCommentHandler(commentService)
+			comments.GET("", commentHandler.GetList)                                // 公开
+			comments.POST("", middleware.JWTAuth(), commentHandler.Create)          // 需要登录
 			comments.GET("/my", middleware.JWTAuth(), commentHandler.GetMyComments) // 需要登录
-			comments.DELETE("/:id", middleware.JWTAuth(), commentHandler.Delete)   // 需要登录
+			comments.DELETE("/:id", middleware.JWTAuth(), commentHandler.Delete)    // 需要登录
 		}
 
 		// 日志相关（需要登录）
 		logs := api.Group("/logs")
 		logs.Use(middleware.JWTAuth())
 		{
-			logHandler := handler.NewLogHandler()
+			logHandler := handler.NewLogHandler(logService)
 			logs.GET("", logHandler.GetList)
 			logs.GET("/my", logHandler.GetMyLogs)
 		}
@@ -104,6 +131,18 @@ func main() {
 	if err := r.Run(fmt.Sprintf(":%d", port)); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
+}
+
+// newMailer 按配置装配验证码邮件 adapter（ADR-0007：装配知识集中在 main.go）。
+//
+// SMTP 已配置 → 真实发送；未配置且非 release → 写日志（本地联调）；
+// release 下未配置 SMTP → 仍装配 SMTP adapter，发送时显式报错，
+// 避免在正规环境把验证码悄悄漏进日志。
+func newMailer(cfg *config.Config) service.Mailer {
+	if (cfg.SMTP.Host != "" && cfg.SMTP.Port != 0) || cfg.Server.Mode == "release" {
+		return mail.NewSMTPMailer(cfg.SMTP)
+	}
+	return mail.NewLogMailer()
 }
 
 func init() {

@@ -11,8 +11,9 @@ import (
 )
 
 func TestUserHandler_GetMe_NoAuth(t *testing.T) {
+	app := newTestApp(t)
 	router := setupRouter()
-	userHandler := NewUserHandler()
+	userHandler := app.user
 	router.GET("/api/users/me", userHandler.GetMe)
 
 	req, _ := http.NewRequest("GET", "/api/users/me", nil)
@@ -23,12 +24,11 @@ func TestUserHandler_GetMe_NoAuth(t *testing.T) {
 }
 
 func TestUserHandler_GetMe_WithAuth(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
-	userHandler := NewUserHandler()
+	authHandler := app.auth
+	userHandler := app.user
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
 	router.GET("/api/users/me", middleware.JWTAuth(), userHandler.GetMe)
@@ -50,8 +50,9 @@ func TestUserHandler_GetMe_WithAuth(t *testing.T) {
 }
 
 func TestUserHandler_GetMe_InvalidToken(t *testing.T) {
+	app := newTestApp(t)
 	router := setupRouter()
-	userHandler := NewUserHandler()
+	userHandler := app.user
 	router.GET("/api/users/me", middleware.JWTAuth(), userHandler.GetMe)
 
 	req, _ := http.NewRequest("GET", "/api/users/me", nil)
@@ -63,12 +64,11 @@ func TestUserHandler_GetMe_InvalidToken(t *testing.T) {
 }
 
 func TestUserHandler_UpdateMe_Success(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
-	userHandler := NewUserHandler()
+	authHandler := app.auth
+	userHandler := app.user
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
 	router.PUT("/api/users/me", middleware.JWTAuth(), userHandler.UpdateMe)
@@ -77,7 +77,6 @@ func TestUserHandler_UpdateMe_Success(t *testing.T) {
 
 	body := map[string]string{
 		"username": "myname",
-		"email":    "new@example.com",
 		"avatar":   "https://example.com/avatar.jpg",
 	}
 	jsonBody, _ := json.Marshal(body)
@@ -91,18 +90,42 @@ func TestUserHandler_UpdateMe_Success(t *testing.T) {
 	if data["username"] != "myname" {
 		t.Errorf("Expected username 'myname', got %v", data["username"])
 	}
-	if data["email"] != "new@example.com" {
-		t.Errorf("Expected email 'new@example.com', got %v", data["email"])
+	// 登录主标识不可变更（ADR-0004），应保持注册时的值
+	if data["email"] != "update@example.com" {
+		t.Errorf("Expected email to remain 'update@example.com', got %v", data["email"])
 	}
 }
 
-func TestUserHandler_UpdateMe_InvalidEmail(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+// TestUserHandler_UpdateMe_EmailImmutable 改登录主标识应返回 A0113（ADR-0004）
+func TestUserHandler_UpdateMe_EmailImmutable(t *testing.T) {
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
-	userHandler := NewUserHandler()
+	authHandler := app.auth
+	userHandler := app.user
+	router.POST("/api/auth/register", authHandler.Register)
+	router.POST("/api/auth/login", authHandler.Login)
+	router.PUT("/api/users/me", middleware.JWTAuth(), userHandler.UpdateMe)
+
+	_, token := registerUser(t, router, "immutable-h@example.com")
+
+	body := map[string]string{"email": "another@example.com"}
+	jsonBody, _ := json.Marshal(body)
+	req, _ := http.NewRequest("PUT", "/api/users/me", bytes.NewBuffer(jsonBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assertErrorCode(t, w.Body.Bytes(), "A0113")
+}
+
+func TestUserHandler_UpdateMe_InvalidEmail(t *testing.T) {
+	app := newTestApp(t)
+
+	router := setupRouter()
+	authHandler := app.auth
+	userHandler := app.user
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
 	router.PUT("/api/users/me", middleware.JWTAuth(), userHandler.UpdateMe)
@@ -121,12 +144,11 @@ func TestUserHandler_UpdateMe_InvalidEmail(t *testing.T) {
 }
 
 func TestUserHandler_ChangePassword_Success(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
-	userHandler := NewUserHandler()
+	authHandler := app.auth
+	userHandler := app.user
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
 	router.PUT("/api/users/me/password", middleware.JWTAuth(), userHandler.ChangePassword)
@@ -154,12 +176,11 @@ func TestUserHandler_ChangePassword_Success(t *testing.T) {
 }
 
 func TestUserHandler_ChangePassword_WrongOldPassword(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
-	userHandler := NewUserHandler()
+	authHandler := app.auth
+	userHandler := app.user
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
 	router.PUT("/api/users/me/password", middleware.JWTAuth(), userHandler.ChangePassword)
@@ -178,8 +199,9 @@ func TestUserHandler_ChangePassword_WrongOldPassword(t *testing.T) {
 }
 
 func TestUserHandler_UpdateMe_NoAuth(t *testing.T) {
+	app := newTestApp(t)
 	router := setupRouter()
-	userHandler := NewUserHandler()
+	userHandler := app.user
 	router.PUT("/api/users/me", middleware.JWTAuth(), userHandler.UpdateMe)
 
 	body := map[string]string{"username": "newname"}
@@ -193,12 +215,11 @@ func TestUserHandler_UpdateMe_NoAuth(t *testing.T) {
 }
 
 func TestUserHandler_UpdateMe_InvalidJSON(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
-	userHandler := NewUserHandler()
+	authHandler := app.auth
+	userHandler := app.user
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
 	router.PUT("/api/users/me", middleware.JWTAuth(), userHandler.UpdateMe)
@@ -215,8 +236,9 @@ func TestUserHandler_UpdateMe_InvalidJSON(t *testing.T) {
 }
 
 func TestUserHandler_ChangePassword_NoAuth(t *testing.T) {
+	app := newTestApp(t)
 	router := setupRouter()
-	userHandler := NewUserHandler()
+	userHandler := app.user
 	router.PUT("/api/users/me/password", middleware.JWTAuth(), userHandler.ChangePassword)
 
 	body := map[string]string{"old_password": "old", "new_password": "new"}
@@ -230,12 +252,11 @@ func TestUserHandler_ChangePassword_NoAuth(t *testing.T) {
 }
 
 func TestUserHandler_ChangePassword_InvalidJSON(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
-	userHandler := NewUserHandler()
+	authHandler := app.auth
+	userHandler := app.user
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
 	router.PUT("/api/users/me/password", middleware.JWTAuth(), userHandler.ChangePassword)

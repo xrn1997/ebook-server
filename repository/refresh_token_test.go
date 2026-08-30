@@ -10,7 +10,7 @@ func TestRefreshTokenRepository_Create(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	repo := NewRefreshTokenRepository()
+	repo := NewRefreshTokenRepository(testDB)
 	token := &model.RefreshToken{
 		TokenHash: "abc123hash",
 		UserID:    1,
@@ -29,7 +29,7 @@ func TestRefreshTokenRepository_FindByHash_Found(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	repo := NewRefreshTokenRepository()
+	repo := NewRefreshTokenRepository(testDB)
 	token := &model.RefreshToken{
 		TokenHash: "findhash",
 		UserID:    1,
@@ -50,7 +50,7 @@ func TestRefreshTokenRepository_FindByHash_NotFound(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	repo := NewRefreshTokenRepository()
+	repo := NewRefreshTokenRepository(testDB)
 	_, err := repo.FindByHash("nonexistent")
 	if !IsRecordNotFound(err) {
 		t.Errorf("Expected ErrRecordNotFound, got %v", err)
@@ -61,7 +61,7 @@ func TestRefreshTokenRepository_FindByHash_Expired(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	repo := NewRefreshTokenRepository()
+	repo := NewRefreshTokenRepository(testDB)
 	token := &model.RefreshToken{
 		TokenHash: "expiredhash",
 		UserID:    1,
@@ -79,7 +79,7 @@ func TestRefreshTokenRepository_DeleteByID(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	repo := NewRefreshTokenRepository()
+	repo := NewRefreshTokenRepository(testDB)
 	token := &model.RefreshToken{
 		TokenHash: "deletehash",
 		UserID:    1,
@@ -101,7 +101,7 @@ func TestRefreshTokenRepository_DeleteByUserID(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	repo := NewRefreshTokenRepository()
+	repo := NewRefreshTokenRepository(testDB)
 	// 为用户1创建多个 token
 	for i := 0; i < 3; i++ {
 		repo.Create(&model.RefreshToken{
@@ -141,7 +141,7 @@ func TestRefreshTokenRepository_DeleteExpired(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	repo := NewRefreshTokenRepository()
+	repo := NewRefreshTokenRepository(testDB)
 	// 过期 token
 	repo.Create(&model.RefreshToken{
 		TokenHash: "expired1",

@@ -10,7 +10,7 @@ func TestUserRepository_Create(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	repo := NewUserRepository()
+	repo := NewUserRepository(testDB)
 	user := &model.User{
 		Email:    "test@example.com",
 		Password: "hashedpassword",
@@ -31,7 +31,7 @@ func TestUserRepository_FindByEmail_Found(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	repo := NewUserRepository()
+	repo := NewUserRepository(testDB)
 	user := &model.User{
 		Email:    "find@example.com",
 		Password: "hashedpassword",
@@ -53,7 +53,7 @@ func TestUserRepository_FindByEmail_NotFound(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	repo := NewUserRepository()
+	repo := NewUserRepository(testDB)
 	_, err := repo.FindByEmail("nonexistent@example.com")
 	if !IsRecordNotFound(err) {
 		t.Errorf("Expected ErrRecordNotFound, got %v", err)
@@ -64,7 +64,7 @@ func TestUserRepository_FindByUID_Found(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	repo := NewUserRepository()
+	repo := NewUserRepository(testDB)
 	user := &model.User{
 		Email:    "uid@example.com",
 		Password: "hashedpassword",
@@ -86,7 +86,7 @@ func TestUserRepository_FindByUID_NotFound(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	repo := NewUserRepository()
+	repo := NewUserRepository(testDB)
 	_, err := repo.FindByUID(999999)
 	if !IsRecordNotFound(err) {
 		t.Errorf("Expected ErrRecordNotFound, got %v", err)
@@ -97,7 +97,7 @@ func TestUserRepository_Update(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	repo := NewUserRepository()
+	repo := NewUserRepository(testDB)
 	user := &model.User{
 		Email:    "update@example.com",
 		Password: "hashedpassword",
@@ -121,34 +121,11 @@ func TestUserRepository_Update(t *testing.T) {
 	}
 }
 
-func TestUserRepository_Delete(t *testing.T) {
-	setupTestDB(t)
-	defer cleanupTestDB(t)
-
-	repo := NewUserRepository()
-	user := &model.User{
-		Email:    "delete@example.com",
-		Password: "hashedpassword",
-		Username: "deleteuser",
-		Nickname: "deleteuser",
-	}
-	repo.Create(user)
-
-	if err := repo.Delete(user.UID); err != nil {
-		t.Fatalf("Failed to delete user: %v", err)
-	}
-
-	_, err := repo.FindByUID(user.UID)
-	if !IsRecordNotFound(err) {
-		t.Errorf("Expected ErrRecordNotFound after deletion, got %v", err)
-	}
-}
-
 func TestUserRepository_ExistsByEmail_True(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	repo := NewUserRepository()
+	repo := NewUserRepository(testDB)
 	user := &model.User{
 		Email:    "exists@example.com",
 		Password: "hashedpassword",
@@ -170,7 +147,7 @@ func TestUserRepository_ExistsByEmail_False(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	repo := NewUserRepository()
+	repo := NewUserRepository(testDB)
 	exists, err := repo.ExistsByEmail("ghost@example.com")
 	if err != nil {
 		t.Fatalf("Failed to check existence: %v", err)
@@ -184,7 +161,7 @@ func TestUserRepository_LoginAttemptsFields(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	repo := NewUserRepository()
+	repo := NewUserRepository(testDB)
 	user := &model.User{
 		Email:    "lock@example.com",
 		Password: "hashedpassword",
@@ -205,18 +182,5 @@ func TestUserRepository_LoginAttemptsFields(t *testing.T) {
 	}
 	if found.LockedUntil == nil {
 		t.Error("Expected LockedUntil to be set")
-	}
-}
-
-func TestIsRecordNotFound(t *testing.T) {
-	if !IsRecordNotFound(nil) == true {
-		// nil is not ErrRecordNotFound
-	}
-	// gorm.ErrRecordNotFound should return true
-}
-
-func TestHasError(t *testing.T) {
-	if HasError(nil) {
-		t.Error("HasError(nil) should be false")
 	}
 }

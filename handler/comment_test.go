@@ -12,12 +12,11 @@ import (
 )
 
 func TestCommentHandler_GetList_Success(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
-	commentHandler := NewCommentHandler()
+	authHandler := app.auth
+	commentHandler := app.comment
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
 	router.POST("/api/comments", middleware.JWTAuth(), commentHandler.Create)
@@ -46,11 +45,10 @@ func TestCommentHandler_GetList_Success(t *testing.T) {
 }
 
 func TestCommentHandler_GetList_Empty(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	commentHandler := NewCommentHandler()
+	commentHandler := app.comment
 	router.GET("/api/comments", commentHandler.GetList)
 
 	req, _ := http.NewRequest("GET", "/api/comments", nil)
@@ -63,12 +61,11 @@ func TestCommentHandler_GetList_Empty(t *testing.T) {
 }
 
 func TestCommentHandler_Create_Success(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
-	commentHandler := NewCommentHandler()
+	authHandler := app.auth
+	commentHandler := app.comment
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
 	router.POST("/api/comments", middleware.JWTAuth(), commentHandler.Create)
@@ -90,8 +87,9 @@ func TestCommentHandler_Create_Success(t *testing.T) {
 }
 
 func TestCommentHandler_Create_NoAuth(t *testing.T) {
+	app := newTestApp(t)
 	router := setupRouter()
-	commentHandler := NewCommentHandler()
+	commentHandler := app.comment
 	router.POST("/api/comments", commentHandler.Create)
 
 	body := map[string]string{"content": "This is a comment"}
@@ -105,12 +103,11 @@ func TestCommentHandler_Create_NoAuth(t *testing.T) {
 }
 
 func TestCommentHandler_Create_EmptyContent(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
-	commentHandler := NewCommentHandler()
+	authHandler := app.auth
+	commentHandler := app.comment
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
 	router.POST("/api/comments", middleware.JWTAuth(), commentHandler.Create)
@@ -129,12 +126,11 @@ func TestCommentHandler_Create_EmptyContent(t *testing.T) {
 }
 
 func TestCommentHandler_Delete_Success(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
-	commentHandler := NewCommentHandler()
+	authHandler := app.auth
+	commentHandler := app.comment
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
 	router.POST("/api/comments", middleware.JWTAuth(), commentHandler.Create)
@@ -163,8 +159,9 @@ func TestCommentHandler_Delete_Success(t *testing.T) {
 }
 
 func TestCommentHandler_Delete_NoAuth(t *testing.T) {
+	app := newTestApp(t)
 	router := setupRouter()
-	commentHandler := NewCommentHandler()
+	commentHandler := app.comment
 	router.DELETE("/api/comments/:id", commentHandler.Delete)
 
 	req, _ := http.NewRequest("DELETE", "/api/comments/1", nil)
@@ -175,12 +172,11 @@ func TestCommentHandler_Delete_NoAuth(t *testing.T) {
 }
 
 func TestCommentHandler_Delete_InvalidID(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
-	commentHandler := NewCommentHandler()
+	authHandler := app.auth
+	commentHandler := app.comment
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
 	router.DELETE("/api/comments/:id", middleware.JWTAuth(), commentHandler.Delete)
@@ -196,12 +192,11 @@ func TestCommentHandler_Delete_InvalidID(t *testing.T) {
 }
 
 func TestCommentHandler_Delete_NoPermission(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
-	commentHandler := NewCommentHandler()
+	authHandler := app.auth
+	commentHandler := app.comment
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
 	router.POST("/api/comments", middleware.JWTAuth(), commentHandler.Create)
@@ -231,12 +226,11 @@ func TestCommentHandler_Delete_NoPermission(t *testing.T) {
 }
 
 func TestCommentHandler_GetMyComments_Success(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
-	commentHandler := NewCommentHandler()
+	authHandler := app.auth
+	commentHandler := app.comment
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
 	router.POST("/api/comments", middleware.JWTAuth(), commentHandler.Create)
@@ -265,8 +259,9 @@ func TestCommentHandler_GetMyComments_Success(t *testing.T) {
 }
 
 func TestCommentHandler_GetMyComments_NoAuth(t *testing.T) {
+	app := newTestApp(t)
 	router := setupRouter()
-	commentHandler := NewCommentHandler()
+	commentHandler := app.comment
 	router.GET("/api/comments/my", middleware.JWTAuth(), commentHandler.GetMyComments)
 
 	req, _ := http.NewRequest("GET", "/api/comments/my", nil)
@@ -277,12 +272,11 @@ func TestCommentHandler_GetMyComments_NoAuth(t *testing.T) {
 }
 
 func TestCommentHandler_GetList_Pagination(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
-	commentHandler := NewCommentHandler()
+	authHandler := app.auth
+	commentHandler := app.comment
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
 	router.POST("/api/comments", middleware.JWTAuth(), commentHandler.Create)
@@ -323,12 +317,11 @@ func TestCommentHandler_GetList_Pagination(t *testing.T) {
 }
 
 func TestCommentHandler_GetMyComments_Pagination(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
-	commentHandler := NewCommentHandler()
+	authHandler := app.auth
+	commentHandler := app.comment
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
 	router.POST("/api/comments", middleware.JWTAuth(), commentHandler.Create)
@@ -362,12 +355,11 @@ func TestCommentHandler_GetMyComments_Pagination(t *testing.T) {
 }
 
 func TestCommentHandler_Create_InvalidJSON(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
-	commentHandler := NewCommentHandler()
+	authHandler := app.auth
+	commentHandler := app.comment
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
 	router.POST("/api/comments", middleware.JWTAuth(), commentHandler.Create)
@@ -384,12 +376,11 @@ func TestCommentHandler_Create_InvalidJSON(t *testing.T) {
 }
 
 func TestCommentHandler_Delete_NotFound(t *testing.T) {
-	setupHandlerTestDB(t)
-	defer cleanupHandlerTestDB(t)
+	app := newTestApp(t)
 
 	router := setupRouter()
-	authHandler := NewAuthHandler()
-	commentHandler := NewCommentHandler()
+	authHandler := app.auth
+	commentHandler := app.comment
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
 	router.DELETE("/api/comments/:id", middleware.JWTAuth(), commentHandler.Delete)

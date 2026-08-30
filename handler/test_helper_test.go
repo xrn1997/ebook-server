@@ -8,25 +8,27 @@ import (
 	"testing"
 
 	"ebook-server/config"
-	"ebook-server/model"
 	"ebook-server/pkg/code"
-	"ebook-server/pkg/jwt"
-	"time"
+	"ebook-server/pkg/mail"
+	"ebook-server/pkg/testdb"
+	"ebook-server/repository"
+	"ebook-server/service"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // testCode 测试用注册验证码
 const testCode = "123456"
 
-// TestConfig 测试配置
-var TestConfig = &config.Config{
+// testConfig 测试配置
+var testConfig = &config.Config{
 	Server: config.ServerConfig{
 		Port: 8080,
 		Mode: "test",
 	},
 	Database: config.DatabaseConfig{
-		Path: "test.db",
+		Path: ":memory:",
 	},
 	JWT: config.JWTConfig{
 		Secret:    "test-secret-key",
@@ -34,47 +36,52 @@ var TestConfig = &config.Config{
 	},
 }
 
-// SetupTestConfig 初始化测试配置
-func SetupTestConfig() {
-	config.AppConfig = TestConfig
+// testCodes 最近一次 newTestApp 创建的验证码存储。
+//
+// go test 同包默认串行执行，registerUser 等助手经它注入验证码（ADR-0007）。
+var testCodes *code.Store
+
+// testApp 一套相互独立的测试应用：独立 :memory: 库、验证码存储与服务实例。
+//
+// 每个测试通过 newTestApp 获得全新环境，替代历史上「改写全局 database.DB +
+// 共享 code.Default()」的做法——那会导致测试互相污染且无法并行。
+type testApp struct {
+	db      *gorm.DB
+	codes   *code.Store
+	auth    *AuthHandler
+	user    *UserHandler
+	account *AccountHandler
+	comment *CommentHandler
+	log     *LogHandler
 }
 
-// GenerateTestToken 生成测试用 Token
-func GenerateTestToken(userID uint, username string) (string, error) {
-	return jwt.GenerateToken(userID, username)
-}
+// newTestApp 组装本测试专用的处理器集合。
+//
+// 所有 handler 共享同一套依赖，与 main.go 的装配方式一致。
+func newTestApp(t *testing.T) *testApp {
+	t.Helper()
+	config.AppConfig = testConfig
 
-// CreateTestUser 创建测试用户
-func CreateTestUser() *model.User {
-	return &model.User{
-		UID:      1,
-		Email:    "test@example.com",
-		Username: "testuser",
-		Avatar:   "https://example.com/avatar.jpg",
-	}
-}
+	db := testdb.Open(t)
+	users := repository.NewUserRepository(db)
+	tokens := repository.NewRefreshTokenRepository(db)
+	comments := repository.NewCommentRepository(db)
+	logs := repository.NewLogRepository(db)
+	codes := code.NewStore()
+	testCodes = codes
 
-// CreateTestComment 创建测试评论
-func CreateTestComment(userID uint) *model.Comment {
-	return &model.Comment{
-		ID:        1,
-		UserID:    userID,
-		Content:   "This is a test comment",
-		CreatedAt: time.Now(),
-	}
-}
+	// 测试注入写日志的 Mailer：验证码经 codes 直接注入，不走真实邮件
+	authSvc := service.NewAuthService(users, tokens, codes, mail.NewLogMailer())
+	accountSvc := service.NewAccountService(users, tokens, comments, codes, mail.NewLogMailer())
 
-// CreateTestLog 创建测试日志
-func CreateTestLog(userID uint) *model.OperationLog {
-	return &model.OperationLog{
-		ID:           1,
-		UserID:       userID,
-		Username:     "testuser",
-		Method:       "GET",
-		Path:         "/api/test",
-		IP:           "127.0.0.1",
-		ResponseCode: 200,
-		CreatedAt:    time.Now(),
+	return &testApp{
+		db:      db,
+		codes:   codes,
+		auth:    NewAuthHandler(authSvc),
+		user:    NewUserHandler(service.NewUserService(users), authSvc),
+		account: NewAccountHandler(accountSvc),
+		comment: NewCommentHandler(service.NewCommentService(comments)),
+		log:     NewLogHandler(service.NewLogService(logs)),
 	}
 }
 
@@ -105,7 +112,7 @@ func registerUser(t *testing.T, router *gin.Engine, email string) (uint, string)
 func registerUserWith(t *testing.T, router *gin.Engine, email, password string) (uint, string) {
 	t.Helper()
 	// 直接注入注册码，绕过邮件链路（注册码 key 为 reg:<email>）
-	code.Default().Set("reg:"+email, testCode)
+	testCodes.Set("reg:"+email, testCode)
 
 	body := map[string]string{
 		"email":    email,
@@ -132,12 +139,6 @@ func registerUserWith(t *testing.T, router *gin.Engine, email, password string) 
 	return uint(user["uid"].(float64)), data["token"].(string)
 }
 
-// authBearer 生成一个可用的 Bearer token
-func authBearer(uid uint, username string) string {
-	token, _ := jwt.GenerateToken(uid, username)
-	return "Bearer " + token
-}
-
 // assertErrorCode 断言响应信封中的业务错误码
 func assertErrorCode(t *testing.T, body []byte, want string) {
 	t.Helper()
@@ -147,5 +148,20 @@ func assertErrorCode(t *testing.T, body []byte, want string) {
 	}
 	if resp["code"] != want {
 		t.Errorf("Expected code %s, got %v (error=%v)", want, resp["code"], resp["error"])
+	}
+}
+
+// assertErrorMessage 断言响应信封中的业务错误文案
+//
+// 防账号枚举场景必须与 assertErrorCode 配套使用：业务码相同而文案不同，
+// 攻击者仍可凭 error 字段区分邮箱是否已注册（ADR-0006）。
+func assertErrorMessage(t *testing.T, body []byte, want string) {
+	t.Helper()
+	var resp map[string]interface{}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		t.Fatalf("Failed to unmarshal response: %v", err)
+	}
+	if resp["error"] != want {
+		t.Errorf("Expected error %q, got %v (code=%v)", want, resp["error"], resp["code"])
 	}
 }

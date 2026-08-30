@@ -75,7 +75,7 @@ sql/             → 数据库初始化脚本（MySQL 参考，实际用 SQLite 
 
 * **分层架构**：严格四层分离。handler 只做 HTTP 协议转换，不写业务逻辑；service 编排业务流程；repository 只做数据存取；model 定义数据结构
 
-* **依赖注入**：当前通过函数参数传递依赖（轻量级），未使用 DI 框架
+* **依赖注入**：service 层通过定义在 `service/ports.go` 的 Store 接口（consumer-defined）访问数据，repository 是满足接口的 gorm adapter；依赖由构造函数注入，`main.go` 是唯一装配点。详见 [ADR-0007](docs/adr/0007-consumer-defined-repository-interfaces.md)
 
 * **中间件链**：Recovery → Logger → CORS → Auth（按需），在 `main.go` 中统一注册
 
@@ -98,6 +98,9 @@ sql/             → 数据库初始化脚本（MySQL 参考，实际用 SQLite 
 /api/auth/forgot-password/reset   → 验证码重置密码（邮箱）
 /api/users/me              → 获取/更新当前用户信息（需认证）
 /api/users/me/password     → 已登录修改密码（需认证）
+/api/users/me/data         → 导出我的数据（用户资料+本人评论，需认证）
+/api/users/me/deletion/send-code → 发注销验证码到当前账号邮箱（需认证）
+/api/users/me/deletion     → 注销账号（验证码确认，匿名化并返回数据副本，需认证）
 /api/comments              → 评论列表（公开）/ 创建评论（需认证）
 /api/comments/my           → 我的评论（需认证）
 /api/comments/:id          → 删除评论（需认证）
@@ -105,8 +108,14 @@ sql/             → 数据库初始化脚本（MySQL 参考，实际用 SQLite 
 /api/logs/my               → 我的操作日志（需认证）
 ```
 
-> **注册/账号模型**：`email` 为登录主标识（唯一必填），`uid` 为主键，`username`
-> 非空但可重复（注册时自动生成，可后改）。详见 [ADR-0002](docs/adr/0002-email-based-registration-and-account-model.md)。
+> **注册/账号模型**：`email` 为登录主标识（唯一必填）且**不可变**，`uid` 为主键，`username`
+> 非空但可重复（注册时自动生成，可后改）。改资料时若传了不同的 `email` 返回 `A0113`。
+> 详见 [ADR-0002](docs/adr/0002-email-based-registration-and-account-model.md)
+> 与 [ADR-0004](docs/adr/0004-login-identifier-immutable.md)。
+>
+> **账号注销**：采用匿名化而非删除——改写 `email` 为占位值、清空密码与头像，
+> **不设置 `DeletedAt`**（软删会让 GORM 的 `Preload` 过滤掉评论作者）。
+> 公开评论与操作日志保留。详见 [ADR-0005](docs/adr/0005-account-deletion-by-anonymization.md)。
 
 ## 技术栈
 
@@ -148,9 +157,9 @@ sql/             → 数据库初始化脚本（MySQL 参考，实际用 SQLite 
 
 * 测试函数命名 `TestXxx`（Go 标准）
 
-* handler 测试使用 `httptest` + Gin 测试模式，通过 `test_helper.go` 提供公共测试工具
+* handler 测试使用 `httptest` + Gin 测试模式，通过 `test_helper_test.go` 提供公共测试工具
 
-* service 测试直接调用业务函数，mock repository 层
+* service 测试直接调用业务函数，数据访问用 SQLite `:memory:` 独立实例（`pkg/testdb.Open`）——不写 mock，测试跑的是真 SQL 语义（ADR-0007）
 
 * 运行测试：`go test ./...`；提交前必须通过全量测试
 
@@ -161,11 +170,12 @@ sql/             → 数据库初始化脚本（MySQL 参考，实际用 SQLite 
 ### 添加新接口的标准流程
 
 1. `model/` — 定义数据模型和请求/响应结构体
-2. `repository/` — 实现数据访问方法
-3. `service/` — 实现业务逻辑
-4. `handler/` — 实现 HTTP 处理器
-5. `main.go` — 注册路由
-6. 编写对应测试
+2. `service/ports.go` — 如需新的数据访问能力，先在对应 Store 接口上扩方法（接口由消费方定义）
+3. `repository/` — 实现数据访问方法
+4. `service/` — 实现业务逻辑
+5. `handler/` — 实现 HTTP 处理器
+6. `main.go` — 装配依赖并注册路由
+7. 编写对应测试
 
 ## 配置说明
 
@@ -221,6 +231,25 @@ go build -o ebook-server .
 * **SQLite 并发限制**：SQLite 写入串行化，高并发场景需评估是否迁移至 MySQL/PostgreSQL
 
 * **数据库迁移**：使用 GORM AutoMigrate，生产环境需谨慎评估表结构变更
+
+* **access token 无法主动作废**：改密/重置/注销只删除 `refresh_tokens` 记录，而 access token 是无状态
+  JWT、校验时不查库，因此旧 access token 在其剩余 2 小时有效期内仍可调通 API。ADR-0001 §5 承诺的
+  "旧 access/refresh 一律失效"仅兑现了 refresh 一半。彻底解决需引入 token 黑名单，属基础设施依赖，
+  当前不做——详见 `docs/adr/0005-account-deletion-by-anonymization.md`
+
+* **操作日志无人写入**：`service/log.go` 与 `repository/log.go` 的 `Create` 均无生产调用方，
+  `middleware/logger.go` 只写 zap 文件日志，故 `GET /api/logs*` 在真实运行下恒返回空列表。
+  接入时务必排除 `model.OperationLog.RequestBody`——它会记录登录请求的明文密码
+
+* **账号注销流程不包事务（有意为之）**：`AccountService.Delete` 依次执行「删 refresh token →
+  匿名化账号」两次写，中途失败只会留下「token 已删但账号未匿名化」的状态——用户重新登录
+  即可恢复并重试注销，无锁死、无数据丢失；而真正危险的问题（access token 匿名化后仍有效）
+  是无状态 JWT 的固有缺陷，事务治不了（见上条）。跨 repo 事务需引入 TxRunner seam，
+  为一个可自愈的瞬态加这层间接不划算。审查者不要再标记此条——加事务前先推翻这里的推理
+
+* **`ErrMailSendFailed` 无产生方**：`pkg/mail` 的发送错误原样向上返回，handler 中
+  `err == model.ErrMailSendFailed` 的分支永远不会命中，SMTP 失败实际落 `C0500`。
+  若要让 `C0503` 生效，需在 service 层把邮件错误包装为 `ErrMailSendFailed`
 
 ## Agent 实战建议
 

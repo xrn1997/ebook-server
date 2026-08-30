@@ -40,18 +40,23 @@ ebook-server/
 │   ├── comment_test.go            # 评论仓库测试
 │   ├── log_test.go                # 日志仓库测试
 │   ├── refresh_token_test.go      # 刷新令牌仓库测试
-│   └── test_helper.go             # 测试数据库初始化工具
+│   └── test_helper_test.go       # 测试数据库初始化工具（*_test.go，仅测试可见）
 ├── service/
 │   ├── auth_test.go               # 认证服务测试
 │   ├── user_test.go               # 用户服务测试
 │   ├── comment_test.go            # 评论服务测试
-│   └── log_test.go                # 日志服务测试
+│   ├── log_test.go                # 日志服务测试
+│   ├── account_test.go            # 账号导出/注销服务测试
+│   ├── enumeration_test.go        # 防账号枚举服务测试
+│   └── test_helper_test.go        # 测试依赖装配（service 层注入 :memory: 实例）
 ├── handler/
 │   ├── auth_test.go               # 认证接口测试
 │   ├── user_test.go               # 用户接口测试
 │   ├── comment_test.go            # 评论接口测试
 │   ├── log_test.go                # 日志接口测试
-│   └── test_helper.go             # 测试辅助工具
+│   ├── deletion_test.go           # 账号注销/导出接口测试
+│   ├── enumeration_test.go        # 防账号枚举接口测试
+│   └── test_helper_test.go        # 测试辅助工具（newTestApp 装配整条 handler 链）
 └── TESTING.md                     # 本文档
 ```
 
@@ -204,26 +209,35 @@ start coverage.html # Windows
 
 ## 测试辅助工具
 
-### test_helper.go
+### 数据库替身：`pkg/testdb`
 
-提供测试用的辅助函数:
+Repository 与 service 测试**不写 mock**（见 ADR-0007）。每个测试调用 `testdb.Open(t)`
+拿一个独立的 SQLite `:memory:` 实例，注入 repo/service；测试结束自动关闭。这样跑的是真 SQL
+语义（含 `Preload`、分页、软删过滤），且测试互不污染、可并行。
 
 ```go
-// 初始化测试配置
-SetupTestConfig()
-
-// 生成测试用 Token
-GenerateTestToken(userID uint, username string) (string, error)
-
-// 创建测试用户
-CreateTestUser() *model.User
-
-// 创建测试评论
-CreateTestComment(userID uint) *model.Comment
-
-// 创建测试日志
-CreateTestLog(userID uint) *model.OperationLog
+// 打开一个测试专用内存库并迁移表结构
+db := testdb.Open(t) // *gorm.DB，仅本测试可见
 ```
+
+### handler 装配：`newTestApp(t)`
+
+handler 测试用一个 `newTestApp(t)` 把一整条依赖链（repo 实例 + service + `code.Store`
+实例 + 写日志的 `Mailer`）一次性装配好，返回 `*testApp`，其上挂着 `auth`、`user`、`account`、`comment`、
+`log` 五个 handler 与 `codes`、`db` 两个测试句柄：
+
+```go
+func TestXxx(t *testing.T) {
+    app := newTestApp(t)
+    // app.auth / app.user / app.comment / app.log 是已装配的 handler
+    // app.codes 是注入的验证码存储，可直接塞码；app.db 是底层 *gorm.DB
+}
+```
+
+### 验证码与限流
+
+`code.Store` 以实例注入（无全局单例），每个测试 `new` 一个独立存储即可隔离；
+发码限流器随 service 实例创建，同样无包级共享状态。
 
 ## 测试最佳实践
 
@@ -329,27 +343,10 @@ func TestPrivateFunc(t *testing.T) {
 
 ### Q: 如何模拟数据库?
 
-A: 可以使用接口和 mock:
-
-```go
-// 定义接口
-type UserRepository interface {
-    FindByID(id uint) (*User, error)
-}
-
-// Mock 实现
-type MockUserRepository struct {
-    users map[uint]*User
-}
-
-func (m *MockUserRepository) FindByID(id uint) (*User, error) {
-    user, ok := m.users[id]
-    if !ok {
-        return nil, ErrNotFound
-    }
-    return user, nil
-}
-```
+A: **本项目不写数据库 mock。** 数据访问以 `service/ports.go` 里的 Store 接口隔开，
+但测试用真实 SQLite `:memory:` 实例（`testdb.Open(t)`）当 adapter，而非手写 in-memory fake
+——fake 一旦与 GORM 行为漂移，测试会「绿着但生产错」。唯一例外是 `Mailer`（无状态、两个真实
+adapter），测试注入一个记录型 fake。理由与权衡见 [ADR-0007](docs/adr/0007-consumer-defined-repository-interfaces.md)。
 
 ## 测试检查清单
 

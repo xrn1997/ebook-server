@@ -9,7 +9,7 @@ func TestLogService_Create(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	logService := NewLogService()
+	logService := testLogs
 	log := &model.OperationLog{
 		UserID:       1,
 		Username:     "testuser",
@@ -31,7 +31,7 @@ func TestLogService_GetAll_Empty(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	logService := NewLogService()
+	logService := testLogs
 	result, err := logService.GetAll(1, 10)
 	if err != nil {
 		t.Fatalf("Failed to get logs: %v", err)
@@ -48,7 +48,7 @@ func TestLogService_GetAll_WithData(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	logService := NewLogService()
+	logService := testLogs
 	for i := 0; i < 15; i++ {
 		logService.Create(&model.OperationLog{
 			UserID:       1,
@@ -91,7 +91,7 @@ func TestLogService_GetAll_PaginationBoundaries(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	logService := NewLogService()
+	logService := testLogs
 	logService.Create(&model.OperationLog{
 		UserID: 1, Username: "u", Method: "GET", Path: "/a", IP: "127.0.0.1", ResponseCode: 200,
 	})
@@ -119,7 +119,7 @@ func TestLogService_GetByUserID(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	logService := NewLogService()
+	logService := testLogs
 	for i := 0; i < 8; i++ {
 		logService.Create(&model.OperationLog{
 			UserID: 1, Username: "user1", Method: "GET", Path: "/a", IP: "127.0.0.1", ResponseCode: 200,
@@ -154,7 +154,7 @@ func TestLogService_GetByUserID_PaginationBoundaries(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	logService := NewLogService()
+	logService := testLogs
 	logService.Create(&model.OperationLog{
 		UserID: 1, Username: "u", Method: "GET", Path: "/a", IP: "127.0.0.1", ResponseCode: 200,
 	})

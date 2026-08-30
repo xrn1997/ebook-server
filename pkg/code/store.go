@@ -39,15 +39,17 @@ type item struct {
 
 // Store 基于内存 map 的验证码存储（单进程直接可用）
 //
-// 以 username 为键，支持验证码再获取与错误重试次数限制（A0241）。
+// 以调用方传入的 key 为键（形如 "reg:"+email / "forgot:"+email，见 service/auth.go），
+// 支持验证码再获取与错误重试次数限制（A0241）。
 type Store struct {
 	mu    sync.RWMutex
 	codes map[string]*item
 }
 
-var defaultStore = &Store{codes: make(map[string]*item)}
-
-// NewStore 创建独立验证码存储（测试可用）
+// NewStore 创建验证码存储实例。
+//
+// 每个实例独立持有状态：生产由 main.go 创建唯一实例并注入各 service，
+// 测试各建各的——历史上本包曾通过 Default() 暴露全局默认存储（已删除，ADR-0007）。
 func NewStore() *Store {
 	return &Store{codes: make(map[string]*item)}
 }
@@ -61,10 +63,10 @@ func NewCode() string {
 	return fmt.Sprintf("%06d", n.Int64())
 }
 
-// Save 保存验证码并返回生成的验证码
-func (s *Store) Save(username string) string {
+// Save 以 key 为键保存新生成的验证码并返回该验证码
+func (s *Store) Save(key string) string {
 	codeVal := NewCode()
-	s.Set(username, codeVal)
+	s.Set(key, codeVal)
 	return codeVal
 }
 
@@ -81,28 +83,23 @@ func (s *Store) Set(key, codeVal string) {
 // Verify 校验验证码：成功删除记录并返回 ResultOK；
 // 无有效验证码返回 ResultNotFound；验证码错误计数并返回 ResultWrong，
 // 达到最大次数返回 ResultTooManyAttempts。
-func (s *Store) Verify(username, codeVal string) VerifyResult {
+func (s *Store) Verify(key, codeVal string) VerifyResult {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	it, ok := s.codes[username]
+	it, ok := s.codes[key]
 	if !ok || time.Now().After(it.expireAt) {
 		return ResultNotFound
 	}
 	if it.code != codeVal {
 		it.attempts++
 		if it.attempts >= MaxAttempts {
-			delete(s.codes, username)
+			delete(s.codes, key)
 			return ResultTooManyAttempts
 		}
 		return ResultWrong
 	}
 
-	delete(s.codes, username)
+	delete(s.codes, key)
 	return ResultOK
-}
-
-// Default 返回全局默认验证码存储
-func Default() *Store {
-	return defaultStore
 }

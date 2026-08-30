@@ -10,7 +10,7 @@ func TestCommentRepository_Create(t *testing.T) {
 	defer cleanupTestDB(t)
 
 	// 先创建用户
-	userRepo := NewUserRepository()
+	userRepo := NewUserRepository(testDB)
 	user := &model.User{
 		Email:    "comment@example.com",
 		Password: "hashedpassword",
@@ -19,7 +19,7 @@ func TestCommentRepository_Create(t *testing.T) {
 	}
 	userRepo.Create(user)
 
-	repo := NewCommentRepository()
+	repo := NewCommentRepository(testDB)
 	comment := &model.Comment{
 		UserID:  user.UID,
 		Content: "This is a test comment",
@@ -37,7 +37,7 @@ func TestCommentRepository_FindByID_Found(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	userRepo := NewUserRepository()
+	userRepo := NewUserRepository(testDB)
 	user := &model.User{
 		Email:    "findcomment@example.com",
 		Password: "hashedpassword",
@@ -46,7 +46,7 @@ func TestCommentRepository_FindByID_Found(t *testing.T) {
 	}
 	userRepo.Create(user)
 
-	repo := NewCommentRepository()
+	repo := NewCommentRepository(testDB)
 	comment := &model.Comment{
 		UserID:  user.UID,
 		Content: "Find me",
@@ -70,7 +70,7 @@ func TestCommentRepository_FindByID_NotFound(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	repo := NewCommentRepository()
+	repo := NewCommentRepository(testDB)
 	_, err := repo.FindByID(999999)
 	if !IsRecordNotFound(err) {
 		t.Errorf("Expected ErrRecordNotFound, got %v", err)
@@ -81,7 +81,7 @@ func TestCommentRepository_FindByUserID(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	userRepo := NewUserRepository()
+	userRepo := NewUserRepository(testDB)
 	user := &model.User{
 		Email:    "usercomments@example.com",
 		Password: "hashedpassword",
@@ -90,7 +90,7 @@ func TestCommentRepository_FindByUserID(t *testing.T) {
 	}
 	userRepo.Create(user)
 
-	repo := NewCommentRepository()
+	repo := NewCommentRepository(testDB)
 	for i := 0; i < 5; i++ {
 		repo.Create(&model.Comment{
 			UserID:  user.UID,
@@ -110,11 +110,41 @@ func TestCommentRepository_FindByUserID(t *testing.T) {
 	}
 }
 
+func TestCommentRepository_FindAllByUserID(t *testing.T) {
+	setupTestDB(t)
+	defer cleanupTestDB(t)
+
+	userRepo := NewUserRepository(testDB)
+	user := &model.User{
+		Email:    "exportuser@example.com",
+		Password: "hashedpassword",
+		Username: "exportuser",
+		Nickname: "exportuser",
+	}
+	userRepo.Create(user)
+
+	repo := NewCommentRepository(testDB)
+	for i := 0; i < 5; i++ {
+		repo.Create(&model.Comment{
+			UserID:  user.UID,
+			Content: "Export comment",
+		})
+	}
+
+	comments, err := repo.FindAllByUserID(user.UID)
+	if err != nil {
+		t.Fatalf("Failed to find comments: %v", err)
+	}
+	if len(comments) != 5 {
+		t.Errorf("Expected 5 comments, got %d", len(comments))
+	}
+}
+
 func TestCommentRepository_FindAll(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	userRepo := NewUserRepository()
+	userRepo := NewUserRepository(testDB)
 	user := &model.User{
 		Email:    "allcomments@example.com",
 		Password: "hashedpassword",
@@ -123,7 +153,7 @@ func TestCommentRepository_FindAll(t *testing.T) {
 	}
 	userRepo.Create(user)
 
-	repo := NewCommentRepository()
+	repo := NewCommentRepository(testDB)
 	for i := 0; i < 15; i++ {
 		repo.Create(&model.Comment{
 			UserID:  user.UID,
@@ -154,7 +184,7 @@ func TestCommentRepository_Delete(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	userRepo := NewUserRepository()
+	userRepo := NewUserRepository(testDB)
 	user := &model.User{
 		Email:    "deletecomment@example.com",
 		Password: "hashedpassword",
@@ -163,7 +193,7 @@ func TestCommentRepository_Delete(t *testing.T) {
 	}
 	userRepo.Create(user)
 
-	repo := NewCommentRepository()
+	repo := NewCommentRepository(testDB)
 	comment := &model.Comment{
 		UserID:  user.UID,
 		Content: "Delete me",
@@ -184,7 +214,7 @@ func TestCommentRepository_CanDelete_Owner(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	userRepo := NewUserRepository()
+	userRepo := NewUserRepository(testDB)
 	user := &model.User{
 		Email:    "owner@example.com",
 		Password: "hashedpassword",
@@ -193,7 +223,7 @@ func TestCommentRepository_CanDelete_Owner(t *testing.T) {
 	}
 	userRepo.Create(user)
 
-	repo := NewCommentRepository()
+	repo := NewCommentRepository(testDB)
 	comment := &model.Comment{
 		UserID:  user.UID,
 		Content: "Owned comment",
@@ -213,7 +243,7 @@ func TestCommentRepository_CanDelete_NotOwner(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	userRepo := NewUserRepository()
+	userRepo := NewUserRepository(testDB)
 	user1 := &model.User{
 		Email:    "owner2@example.com",
 		Password: "hashedpassword",
@@ -229,7 +259,7 @@ func TestCommentRepository_CanDelete_NotOwner(t *testing.T) {
 	userRepo.Create(user1)
 	userRepo.Create(user2)
 
-	repo := NewCommentRepository()
+	repo := NewCommentRepository(testDB)
 	comment := &model.Comment{
 		UserID:  user1.UID,
 		Content: "Owned by user1",
@@ -249,7 +279,7 @@ func TestCommentRepository_CanDelete_NotFound(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	repo := NewCommentRepository()
+	repo := NewCommentRepository(testDB)
 	_, err := repo.CanDelete(999999, 1)
 	if !IsRecordNotFound(err) {
 		t.Errorf("Expected ErrRecordNotFound, got %v", err)

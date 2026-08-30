@@ -16,9 +16,9 @@ type AuthHandler struct {
 }
 
 // NewAuthHandler 创建认证处理器实例。
-func NewAuthHandler() *AuthHandler {
+func NewAuthHandler(authService *service.AuthService) *AuthHandler {
 	return &AuthHandler{
-		authService: service.NewAuthService(),
+		authService: authService,
 	}
 }
 
@@ -39,15 +39,7 @@ func (h *AuthHandler) SendCode(c *gin.Context) {
 	}
 
 	if err := h.authService.SendCode(req.Email); err != nil {
-		if err == model.ErrAttemptTooMany {
-			errcode.Error(c, errcode.AttemptTooMany, err.Error())
-			return
-		}
-		if err == model.ErrMailSendFailed {
-			errcode.Error(c, errcode.MailSendFailed, err.Error())
-			return
-		}
-		errcode.Error(c, errcode.ServerError, "发送验证码失败")
+		errcode.Respond(c, err, "发送验证码失败")
 		return
 	}
 
@@ -71,20 +63,18 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	}
 
 	if _, err := h.authService.Register(&req); err != nil {
-		switch err {
-		case model.ErrEmailExists:
-			errcode.Error(c, errcode.EmailExists, err.Error())
-		case model.ErrCodeInvalid:
-			errcode.Error(c, errcode.CodeInvalid, err.Error())
-		default:
-			errcode.Error(c, errcode.ServerError, "注册失败")
-		}
+		errcode.Respond(c, err, "注册失败")
 		return
 	}
 
 	// 注册成功：不发 token，客户端应引导用户去登录
 	errcode.Success(c, nil)
 }
+
+// loginFailedMessage 登录失败对外的统一文案（ADR-0006）。
+// 账号不存在与密码错误必须返回完全一致的响应——业务码与文案都不能有差异。
+// 只统一业务码而保留差异文案，攻击者仍可凭 error 字段枚举已注册邮箱。
+const loginFailedMessage = "邮箱或密码错误"
 
 // Login 登录（邮箱+密码），签发双 token
 // @Summary 登录
@@ -106,13 +96,12 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	if err != nil {
 		switch err {
 		case model.ErrAccountNotFound, model.ErrPasswordWrong:
-			errcode.Error(c, errcode.PasswordWrong, err.Error())
-		case model.ErrAttemptTooMany:
-			errcode.Error(c, errcode.AttemptTooMany, err.Error())
-		case model.ErrAccountLocked:
-			errcode.Error(c, errcode.AccountLocked, err.Error())
+			// 覆盖默认映射：ErrAccountNotFound 在 errorCodes 表里落 A0201，
+			// 但登录端点未认证，回 A0201 会让攻击者据此枚举已注册邮箱（ADR-0006）；
+			// 且文案必须统一，不能透传 err.Error()（"账户不存在" / "密码错误"）。
+			errcode.Error(c, errcode.PasswordWrong, loginFailedMessage)
 		default:
-			errcode.Error(c, errcode.ServerError, "登录失败")
+			errcode.Respond(c, err, "登录失败")
 		}
 		return
 	}
@@ -138,11 +127,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 
 	pair, err := h.authService.Refresh(req.RefreshToken)
 	if err != nil {
-		if err == model.ErrLoginExpired {
-			errcode.Error(c, errcode.LoginExpired, err.Error())
-			return
-		}
-		errcode.Error(c, errcode.ServerError, "刷新失败")
+		errcode.Respond(c, err, "刷新失败")
 		return
 	}
 
@@ -164,7 +149,7 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	}
 
 	if err := h.authService.Logout(uid); err != nil {
-		errcode.Error(c, errcode.ServerError, "登出失败")
+		errcode.Respond(c, err, "登出失败")
 		return
 	}
 
@@ -188,15 +173,7 @@ func (h *AuthHandler) ForgotPasswordSendCode(c *gin.Context) {
 	}
 
 	if err := h.authService.SendForgotCode(req.Email); err != nil {
-		if err == model.ErrAttemptTooMany {
-			errcode.Error(c, errcode.AttemptTooMany, err.Error())
-			return
-		}
-		if err == model.ErrMailSendFailed {
-			errcode.Error(c, errcode.MailSendFailed, err.Error())
-			return
-		}
-		errcode.Error(c, errcode.ServerError, "发送验证码失败")
+		errcode.Respond(c, err, "发送验证码失败")
 		return
 	}
 
@@ -220,16 +197,14 @@ func (h *AuthHandler) ForgotPasswordReset(c *gin.Context) {
 	}
 
 	if err := h.authService.ResetPassword(req.Email, req.Code, req.NewPassword); err != nil {
-		switch err {
-		case model.ErrAttemptTooMany:
-			errcode.Error(c, errcode.AttemptTooMany, err.Error())
-		case model.ErrCodeInvalid:
-			errcode.Error(c, errcode.CodeInvalid, err.Error())
-		case model.ErrAccountNotFound:
-			errcode.Error(c, errcode.AccountNotFound, err.Error())
-		default:
+		if err == model.ErrAccountNotFound {
+			// 覆盖默认映射：本端点未认证，不返回 A0201（ADR-0006——该码仅用于
+			// 已认证上下文）。且发码时已对未注册邮箱静默跳过，
+			// "验证码通过但账号不存在"属异常态，对外一律按服务器错误处理。
 			errcode.Error(c, errcode.ServerError, "重置密码失败")
+			return
 		}
+		errcode.Respond(c, err, "重置密码失败")
 		return
 	}
 

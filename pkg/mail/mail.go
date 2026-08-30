@@ -1,8 +1,12 @@
-// Package mail 提供 SMTP 邮件发送能力，支持 TLS/STARTTLS。
+// Package mail 提供验证码邮件发送的 adapter：SMTP 真实发送与写日志降级。
+//
+// 选择哪个 adapter 由 main.go 按配置装配，本包不读取任何全局配置（ADR-0007）。
+// 两个类型都满足 service 包定义的 Mailer 接口。
 package mail
 
 import (
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net/smtp"
 
@@ -12,25 +16,30 @@ import (
 	"go.uber.org/zap"
 )
 
-// SendCode 发送验证码邮件。
-//
-// SMTP 未配置时：debug 模式退回将验证码写入日志（便于本地联调），release 模式
-// 直接报错，避免在正规环境把验证码悄悄漏进日志。
-func SendCode(to, code string) error {
-	cfg := config.AppConfig.SMTP
-	if cfg.Host == "" || cfg.Port == 0 {
-		if config.AppConfig.Server.Mode == "release" {
-			return fmt.Errorf("SMTP 未配置，无法发送验证码")
-		}
-		logger.Info("SMTP 未配置（debug），验证码写入日志", zap.String("to", to), zap.String("code", code))
-		return nil
-	}
-	return Send(to, "ebook 验证码", "您的验证码是："+code+"，5 分钟内有效。")
+// SMTPMailer 通过 SMTP 发送验证码邮件（465 端口走显式 TLS，其余走 STARTTLS）。
+type SMTPMailer struct {
+	cfg config.SMTPConfig
 }
 
-// Send 通过 SMTP 发送纯文本邮件
-func Send(to, subject, body string) error {
-	cfg := config.AppConfig.SMTP
+// NewSMTPMailer 创建 SMTP 邮件 adapter。
+func NewSMTPMailer(cfg config.SMTPConfig) *SMTPMailer {
+	return &SMTPMailer{cfg: cfg}
+}
+
+// SendCode 发送验证码邮件。
+//
+// SMTP 未配置时返回错误：release 模式装配本 adapter 即代表「不允许把验证码
+// 写进日志」，此时发送失败必须显式暴露，而不是悄悄降级。
+func (m *SMTPMailer) SendCode(to, codeVal string) error {
+	if m.cfg.Host == "" || m.cfg.Port == 0 {
+		return errors.New("SMTP 未配置，无法发送验证码")
+	}
+	return m.send(to, "ebook 验证码", "您的验证码是："+codeVal+"，5 分钟内有效。")
+}
+
+// send 通过 SMTP 发送纯文本邮件
+func (m *SMTPMailer) send(to, subject, body string) error {
+	cfg := m.cfg
 	from := cfg.From
 	if from == "" {
 		from = cfg.Username
@@ -43,14 +52,15 @@ func Send(to, subject, body string) error {
 
 	// 465 端口走显式 TLS
 	if cfg.Port == 465 {
-		return sendTLS(addr, cfg, from, to, msg)
+		return m.sendTLS(addr, from, to, msg)
 	}
 
 	auth := smtp.PlainAuth("", cfg.Username, cfg.Password, cfg.Host)
 	return smtp.SendMail(addr, auth, from, []string{to}, []byte(msg))
 }
 
-func sendTLS(addr string, cfg config.SMTPConfig, from, to, msg string) error {
+func (m *SMTPMailer) sendTLS(addr, from, to, msg string) error {
+	cfg := m.cfg
 	conn, err := tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: cfg.Insecure})
 	if err != nil {
 		return err
@@ -81,4 +91,16 @@ func sendTLS(addr string, cfg config.SMTPConfig, from, to, msg string) error {
 		return err
 	}
 	return w.Close()
+}
+
+// LogMailer 本地联调用降级 adapter：把验证码写入日志而不是真实发送。
+type LogMailer struct{}
+
+// NewLogMailer 创建写日志 adapter。
+func NewLogMailer() *LogMailer { return &LogMailer{} }
+
+// SendCode 将验证码写入日志并视为发送成功。
+func (m *LogMailer) SendCode(to, codeVal string) error {
+	logger.Info("SMTP 未配置（debug），验证码写入日志", zap.String("to", to), zap.String("code", codeVal))
+	return nil
 }

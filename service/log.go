@@ -2,36 +2,30 @@ package service
 
 import (
 	"ebook-server/model"
-	"ebook-server/repository"
 )
 
 // LogService 操作日志业务服务。
 type LogService struct {
-	logRepo *repository.LogRepository
+	logs LogStore
 }
 
 // NewLogService 创建日志服务实例。
-func NewLogService() *LogService {
+func NewLogService(logs LogStore) *LogService {
 	return &LogService{
-		logRepo: repository.NewLogRepository(),
+		logs: logs,
 	}
 }
 
 // Create 创建操作日志
 func (s *LogService) Create(log *model.OperationLog) error {
-	return s.logRepo.Create(log)
+	return s.logs.Create(log)
 }
 
 // GetAll 获取所有日志（分页）
 func (s *LogService) GetAll(page, pageSize int) (*model.LogListResponse, error) {
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 || pageSize > 100 {
-		pageSize = 10
-	}
+	page, pageSize = normalizePage(page, pageSize)
 
-	logs, total, err := s.logRepo.FindAll(page, pageSize)
+	logs, total, err := s.logs.FindAll(page, pageSize)
 	if err != nil {
 		return nil, err
 	}
@@ -46,14 +40,9 @@ func (s *LogService) GetAll(page, pageSize int) (*model.LogListResponse, error) 
 
 // GetByUserID 根据用户 ID 获取日志
 func (s *LogService) GetByUserID(userID uint, page, pageSize int) (*model.LogListResponse, error) {
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 || pageSize > 100 {
-		pageSize = 10
-	}
+	page, pageSize = normalizePage(page, pageSize)
 
-	logs, total, err := s.logRepo.FindByUserID(userID, page, pageSize)
+	logs, total, err := s.logs.FindByUserID(userID, page, pageSize)
 	if err != nil {
 		return nil, err
 	}

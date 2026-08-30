@@ -10,16 +10,19 @@ import (
 )
 
 // UserHandler 用户信息 HTTP 处理器。
+//
+// 负责用户资料操作（获取/更新信息、修改密码）；
+// 账号生命周期（数据导出、注销）由 AccountHandler 负责。
 type UserHandler struct {
 	userService *service.UserService
 	authService *service.AuthService
 }
 
 // NewUserHandler 创建用户处理器实例。
-func NewUserHandler() *UserHandler {
+func NewUserHandler(userService *service.UserService, authService *service.AuthService) *UserHandler {
 	return &UserHandler{
-		userService: service.NewUserService(),
-		authService: service.NewAuthService(),
+		userService: userService,
+		authService: authService,
 	}
 }
 
@@ -40,11 +43,7 @@ func (h *UserHandler) GetMe(c *gin.Context) {
 
 	user, err := h.userService.GetByUID(userID)
 	if err != nil {
-		if err == model.ErrUserNotFound {
-			errcode.Error(c, errcode.AccountNotFound, err.Error())
-			return
-		}
-		errcode.Error(c, errcode.ServerError, "获取用户信息失败")
+		errcode.Respond(c, err, "获取用户信息失败")
 		return
 	}
 
@@ -76,11 +75,7 @@ func (h *UserHandler) UpdateMe(c *gin.Context) {
 
 	user, err := h.userService.Update(userID, &req)
 	if err != nil {
-		if err == model.ErrUserNotFound {
-			errcode.Error(c, errcode.AccountNotFound, err.Error())
-			return
-		}
-		errcode.Error(c, errcode.ServerError, "更新用户信息失败")
+		errcode.Respond(c, err, "更新用户信息失败")
 		return
 	}
 
@@ -111,11 +106,7 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 	}
 
 	if err := h.authService.ChangePassword(userID, req.OldPassword, req.NewPassword); err != nil {
-		if err == model.ErrPasswordWrong {
-			errcode.Error(c, errcode.PasswordWrong, err.Error())
-			return
-		}
-		errcode.Error(c, errcode.ServerError, "修改密码失败")
+		errcode.Respond(c, err, "修改密码失败")
 		return
 	}
 
