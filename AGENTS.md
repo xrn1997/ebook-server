@@ -114,7 +114,7 @@ sql/             → 数据库初始化脚本（MySQL 参考，实际用 SQLite 
 > 与 [ADR-0004](docs/adr/0004-login-identifier-immutable.md)。
 >
 > **账号注销**：采用匿名化而非删除——改写 `email` 为占位值、清空密码与头像，
-> **不设置 `DeletedAt`**（软删会让 GORM 的 `Preload` 过滤掉评论作者）。
+> **不设置** **`DeletedAt`**（软删会让 GORM 的 `Preload` 过滤掉评论作者）。
 > 公开评论与操作日志保留。详见 [ADR-0005](docs/adr/0005-account-deletion-by-anonymization.md)。
 
 ## 技术栈
@@ -237,9 +237,11 @@ go build -o ebook-server .
   "旧 access/refresh 一律失效"仅兑现了 refresh 一半。彻底解决需引入 token 黑名单，属基础设施依赖，
   当前不做——详见 `docs/adr/0005-account-deletion-by-anonymization.md`
 
-* **操作日志无人写入**：`service/log.go` 与 `repository/log.go` 的 `Create` 均无生产调用方，
-  `middleware/logger.go` 只写 zap 文件日志，故 `GET /api/logs*` 在真实运行下恒返回空列表。
-  接入时务必排除 `model.OperationLog.RequestBody`——它会记录登录请求的明文密码
+* **~~操作日志无人写入~~**（已解决）：曾因 `service/log.go`、`repository/log.go` 的 `Create`
+  无生产调用方，`GET /api/logs*` 恒返回空。现由 `middleware/operationlog.go` 把每次客户端请求
+  写入 `operation_logs`（刻意**不写** `model.OperationLog.RequestBody`，防登录明文密码）；
+  `/admin*` 为后台自身流量，不入库。后台管理端经 `GET /admin/api/logs` 查看审计，
+  客户端经 `GET /api/logs/my` 查看自己的请求。
 
 * **账号注销流程不包事务（有意为之）**：`AccountService.Delete` 依次执行「删 refresh token →
   匿名化账号」两次写，中途失败只会留下「token 已删但账号未匿名化」的状态——用户重新登录
@@ -247,7 +249,7 @@ go build -o ebook-server .
   是无状态 JWT 的固有缺陷，事务治不了（见上条）。跨 repo 事务需引入 TxRunner seam，
   为一个可自愈的瞬态加这层间接不划算。审查者不要再标记此条——加事务前先推翻这里的推理
 
-* **`ErrMailSendFailed` 无产生方**：`pkg/mail` 的发送错误原样向上返回，handler 中
+* **`ErrMailSendFailed`** **无产生方**：`pkg/mail` 的发送错误原样向上返回，handler 中
   `err == model.ErrMailSendFailed` 的分支永远不会命中，SMTP 失败实际落 `C0500`。
   若要让 `C0503` 生效，需在 service 层把邮件错误包装为 `ErrMailSendFailed`
 

@@ -24,15 +24,23 @@ type CommentReader interface {
 	FindAll(page, pageSize int) ([]model.Comment, int64, error)
 }
 
+// LogReader 管理面操作日志只读访问（consumer-defined，ADR-0007）。
+//
+// 由 repository.LogRepository 满足。
+type LogReader interface {
+	FindAll(page, pageSize int) ([]model.OperationLog, int64, error)
+}
+
 // Handler 后台 API 处理器。薄薄一层：解析请求、调用能力、统一信封返回。
 type Handler struct {
 	users    UserReader
 	comments CommentReader
+	logs     LogReader
 }
 
 // NewHandler 创建后台处理器。
-func NewHandler(users UserReader, comments CommentReader) *Handler {
-	return &Handler{users: users, comments: comments}
+func NewHandler(users UserReader, comments CommentReader, logs LogReader) *Handler {
+	return &Handler{users: users, comments: comments, logs: logs}
 }
 
 // loginRequest 后台登录请求体。
@@ -91,6 +99,17 @@ func (h *Handler) ListComments(c *gin.Context) {
 		return
 	}
 	errcode.Success(c, gin.H{"list": comments, "total": total})
+}
+
+// ListLogs 后台操作日志（请求审计）列表（分页）。
+func (h *Handler) ListLogs(c *gin.Context) {
+	page, pageSize := paginate(c)
+	logs, total, err := h.logs.FindAll(page, pageSize)
+	if err != nil {
+		errcode.Respond(c, err, "查询操作日志失败")
+		return
+	}
+	errcode.Success(c, gin.H{"list": logs, "total": total})
 }
 
 // paginate 解析并规整分页参数（page≥1，pageSize 1..100，缺省 1/20）。

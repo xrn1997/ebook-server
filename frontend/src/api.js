@@ -39,3 +39,7 @@ export async function fetchUsers(page = 1, pageSize = 20) {
 export async function fetchComments(page = 1, pageSize = 20) {
   return api(`/comments?page=${page}&page_size=${pageSize}`)
 }
+
+export async function fetchLogs(page = 1, pageSize = 20) {
+  return api(`/logs?page=${page}&page_size=${pageSize}`)
+}

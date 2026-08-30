@@ -7,6 +7,7 @@ const nav = [
   { to: '/', label: '概览 / 统计' },
   { to: '/users', label: '用户管理' },
   { to: '/comments', label: '内容审核' },
+  { to: '/logs', label: '请求日志' },
 ]
 </script>
 

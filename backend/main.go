@@ -71,6 +71,8 @@ func main() {
 	// 注册中间件
 	r.Use(middleware.Recovery())
 	r.Use(middleware.Logger())
+	// 操作审计：把每次请求写入 operation_logs（供后台查看，排除 RequestBody 明文密码）
+	r.Use(middleware.OperationLog(logRepo))
 	r.Use(middleware.CORS())
 
 	// 健康检查
@@ -130,7 +132,7 @@ func main() {
 	}
 
 	// ── 后台管理系统（ADR-0009：独立表面，独立鉴权）───────────────────────
-	adminHandler := admin.NewHandler(userRepo, commentRepo)
+	adminHandler := admin.NewHandler(userRepo, commentRepo, logRepo)
 	adm := r.Group("/admin")
 	{
 		// 后台 API
@@ -142,6 +144,7 @@ func main() {
 			api.GET("/stats", adminHandler.Stats)
 			api.GET("/users", adminHandler.ListUsers)
 			api.GET("/comments", adminHandler.ListComments)
+			api.GET("/logs", adminHandler.ListLogs)
 		}
 
 		// 内嵌前端（SPA 首页 + 静态资产 /admin/assets/*）

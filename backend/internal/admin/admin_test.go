@@ -45,7 +45,11 @@ func setup(t *testing.T) (*gin.Engine, *gorm.DB) {
 		},
 	}
 	db := testdb.Open(t)
-	h := NewHandler(repository.NewUserRepository(db), repository.NewCommentRepository(db))
+	h := NewHandler(
+		repository.NewUserRepository(db),
+		repository.NewCommentRepository(db),
+		repository.NewLogRepository(db),
+	)
 
 	r := gin.New()
 	adm := r.Group("/admin")
@@ -56,6 +60,7 @@ func setup(t *testing.T) (*gin.Engine, *gorm.DB) {
 		{
 			api.GET("/stats", h.Stats)
 			api.GET("/users", h.ListUsers)
+			api.GET("/logs", h.ListLogs)
 		}
 	}
 	return r, db
@@ -146,5 +151,25 @@ func TestAdminStats(t *testing.T) {
 	data := resp["data"].(map[string]interface{})
 	if int(data["users"].(float64)) < 1 {
 		t.Errorf("expected users>=1, got %v", data["users"])
+	}
+}
+
+func TestAdminListLogs(t *testing.T) {
+	r, db := setup(t)
+
+	// 造一条操作日志，验证 /api/logs 能查到并返回。
+	logs := repository.NewLogRepository(db)
+	if err := logs.Create(&model.OperationLog{Method: "GET", Path: "/api/comments", ResponseCode: 200}); err != nil {
+		t.Fatalf("create log failed: %v", err)
+	}
+
+	tok := adminLogin(t, r)
+	resp := perform(r, http.MethodGet, "/admin/api/logs", "", tok)
+	if resp["code"] != "00000" {
+		t.Fatalf("list logs failed: %v", resp)
+	}
+	data := resp["data"].(map[string]interface{})
+	if int(data["total"].(float64)) < 1 {
+		t.Errorf("expected at least 1 log, got total=%v", data["total"])
 	}
 }
