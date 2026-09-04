@@ -8,6 +8,13 @@ FRONTEND := frontend
 GOOS := $(shell go env GOOS)
 OUT_BIN := $(if $(filter windows,$(GOOS)),build/ebook-server.exe,build/ebook-server)
 
+# 发版版本号，默认 dev（本地构建）；发版时传 VERSION=v0.0.1。
+VERSION ?= dev
+# 编译期注入构建元信息到 pkg/version（go run / 未注入时回退占位值）。
+LDFLAGS := -X ebook-server/pkg/version.Version=$(VERSION) \
+           -X ebook-server/pkg/version.Commit=$(shell git rev-parse --short HEAD 2>/dev/null || echo unknown) \
+           -X ebook-server/pkg/version.BuildTime=$(shell date -u +%Y%m%d%H%M%S)
+
 .PHONY: build run clean test frontend-build frontend-dev all fmt deps docs linux windows \
 	test-coverage test-verbose test-model test-pkg test-service test-handler \
 	test-auth test-user test-comment db-init docker docker-run
@@ -19,7 +26,7 @@ build:
 	mkdir -p build
 	rm -rf $(BACKEND)/internal/admin/web/assets
 	cp -rf $(FRONTEND)/dist/. $(BACKEND)/internal/admin/web/ 2>/dev/null || true
-	cd $(BACKEND) && go build -o ../$(OUT_BIN) .
+	cd $(BACKEND) && go build -ldflags "$(LDFLAGS)" -o ../$(OUT_BIN) .
 
 # 前端构建：产物落在 frontend/dist（标准位置）
 frontend-build:
@@ -31,7 +38,7 @@ all: frontend-build build
 
 # 运行（从仓库根执行，config.yaml / ebook.db / logs 均在根目录解析）
 run:
-	cd $(BACKEND) && go build -o ../$(OUT_BIN) .
+	cd $(BACKEND) && go build -ldflags "$(LDFLAGS)" -o ../$(OUT_BIN) .
 	./$(OUT_BIN)
 
 # 前端开发服务器（热更新，连后端需自行配置 /admin/api 代理）
@@ -106,8 +113,8 @@ deps:
 
 # 交叉编译 Linux
 linux:
-	cd $(BACKEND) && GOOS=linux GOARCH=amd64 go build -o ebook-server .
+	cd $(BACKEND) && GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o ebook-server .
 
 # 交叉编译 Windows
 windows:
-	cd $(BACKEND) && GOOS=windows GOARCH=amd64 go build -o ebook-server.exe .
+	cd $(BACKEND) && GOOS=windows GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o ebook-server.exe .

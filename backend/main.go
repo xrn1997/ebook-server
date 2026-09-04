@@ -12,6 +12,7 @@ import (
 	"ebook-server/pkg/logger"
 	"ebook-server/pkg/mail"
 	"ebook-server/pkg/upload"
+	"ebook-server/pkg/version"
 	"ebook-server/repository"
 	"ebook-server/service"
 	"fmt"
@@ -50,6 +51,9 @@ func main() {
 		log.Fatalf("Failed to init logger: %v", err)
 	}
 	defer logger.Info("Server exiting")
+
+	// 打印构建版本信息（by ldflags 注入），便于运维核对发版产物
+	fmt.Printf("ebook-server %s\n", version.String())
 
 	// 初始化数据库
 	if err := database.Init(); err != nil {
