@@ -47,7 +47,7 @@ export class SidecarManager {
 
   /** 启动 Go 子进程 */
   start(): void {
-    if (this.process) return
+    if (this.status === 'starting' || this.status === 'running') return
     this.intentionalStop = false
     this.setStatus('starting')
     this.opts.onLog(`[sidecar] Starting ${this.opts.binaryPath}`)
@@ -85,6 +85,10 @@ export class SidecarManager {
       if (this.status === 'starting') {
         this.opts.onLog('[sidecar] Health check timeout (10s), marking as error')
         this.setStatus('error')
+        // Kill the process to prevent zombie state
+        if (this.process) {
+          try { this.process.kill('SIGTERM') } catch { /* already dead */ }
+        }
       }
     }, 10_000)
   }
@@ -151,6 +155,11 @@ export class SidecarManager {
         if (this.startTimeout) {
           clearTimeout(this.startTimeout)
           this.startTimeout = null
+        }
+        // Clear health check interval to prevent resource leak
+        if (this.healthTimer) {
+          clearInterval(this.healthTimer)
+          this.healthTimer = null
         }
         this.setStatus('running')
         this.restartCount = 0
