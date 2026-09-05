@@ -1,0 +1,37 @@
+appId: com.ebook-server.desktop
+productName: ebook-server
+
+directories:
+  output: release
+  buildResources: resources
+
+files:
+  - dist/**/*
+  - templates/**/*
+
+extraResources:
+  - from: resources/backend
+    to: backend
+    filter:
+      - ebook-server*
+      - '!**/.gitkeep'
+  - from: templates
+    to: templates
+
+win:
+  target: nsis
+  icon: resources/icon.ico
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+
+mac:
+  target: dmg
+  icon: resources/icon.icns
+
+linux:
+  target:
+    - AppImage
+    - deb
+  icon: resources/icon.png
