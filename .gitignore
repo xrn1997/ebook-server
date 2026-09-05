@@ -1,14 +1,206 @@
-# Binaries for programs and plugins
+# =============================================================================
+# Go (github/gitignore Go.gitignore)
+# =============================================================================
+
+# Binaries
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
 
-# Project binary / 构建产物目录（ADR-0009）
+# Project binary / build output (ADR-0009)
 build/
 ebook-server
 ebook-server.exe
+
+# Test binary, built with `go test -c`
+*.test
+
+# Coverage
+*.out
+coverage.*
+*.coverprofile
+profile.cov
+
+# Dependency directories
+vendor/
+
+# Go workspace
+go.work
+go.work.sum
+
+# =============================================================================
+# Node.js (github/gitignore Node.gitignore)
+# =============================================================================
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Diagnostic reports
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage (Node)
+coverage/
+*.lcov
+.nyc_output
+
+# Dependency directories
+node_modules/
+jspm_packages/
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Optional npm cache
+.npm
+
+# Optional caches
+.eslintcache
+.stylelintcache
+
+# Compiled binary addons
+build/Release
+
+# Output of 'npm pack'
+*.tgz
+
+# dotenv
+.env
+.env.*
+!.env.example
+
+# Bundler / framework caches
+.cache
+.parcel-cache
+.next
+out
+.nuxt
+dist
+.output
+.vuepress/dist
+.temp
+.svelte-kit/
+**/.vitepress/dist
+**/.vitepress/cache
+.docusaurus
+.serverless/
+.fusebox/
+.dynamodb/
+.firebase/
+
+# Vite
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+.vite/
+
+# Yarn
+.yarn-integrity
+.pnpm-store
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+
+# =============================================================================
+# JetBrains (github/gitignore Global/JetBrains.gitignore)
+# =============================================================================
+
+# User-specific
+.idea/**/workspace.xml
+.idea/**/tasks.xml
+.idea/**/usage.statistics.xml
+.idea/**/dictionaries
+.idea/**/shelf
+.idea/**/aws.xml
+
+# Generated
+.idea/**/contentModel.xml
+
+# Sensitive / high-churn
+.idea/**/dataSources/
+.idea/**/dataSources.ids
+.idea/**/dataSources.local.xml
+.idea/**/sqlDataSources.xml
+.idea/**/dynamic.xml
+.idea/**/uiDesigner.xml
+.idea/**/dbnavigator.xml
+
+# Gradle / Maven
+.idea/**/gradle.xml
+.idea/**/libraries
+
+# CMake
+cmake-build-*/
+
+# File-based project
+*.iws
+.idea_modules/
+
+# Plugin files
+atlassian-ide-plugin.xml
+.idea/replstate.xml
+.idea/sonarlint/
+.idea/sonarlint.xml
+com_crashlytics_export_strings.xml
+crashlytics.properties
+crashlytics-build.properties
+fabric.properties
+
+# HTTP Client
+.idea/httpRequests
+http-client.private.env.json
+
+# Android Studio cache
+.idea/caches/build_file_checksums.ser
+
+# Apifox / Copilot
+.idea/.cache/.Apifox_Helper
+.idea/ApifoxUploaderProjectSetting.xml
+.idea/**/copilot.data.migration.*.xml
+
+# =============================================================================
+# VS Code
+# =============================================================================
+
+.vscode/
+*.swp
+*.swo
+.vscode-test
+
+# =============================================================================
+# OS
+# =============================================================================
+
+.DS_Store
+Thumbs.db
+
+# =============================================================================
+# Project-specific
+# =============================================================================
+
+# Database (SQLite)
+*.db
+
+# Uploads
+uploads/
+
+# Backup
+config.yaml.backup
 
 # 后台前端 embed 产物：构建时镜象进 web/，仅保留 .gitkeep 入库
 backend/internal/admin/web/*
@@ -16,48 +208,16 @@ backend/internal/admin/web/*
 frontend/node_modules/
 frontend/dist/
 
-# Test binary, built with `go test -c`
-*.test
-
-# Code coverage profiles and other test artifacts
-*.out
-coverage.*
-*.coverprofile
-profile.cov
-
-# Database
-*.db
-
-# Dependency directories
-vendor/
-
-# Go workspace file
-go.work
-go.work.sum
-
-# Logs
-logs/
-
-# Environment
-.env
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Backup
-config.yaml.backup
-
-.workbuddy
-
-uploads
-
-# Desktop app build
+# Desktop app (Electron)
 desktop/node_modules/
 desktop/dist/
+desktop/dist-app/
+desktop/release/
+desktop/release2/
+desktop/release3/
+desktop/release4/
+desktop/release5/
+desktop/build-app/
+
+# Misc tool state
+.workbuddy
