@@ -6,6 +6,14 @@ import { registerIpcHandlers, unregisterIpcHandlers, addLog } from './ipc'
 import { Channels } from './ipc'
 import { getSidecarPath, getUserDataDir, getConfigPath, getEnvPath } from './paths'
 
+process.on('uncaughtException', (error) => {
+  console.error('[FATAL] Uncaught exception:', error)
+  const logPath = path.join(app.getPath('userData'), 'crash.log')
+  try {
+    fs.appendFileSync(logPath, `[${new Date().toISOString()}] ${error.stack || error}\n`)
+  } catch { /* ignore */ }
+})
+
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let sidecar: SidecarManager
@@ -19,6 +27,7 @@ function createWindow(): void {
     minWidth: 900,
     minHeight: 600,
     title: 'ebook-server',
+    show: false,
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload', 'index.js'),
       contextIsolation: true,
@@ -32,13 +41,22 @@ function createWindow(): void {
     mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'))
   }
 
+  mainWindow.once('ready-to-show', () => {
+    mainWindow?.show()
+  })
+
   mainWindow.on('closed', () => {
     mainWindow = null
   })
 }
 
 function createTray(): void {
-  const icon = nativeImage.createEmpty()
+  // Windows 上 nativeImage.createEmpty() 会导致 Tray 崩溃，用 1x1 透明 PNG 替代
+  const transparentPng = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQABNjN9GQAAAAlwSFlzAAAWJQAAFiUBSVIk8AAAAA0lEQVQI12P4z8BQDwAEgAF/QualIQAAAABJRU5ErkJggg==',
+    'base64',
+  )
+  const icon = nativeImage.createFromBuffer(transparentPng)
   tray = new Tray(icon)
   tray.setToolTip('ebook-server')
 
@@ -105,10 +123,14 @@ function startSidecar(): void {
 }
 
 app.whenReady().then(() => {
-  ensureUserData()
-  createWindow()
-  createTray()
-  startSidecar()
+  try {
+    ensureUserData()
+    createWindow()
+    createTray()
+    startSidecar()
+  } catch (error) {
+    console.error('[main] Startup error:', error)
+  }
 })
 
 app.on('window-all-closed', () => {

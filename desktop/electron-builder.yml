@@ -20,7 +20,6 @@ extraResources:
 
 win:
   target: nsis
-  icon: resources/icon.ico
 
 nsis:
   oneClick: false
@@ -28,10 +27,8 @@ nsis:
 
 mac:
   target: dmg
-  icon: resources/icon.icns
 
 linux:
   target:
     - AppImage
     - deb
-  icon: resources/icon.png

@@ -27,7 +27,8 @@ export function getEnvPath(appUserData: string): string {
 export function getSidecarPath(projectRoot: string, isPackaged: boolean, platform: string): string {
   const binaryName = platform === 'win32' ? 'ebook-server.exe' : 'ebook-server'
   if (isPackaged) {
-    return path.join(projectRoot, 'resources', 'backend', binaryName)
+    // process.resourcesPath 已指向 resources 目录，直接拼接 backend
+    return path.join(projectRoot, 'backend', binaryName)
   }
   return path.join(projectRoot, 'build', binaryName)
 }

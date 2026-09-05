@@ -48,10 +48,11 @@ describe('splitConfigToEnv', () => {
       api_docs: { enabled: false },
     }
     const { yamlConfig, envVars } = splitConfigToEnv(config)
-    expect(yamlConfig.smtp.password).toBeUndefined()
-    expect(yamlConfig.admin.password).toBeUndefined()
-    expect(yamlConfig.admin.jwt_secret).toBeUndefined()
-    expect(yamlConfig.jwt.secret).toBeUndefined()
+    const yaml = yamlConfig as Record<string, any>
+    expect(yaml.smtp.password).toBeUndefined()
+    expect(yaml.admin.password).toBeUndefined()
+    expect(yaml.admin.jwt_secret).toBeUndefined()
+    expect(yaml.jwt.secret).toBeUndefined()
     expect(envVars.SMTP_PASSWORD).toBe('smtp-pwd')
     expect(envVars.ADMIN_PASSWORD).toBe('admin-pwd')
     expect(envVars.ADMIN_JWT_SECRET).toBe('admin-jwt')

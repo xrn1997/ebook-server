@@ -1,4 +1,7 @@
 node_modules/
 dist/
+release/
+build-app/
+dist-app/
 resources/backend/ebook-server*
 !resources/backend/.gitkeep

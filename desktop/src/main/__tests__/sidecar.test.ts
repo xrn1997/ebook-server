@@ -115,7 +115,7 @@ describe('SidecarManager', () => {
   it('start() is no-op when already starting', () => {
     createManager()
     manager.start()
-    spawn.mockClear()
+    vi.mocked(spawn).mockClear()
     manager.start()
     expect(spawn).not.toHaveBeenCalled()
     expect(manager.getStatus()).toBe('starting')
@@ -127,7 +127,7 @@ describe('SidecarManager', () => {
     // Simulate health check success
     await vi.advanceTimersByTimeAsync(1000) // trigger first health check
     expect(manager.getStatus()).toBe('running')
-    spawn.mockClear()
+    vi.mocked(spawn).mockClear()
     manager.start()
     expect(spawn).not.toHaveBeenCalled()
     expect(manager.getStatus()).toBe('running')

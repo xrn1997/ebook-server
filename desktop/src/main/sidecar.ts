@@ -105,7 +105,7 @@ export class SidecarManager {
       const forceKillTimer = setTimeout(() => {
         try { proc.kill('SIGKILL') } catch { /* already dead */ }
       }, 5000)
-      proc.on('exit', () => clearTimeout(forceKillTimer), { once: true } as any)
+      proc.once('exit', () => clearTimeout(forceKillTimer))
     } else {
       this.setStatus('stopped')
     }
@@ -120,7 +120,7 @@ export class SidecarManager {
       this.setStatus('stopping')
       proc.kill('SIGTERM')
       await new Promise<void>((resolve) => {
-        proc.on('exit', () => resolve(), { once: true } as any)
+        proc.once('exit', () => resolve())
         setTimeout(resolve, 5000)
       })
     }
