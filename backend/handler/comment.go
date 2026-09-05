@@ -56,11 +56,11 @@ func (h *CommentHandler) Create(c *gin.Context) {
 
 // GetList 获取评论列表
 // @Summary 获取评论列表
-// @Description 获取评论列表，可按章节过滤（chapter_url/book_name）
+// @Description 获取评论列表，可按章节过滤（chapter_url 支持多个，返回并集；book_name 可单独或配合过滤）
 // @Tags 评论
 // @Produce json
-// @Param chapter_url query string false "书源章节 URL（提供则返回该章节评论）"
-// @Param book_name query string false "书名（与 chapter_url 配合二次过滤）"
+// @Param chapter_url query []string false "书源章节聚合键（可传多个，返回并集）"
+// @Param book_name query string false "书名（配合 chapter_url 二次过滤，或单独过滤全书）"
 // @Param page query int false "页码" default(1)
 // @Param page_size query int false "每页数量" default(10)
 // @Success 200 {object} model.Response
@@ -69,12 +69,22 @@ func (h *CommentHandler) GetList(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
 
-	// 章节/书名过滤（ADR-0011）：chapter_url 精确匹配章节，book_name 可单独过滤全书
+	chapterURLs := c.QueryArray("chapter_url")
+	// 过滤空串（?chapter_url= 不带值的情况）
+	nonEmpty := make([]string, 0, len(chapterURLs))
+	for _, u := range chapterURLs {
+		if u != "" {
+			nonEmpty = append(nonEmpty, u)
+		}
+	}
+
 	var result *model.CommentListResponse
 	var err error
 	switch {
-	case c.Query("chapter_url") != "":
-		result, err = h.commentService.GetByChapter(c.Query("chapter_url"), c.Query("book_name"), page, pageSize)
+	case len(nonEmpty) > 1:
+		result, err = h.commentService.GetByChapterURLs(nonEmpty, c.Query("book_name"), page, pageSize)
+	case len(nonEmpty) == 1:
+		result, err = h.commentService.GetByChapter(nonEmpty[0], c.Query("book_name"), page, pageSize)
 	case c.Query("book_name") != "":
 		result, err = h.commentService.GetByBook(c.Query("book_name"), page, pageSize)
 	default:
@@ -145,4 +155,36 @@ func (h *CommentHandler) Delete(c *gin.Context) {
 	}
 
 	errcode.SuccessMsg(c, "删除成功", nil)
+}
+
+// MigrateKey 迁移评论聚合键
+// @Summary 迁移评论聚合键
+// @Description 将当前用户在旧聚合键下的评论批量迁移到新聚合键（合并书籍场景）
+// @Tags 评论
+// @Accept json
+// @Produce json
+// @Security ApiKeyAuth
+// @Param request body model.MigrateCommentKeyRequest true "迁移请求"
+// @Success 200 {object} model.Response
+// @Router /api/comments/migrate-key [post]
+func (h *CommentHandler) MigrateKey(c *gin.Context) {
+	userID, exists := middleware.GetCurrentUserID(c)
+	if !exists {
+		errcode.Error(c, errcode.LoginExpired, "未登录")
+		return
+	}
+
+	var req model.MigrateCommentKeyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		errcode.Error(c, errcode.BadRequest, "请求参数错误: "+err.Error())
+		return
+	}
+
+	count, err := h.commentService.MigrateKey(userID, req.OldKey, req.NewKey)
+	if err != nil {
+		errcode.Respond(c, err, "迁移评论聚合键失败")
+		return
+	}
+
+	errcode.Success(c, model.MigrateCommentKeyResponse{MigratedCount: count})
 }

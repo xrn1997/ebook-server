@@ -46,6 +46,10 @@ type CommentStore interface {
 	FindByBook(bookName string, page, pageSize int) ([]model.Comment, int64, error)
 	FindByUserID(userID uint, page, pageSize int) ([]model.Comment, int64, error)
 	FindAllByUserID(userID uint) ([]model.Comment, error)
+	// FindByChapterURLs 按多个聚合键查评论并集（合并书籍场景，M2）。
+	FindByChapterURLs(chapterURLs []string, bookName string, page, pageSize int) ([]model.Comment, int64, error)
+	// MigrateKey 批量迁移某用户在旧聚合键下的评论到新聚合键，返回受影响行数。
+	MigrateKey(userID uint, oldKey, newKey string) (int64, error)
 	Delete(id uint) error
 	CanDelete(commentID, userID uint) (bool, error)
 }

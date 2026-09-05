@@ -333,3 +333,115 @@ func TestCommentService_GetAll_PaginationBoundaries(t *testing.T) {
 		t.Errorf("Expected PageSize 10 for pageSize=101, got %d", result.PageSize)
 	}
 }
+
+func TestCommentService_GetByChapterURLs_Union(t *testing.T) {
+	setupTestDB(t)
+	defer cleanupTestDB(t)
+
+	authService := testAuth
+	user := serviceRegister(t, authService, "multi_url@example.com", "password123")
+	commentService := testComments
+
+	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "A1", ChapterURL: "key-a", BookName: "书A"})
+	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "A2", ChapterURL: "key-a", BookName: "书A"})
+	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "B1", ChapterURL: "key-b", BookName: "书A"})
+	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "C1", ChapterURL: "key-c", BookName: "书B"})
+
+	result, err := commentService.GetByChapterURLs([]string{"key-a", "key-b"}, "", 1, 10)
+	if err != nil {
+		t.Fatalf("GetByChapterURLs failed: %v", err)
+	}
+	if result.Total != 3 {
+		t.Errorf("Expected total 3, got %d", result.Total)
+	}
+}
+
+func TestCommentService_GetByChapterURLs_SingleKeyEquivalent(t *testing.T) {
+	setupTestDB(t)
+	defer cleanupTestDB(t)
+
+	authService := testAuth
+	user := serviceRegister(t, authService, "single_url@example.com", "password123")
+	commentService := testComments
+
+	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "A1", ChapterURL: "key-a", BookName: "书A"})
+	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "A2", ChapterURL: "key-a", BookName: "书A"})
+
+	// 单键通过 GetByChapterURLs 应等价于 GetByChapter
+	multi, err := commentService.GetByChapterURLs([]string{"key-a"}, "书A", 1, 10)
+	if err != nil {
+		t.Fatalf("GetByChapterURLs single failed: %v", err)
+	}
+	single, err := commentService.GetByChapter("key-a", "书A", 1, 10)
+	if err != nil {
+		t.Fatalf("GetByChapter failed: %v", err)
+	}
+	if multi.Total != single.Total {
+		t.Errorf("multi.Total=%d != single.Total=%d", multi.Total, single.Total)
+	}
+}
+
+func TestCommentService_MigrateKey_Success(t *testing.T) {
+	setupTestDB(t)
+	defer cleanupTestDB(t)
+
+	authService := testAuth
+	user := serviceRegister(t, authService, "migrate@example.com", "password123")
+	commentService := testComments
+
+	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "c1", ChapterURL: "old-key"})
+	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "c2", ChapterURL: "old-key"})
+
+	count, err := commentService.MigrateKey(user.UID, "old-key", "new-key")
+	if err != nil {
+		t.Fatalf("MigrateKey failed: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("Expected 2 migrated, got %d", count)
+	}
+
+	// 新键下应有 2 条
+	result, _ := commentService.GetByChapterURLs([]string{"new-key"}, "", 1, 10)
+	if result.Total != 2 {
+		t.Errorf("Expected 2 under new-key, got %d", result.Total)
+	}
+}
+
+func TestCommentService_MigrateKey_SameKey(t *testing.T) {
+	setupTestDB(t)
+	defer cleanupTestDB(t)
+
+	commentService := testComments
+	_, err := commentService.MigrateKey(1, "same-key", "same-key")
+	if err != model.ErrCommentKeySame {
+		t.Errorf("Expected ErrCommentKeySame, got %v", err)
+	}
+}
+
+func TestCommentService_MigrateKey_UserIsolation(t *testing.T) {
+	setupTestDB(t)
+	defer cleanupTestDB(t)
+
+	authService := testAuth
+	user1 := serviceRegister(t, authService, "mig_u1@example.com", "password123")
+	user2 := serviceRegister(t, authService, "mig_u2@example.com", "password123")
+	commentService := testComments
+
+	commentService.Create(user1.UID, &model.CreateCommentRequest{Content: "u1c1", ChapterURL: "shared-key"})
+	commentService.Create(user2.UID, &model.CreateCommentRequest{Content: "u2c1", ChapterURL: "shared-key"})
+
+	// user1 迁移：只影响自己的 1 条
+	count, err := commentService.MigrateKey(user1.UID, "shared-key", "new-key")
+	if err != nil {
+		t.Fatalf("MigrateKey user1 failed: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("Expected 1 migrated for user1, got %d", count)
+	}
+
+	// user2 的评论仍在旧键下
+	result, _ := commentService.GetByChapter("shared-key", "", 1, 10)
+	if result.Total != 1 {
+		t.Errorf("Expected 1 under shared-key for user2, got %d", result.Total)
+	}
+}

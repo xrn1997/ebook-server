@@ -156,6 +156,7 @@ func main() {
 			commentHandler := handler.NewCommentHandler(commentService)
 			comments.GET("", commentHandler.GetList)                                // 公开
 			comments.POST("", middleware.JWTAuth(), commentHandler.Create)          // 需要登录
+			comments.POST("/migrate-key", middleware.JWTAuth(), commentHandler.MigrateKey) // 需要登录
 			comments.GET("/my", middleware.JWTAuth(), commentHandler.GetMyComments) // 需要登录
 			comments.DELETE("/:id", middleware.JWTAuth(), commentHandler.Delete)    // 需要登录
 		}

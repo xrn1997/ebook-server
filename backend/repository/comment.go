@@ -58,6 +58,31 @@ func (r *CommentRepository) FindByChapter(chapterURL, bookName string, page, pag
 	return comments, total, nil
 }
 
+// FindByChapterURLs 按多个章节聚合键查找评论并集（分页）。
+//
+// chapterURLs 通过 IN 查询合并多键下的评论；bookName 为空时不参与过滤。
+// 排序与全局列表一致（created_at DESC）。合并书籍场景（M2）使用。
+func (r *CommentRepository) FindByChapterURLs(chapterURLs []string, bookName string, page, pageSize int) ([]model.Comment, int64, error) {
+	var comments []model.Comment
+	var total int64
+
+	query := r.db.Model(&model.Comment{}).Where("chapter_url IN ?", chapterURLs)
+	if bookName != "" {
+		query = query.Where("book_name = ?", bookName)
+	}
+
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	offset := (page - 1) * pageSize
+	if err := query.Preload("User").Order("created_at DESC").Offset(offset).Limit(pageSize).Find(&comments).Error; err != nil {
+		return nil, 0, err
+	}
+
+	return comments, total, nil
+}
+
 // FindByBook 按书名查找评论（分页），聚合该书的全部章节评论。
 //
 // book_name 精确匹配；排序与全局列表一致（created_at DESC）。
@@ -150,4 +175,15 @@ func (r *CommentRepository) CanDelete(commentID, userID uint) (bool, error) {
 		return false, err
 	}
 	return comment.UserID == userID, nil
+}
+
+// MigrateKey 批量迁移某用户在旧聚合键下的评论到新聚合键。
+//
+// 只更新 chapter_url（聚合键）；chapter_name/book_name 是展示快照不随迁移更新。
+// GORM 自动附加 deleted_at IS NULL 条件，软删除记录不受影响。
+func (r *CommentRepository) MigrateKey(userID uint, oldKey, newKey string) (int64, error) {
+	result := r.db.Model(&model.Comment{}).
+		Where("user_id = ? AND chapter_url = ?", userID, oldKey).
+		Update("chapter_url", newKey)
+	return result.RowsAffected, result.Error
 }

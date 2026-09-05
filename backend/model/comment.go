@@ -41,6 +41,19 @@ type CreateCommentRequest struct {
 	BookName    string `json:"book_name" binding:"omitempty,max=200"`
 }
 
+// MigrateCommentKeyRequest 迁移评论聚合键请求（合并书籍修键场景）。
+//
+// old_key/new_key 对应 comment 的 chapter_url 字段；只迁移当前用户名下的评论。
+type MigrateCommentKeyRequest struct {
+	OldKey string `json:"old_key" binding:"required"`
+	NewKey string `json:"new_key" binding:"required"`
+}
+
+// MigrateCommentKeyResponse 迁移评论聚合键响应。
+type MigrateCommentKeyResponse struct {
+	MigratedCount int64 `json:"migrated_count"`
+}
+
 // CommentUserView 评论内嵌的用户视图（ADR-0011 契约：仅 uid/username/nickname/avatar）。
 //
 // 与 User 实体分离：不序列化 email 等账号字段，避免评论列表泄露用户隐私。

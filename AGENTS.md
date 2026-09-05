@@ -103,7 +103,8 @@ sql/             → 数据库初始化脚本（MySQL 参考，实际用 SQLite 
 /api/users/me/data         → 导出我的数据（用户资料+本人评论，需认证）
 /api/users/me/deletion/send-code → 发注销验证码到当前账号邮箱（需认证）
 /api/users/me/deletion     → 注销账号（验证码确认，匿名化并返回数据副本，需认证）
-/api/comments              → 评论列表（公开，支持 chapter_url/book_name 章节过滤）/ 创建评论（需认证，支持章节字段）
+/api/comments              → 评论列表（公开，chapter_url 支持多个返回并集；book_name 可单独或配合过滤）/ 创建评论（需认证，支持章节字段）
+/api/comments/migrate-key  → 迁移评论聚合键（需认证，旧键→新键，仅本人，同键 A0305）
 /api/comments/my           → 我的评论（需认证）
 /api/comments/:id          → 删除评论（需认证，仅本人，非本人 A0303）
 /api/uploads/avatar        → 头像上传（需认证，multipart，返回绝对 URL）

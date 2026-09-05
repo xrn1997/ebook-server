@@ -90,6 +90,20 @@ func (s *CommentService) GetByChapter(chapterURL, bookName string, page, pageSiz
 	return toListResponse(comments, total, page, pageSize), nil
 }
 
+// GetByChapterURLs 按多个聚合键获取评论并集（合并书籍场景，M2）。
+//
+// chapterURLs 非空（由调用方保证），返回所有键下评论的合并分页结果。
+func (s *CommentService) GetByChapterURLs(chapterURLs []string, bookName string, page, pageSize int) (*model.CommentListResponse, error) {
+	page, pageSize = normalizePage(page, pageSize)
+
+	comments, total, err := s.comments.FindByChapterURLs(chapterURLs, bookName, page, pageSize)
+	if err != nil {
+		return nil, err
+	}
+
+	return toListResponse(comments, total, page, pageSize), nil
+}
+
 // GetAll 获取所有评论列表
 func (s *CommentService) GetAll(page, pageSize int) (*model.CommentListResponse, error) {
 	page, pageSize = normalizePage(page, pageSize)
@@ -134,4 +148,15 @@ func (s *CommentService) Delete(commentID, userID uint) error {
 	}
 
 	return s.comments.Delete(commentID)
+}
+
+// MigrateKey 迁移当前用户在旧聚合键下的评论到新聚合键（合并书籍场景，M2）。
+//
+// oldKey == newKey 时返回 model.ErrCommentKeySame（映射 A0305）；
+// 无匹配评论时返回 0 而非错误（幂等语义）。
+func (s *CommentService) MigrateKey(userID uint, oldKey, newKey string) (int64, error) {
+	if oldKey == newKey {
+		return 0, model.ErrCommentKeySame
+	}
+	return s.comments.MigrateKey(userID, oldKey, newKey)
 }

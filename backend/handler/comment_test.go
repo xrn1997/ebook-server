@@ -483,3 +483,217 @@ func TestCommentHandler_Delete_NotFound(t *testing.T) {
 	// 评论不存在 → 评论域专用码 A0304（ADR-0011）
 	assertErrorCode(t, w.Body.Bytes(), "A0304")
 }
+
+// TestCommentHandler_GetList_MultiChapterURL 多 chapter_url 参数返回并集。
+func TestCommentHandler_GetList_MultiChapterURL(t *testing.T) {
+	app := newTestApp(t)
+
+	router := setupRouter()
+	authHandler := app.auth
+	commentHandler := app.comment
+	router.POST("/api/auth/register", authHandler.Register)
+	router.POST("/api/auth/login", authHandler.Login)
+	router.POST("/api/comments", middleware.JWTAuth(), commentHandler.Create)
+	router.GET("/api/comments", commentHandler.GetList)
+
+	_, token := registerUser(t, router, "multi_ch@example.com")
+
+	create := func(m map[string]string) {
+		jsonBody, _ := json.Marshal(m)
+		req, _ := http.NewRequest("POST", "/api/comments", bytes.NewBuffer(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+	}
+	create(map[string]string{"content": "A1", "chapter_url": "key-a"})
+	create(map[string]string{"content": "A2", "chapter_url": "key-a"})
+	create(map[string]string{"content": "B1", "chapter_url": "key-b"})
+	create(map[string]string{"content": "C1", "chapter_url": "key-c"})
+
+	// 多键并集：key-a + key-b = 3
+	req, _ := http.NewRequest("GET", "/api/comments?chapter_url=key-a&chapter_url=key-b", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	var resp map[string]interface{}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["code"] != "00000" {
+		t.Fatalf("multi-key query failed: %v", resp)
+	}
+	data := resp["data"].(map[string]interface{})
+	if data["total"].(float64) != 3 {
+		t.Errorf("Expected total 3, got %v", data["total"])
+	}
+}
+
+// TestCommentHandler_GetList_SingleChapterURL_BackwardCompat 单 chapter_url 仍走原路径。
+func TestCommentHandler_GetList_SingleChapterURL_BackwardCompat(t *testing.T) {
+	app := newTestApp(t)
+
+	router := setupRouter()
+	authHandler := app.auth
+	commentHandler := app.comment
+	router.POST("/api/auth/register", authHandler.Register)
+	router.POST("/api/auth/login", authHandler.Login)
+	router.POST("/api/comments", middleware.JWTAuth(), commentHandler.Create)
+	router.GET("/api/comments", commentHandler.GetList)
+
+	_, token := registerUser(t, router, "single_ch@example.com")
+
+	create := func(m map[string]string) {
+		jsonBody, _ := json.Marshal(m)
+		req, _ := http.NewRequest("POST", "/api/comments", bytes.NewBuffer(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		httptest.NewRecorder()
+		router.ServeHTTP(httptest.NewRecorder(), req)
+	}
+	create(map[string]string{"content": "A1", "chapter_url": "key-a"})
+	create(map[string]string{"content": "A2", "chapter_url": "key-a"})
+
+	req, _ := http.NewRequest("GET", "/api/comments?chapter_url=key-a", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	var resp map[string]interface{}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	data := resp["data"].(map[string]interface{})
+	if data["total"].(float64) != 2 {
+		t.Errorf("Expected total 2 for backward-compat single key, got %v", data["total"])
+	}
+}
+
+func TestCommentHandler_MigrateKey_Success(t *testing.T) {
+	app := newTestApp(t)
+
+	router := setupRouter()
+	authHandler := app.auth
+	commentHandler := app.comment
+	router.POST("/api/auth/register", authHandler.Register)
+	router.POST("/api/auth/login", authHandler.Login)
+	router.POST("/api/comments", middleware.JWTAuth(), commentHandler.Create)
+	router.POST("/api/comments/migrate-key", middleware.JWTAuth(), commentHandler.MigrateKey)
+	router.GET("/api/comments", commentHandler.GetList)
+
+	_, token := registerUser(t, router, "migrate_h@example.com")
+
+	// 创建两条旧键下的评论
+	for _, c := range []string{"c1", "c2"} {
+		body := map[string]string{"content": c, "chapter_url": "old-key"}
+		jsonBody, _ := json.Marshal(body)
+		req, _ := http.NewRequest("POST", "/api/comments", bytes.NewBuffer(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		router.ServeHTTP(httptest.NewRecorder(), req)
+	}
+
+	// 迁移
+	migBody, _ := json.Marshal(map[string]string{"old_key": "old-key", "new_key": "new-key"})
+	req, _ := http.NewRequest("POST", "/api/comments/migrate-key", bytes.NewBuffer(migBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	data := decodeData(t, w.Body.Bytes())
+	if data["migrated_count"].(float64) != 2 {
+		t.Errorf("Expected migrated_count 2, got %v", data["migrated_count"])
+	}
+}
+
+func TestCommentHandler_MigrateKey_NoAuth(t *testing.T) {
+	app := newTestApp(t)
+	router := setupRouter()
+	commentHandler := app.comment
+	router.POST("/api/comments/migrate-key", commentHandler.MigrateKey)
+
+	body, _ := json.Marshal(map[string]string{"old_key": "a", "new_key": "b"})
+	req, _ := http.NewRequest("POST", "/api/comments/migrate-key", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assertErrorCode(t, w.Body.Bytes(), "A0230")
+}
+
+func TestCommentHandler_MigrateKey_SameKey(t *testing.T) {
+	app := newTestApp(t)
+
+	router := setupRouter()
+	authHandler := app.auth
+	commentHandler := app.comment
+	router.POST("/api/auth/register", authHandler.Register)
+	router.POST("/api/auth/login", authHandler.Login)
+	router.POST("/api/comments/migrate-key", middleware.JWTAuth(), commentHandler.MigrateKey)
+
+	_, token := registerUser(t, router, "samekey@example.com")
+
+	body, _ := json.Marshal(map[string]string{"old_key": "same", "new_key": "same"})
+	req, _ := http.NewRequest("POST", "/api/comments/migrate-key", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assertErrorCode(t, w.Body.Bytes(), "A0305")
+}
+
+func TestCommentHandler_MigrateKey_EmptyParams(t *testing.T) {
+	app := newTestApp(t)
+
+	router := setupRouter()
+	authHandler := app.auth
+	commentHandler := app.comment
+	router.POST("/api/auth/register", authHandler.Register)
+	router.POST("/api/auth/login", authHandler.Login)
+	router.POST("/api/comments/migrate-key", middleware.JWTAuth(), commentHandler.MigrateKey)
+
+	_, token := registerUser(t, router, "empty_mig@example.com")
+
+	body, _ := json.Marshal(map[string]string{"old_key": "", "new_key": ""})
+	req, _ := http.NewRequest("POST", "/api/comments/migrate-key", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assertErrorCode(t, w.Body.Bytes(), "A0400")
+}
+
+func TestCommentHandler_MigrateKey_UserIsolation(t *testing.T) {
+	app := newTestApp(t)
+
+	router := setupRouter()
+	authHandler := app.auth
+	commentHandler := app.comment
+	router.POST("/api/auth/register", authHandler.Register)
+	router.POST("/api/auth/login", authHandler.Login)
+	router.POST("/api/comments", middleware.JWTAuth(), commentHandler.Create)
+	router.POST("/api/comments/migrate-key", middleware.JWTAuth(), commentHandler.MigrateKey)
+	router.GET("/api/comments", commentHandler.GetList)
+
+	_, token1 := registerUser(t, router, "iso_u1@example.com")
+	_, token2 := registerUser(t, router, "iso_u2@example.com")
+
+	// user1 和 user2 各创建一条同键评论
+	for _, tk := range []string{token1, token2} {
+		body := map[string]string{"content": "c", "chapter_url": "shared-key"}
+		jsonBody, _ := json.Marshal(body)
+		req, _ := http.NewRequest("POST", "/api/comments", bytes.NewBuffer(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+tk)
+		router.ServeHTTP(httptest.NewRecorder(), req)
+	}
+
+	// user1 迁移
+	migBody, _ := json.Marshal(map[string]string{"old_key": "shared-key", "new_key": "new-key"})
+	req, _ := http.NewRequest("POST", "/api/comments/migrate-key", bytes.NewBuffer(migBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token1)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	data := decodeData(t, w.Body.Bytes())
+	if data["migrated_count"].(float64) != 1 {
+		t.Errorf("Expected 1 migrated (user isolation), got %v", data["migrated_count"])
+	}
+}

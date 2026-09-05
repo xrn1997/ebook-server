@@ -35,6 +35,7 @@ const (
 	CommentChapterInvalid = "A0302" // chapter_url 非法/章节不存在（预留：后端无书源数据，不做存在性校验）
 	CommentNotOwner       = "A0303" // 无权删除评论（非本人）
 	CommentNotFoundErr    = "A0304" // 评论不存在
+	CommentKeySame        = "A0305" // 新旧聚合键相同
 
 	// 通用兜底错误
 	BadRequest  = "A0400" // 请求参数错误
@@ -65,6 +66,7 @@ var errorCodes = map[error]string{
 	model.ErrMailSendFailed:  MailSendFailed,
 	model.ErrCommentNotFound: CommentNotFoundErr,
 	model.ErrCommentNotOwner: CommentNotOwner,
+	model.ErrCommentKeySame:  CommentKeySame,
 	model.ErrNoPermission:    Forbidden,
 }
 

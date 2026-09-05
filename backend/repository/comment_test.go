@@ -285,3 +285,184 @@ func TestCommentRepository_CanDelete_NotFound(t *testing.T) {
 		t.Errorf("Expected ErrRecordNotFound, got %v", err)
 	}
 }
+
+func TestCommentRepository_FindByChapterURLs_Union(t *testing.T) {
+	setupTestDB(t)
+	defer cleanupTestDB(t)
+
+	userRepo := NewUserRepository(testDB)
+	user := &model.User{Email: "multi@example.com", Password: "hp", Username: "multi", Nickname: "multi"}
+	userRepo.Create(user)
+
+	repo := NewCommentRepository(testDB)
+	repo.Create(&model.Comment{UserID: user.UID, Content: "A1", ChapterURL: "key-a", BookName: "书A"})
+	repo.Create(&model.Comment{UserID: user.UID, Content: "A2", ChapterURL: "key-a", BookName: "书A"})
+	repo.Create(&model.Comment{UserID: user.UID, Content: "B1", ChapterURL: "key-b", BookName: "书A"})
+	repo.Create(&model.Comment{UserID: user.UID, Content: "C1", ChapterURL: "key-c", BookName: "书B"})
+
+	// 多键并集：key-a + key-b = 3 条
+	comments, total, err := repo.FindByChapterURLs([]string{"key-a", "key-b"}, "", 1, 10)
+	if err != nil {
+		t.Fatalf("FindByChapterURLs failed: %v", err)
+	}
+	if total != 3 {
+		t.Errorf("Expected total 3, got %d", total)
+	}
+	if len(comments) != 3 {
+		t.Errorf("Expected 3 comments, got %d", len(comments))
+	}
+}
+
+func TestCommentRepository_FindByChapterURLs_WithBookName(t *testing.T) {
+	setupTestDB(t)
+	defer cleanupTestDB(t)
+
+	userRepo := NewUserRepository(testDB)
+	user := &model.User{Email: "bn@example.com", Password: "hp", Username: "bn", Nickname: "bn"}
+	userRepo.Create(user)
+
+	repo := NewCommentRepository(testDB)
+	repo.Create(&model.Comment{UserID: user.UID, Content: "A1", ChapterURL: "key-a", BookName: "书A"})
+	repo.Create(&model.Comment{UserID: user.UID, Content: "B1", ChapterURL: "key-b", BookName: "书B"})
+
+	// bookName 二次过滤：只返回书A的
+	comments, total, err := repo.FindByChapterURLs([]string{"key-a", "key-b"}, "书A", 1, 10)
+	if err != nil {
+		t.Fatalf("FindByChapterURLs with bookName failed: %v", err)
+	}
+	if total != 1 {
+		t.Errorf("Expected total 1, got %d", total)
+	}
+	if len(comments) != 1 || comments[0].Content != "A1" {
+		t.Errorf("Expected [A1], got %v", comments)
+	}
+}
+
+func TestCommentRepository_FindByChapterURLs_Pagination(t *testing.T) {
+	setupTestDB(t)
+	defer cleanupTestDB(t)
+
+	userRepo := NewUserRepository(testDB)
+	user := &model.User{Email: "pg@example.com", Password: "hp", Username: "pg", Nickname: "pg"}
+	userRepo.Create(user)
+
+	repo := NewCommentRepository(testDB)
+	for i := 0; i < 5; i++ {
+		repo.Create(&model.Comment{UserID: user.UID, Content: "A", ChapterURL: "key-a"})
+	}
+	for i := 0; i < 3; i++ {
+		repo.Create(&model.Comment{UserID: user.UID, Content: "B", ChapterURL: "key-b"})
+	}
+
+	// 8 条并集，分页 pageSize=3
+	comments, total, err := repo.FindByChapterURLs([]string{"key-a", "key-b"}, "", 1, 3)
+	if err != nil {
+		t.Fatalf("FindByChapterURLs pagination failed: %v", err)
+	}
+	if total != 8 {
+		t.Errorf("Expected total 8, got %d", total)
+	}
+	if len(comments) != 3 {
+		t.Errorf("Expected 3 comments on page 1, got %d", len(comments))
+	}
+}
+
+func TestCommentRepository_FindByChapterURLs_Empty(t *testing.T) {
+	setupTestDB(t)
+	defer cleanupTestDB(t)
+
+	repo := NewCommentRepository(testDB)
+	comments, total, err := repo.FindByChapterURLs([]string{"nonexistent"}, "", 1, 10)
+	if err != nil {
+		t.Fatalf("FindByChapterURLs empty failed: %v", err)
+	}
+	if total != 0 || len(comments) != 0 {
+		t.Errorf("Expected empty result, got total=%d len=%d", total, len(comments))
+	}
+}
+
+func TestCommentRepository_MigrateKey_Success(t *testing.T) {
+	setupTestDB(t)
+	defer cleanupTestDB(t)
+
+	userRepo := NewUserRepository(testDB)
+	user := &model.User{Email: "mig@example.com", Password: "hp", Username: "mig", Nickname: "mig"}
+	userRepo.Create(user)
+
+	repo := NewCommentRepository(testDB)
+	repo.Create(&model.Comment{UserID: user.UID, Content: "c1", ChapterURL: "old-key"})
+	repo.Create(&model.Comment{UserID: user.UID, Content: "c2", ChapterURL: "old-key"})
+	repo.Create(&model.Comment{UserID: user.UID, Content: "c3", ChapterURL: "other-key"})
+
+	count, err := repo.MigrateKey(user.UID, "old-key", "new-key")
+	if err != nil {
+		t.Fatalf("MigrateKey failed: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("Expected 2 migrated, got %d", count)
+	}
+
+	// 验证迁移结果
+	comments, _, _ := repo.FindByChapterURLs([]string{"new-key"}, "", 1, 10)
+	if len(comments) != 2 {
+		t.Errorf("Expected 2 comments under new-key, got %d", len(comments))
+	}
+	// 旧键下应无评论
+	comments, _, _ = repo.FindByChapterURLs([]string{"old-key"}, "", 1, 10)
+	if len(comments) != 0 {
+		t.Errorf("Expected 0 comments under old-key, got %d", len(comments))
+	}
+	// 其他键不受影响
+	comments, _, _ = repo.FindByChapterURLs([]string{"other-key"}, "", 1, 10)
+	if len(comments) != 1 {
+		t.Errorf("Expected 1 comment under other-key, got %d", len(comments))
+	}
+}
+
+func TestCommentRepository_MigrateKey_NoMatch(t *testing.T) {
+	setupTestDB(t)
+	defer cleanupTestDB(t)
+
+	userRepo := NewUserRepository(testDB)
+	user := &model.User{Email: "nomig@example.com", Password: "hp", Username: "nomig", Nickname: "nomig"}
+	userRepo.Create(user)
+
+	repo := NewCommentRepository(testDB)
+	count, err := repo.MigrateKey(user.UID, "nonexistent", "new-key")
+	if err != nil {
+		t.Fatalf("MigrateKey no-match failed: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("Expected 0 migrated, got %d", count)
+	}
+}
+
+func TestCommentRepository_MigrateKey_UserIsolation(t *testing.T) {
+	setupTestDB(t)
+	defer cleanupTestDB(t)
+
+	userRepo := NewUserRepository(testDB)
+	user1 := &model.User{Email: "u1@example.com", Password: "hp", Username: "u1", Nickname: "u1"}
+	user2 := &model.User{Email: "u2@example.com", Password: "hp", Username: "u2", Nickname: "u2"}
+	userRepo.Create(user1)
+	userRepo.Create(user2)
+
+	repo := NewCommentRepository(testDB)
+	repo.Create(&model.Comment{UserID: user1.UID, Content: "u1c1", ChapterURL: "shared-key"})
+	repo.Create(&model.Comment{UserID: user2.UID, Content: "u2c1", ChapterURL: "shared-key"})
+
+	// 只迁移 user1 的
+	count, err := repo.MigrateKey(user1.UID, "shared-key", "new-key")
+	if err != nil {
+		t.Fatalf("MigrateKey user isolation failed: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("Expected 1 migrated, got %d", count)
+	}
+
+	// user2 的评论仍在旧键下
+	comments, _, _ := repo.FindByChapterURLs([]string{"shared-key"}, "", 1, 10)
+	if len(comments) != 1 || comments[0].UserID != user2.UID {
+		t.Errorf("user2's comment should remain under shared-key, got %v", comments)
+	}
+}
