@@ -92,18 +92,16 @@ export class SidecarManager {
   /** 停止 Go 子进程 */
   stop(): void {
     this.intentionalStop = true
+    const proc = this.process
     this.cleanup()
-    if (this.process) {
+    if (proc) {
       this.setStatus('stopping')
-      this.process.kill('SIGTERM')
+      proc.kill('SIGTERM')
       // 5 秒后强杀
       const forceKillTimer = setTimeout(() => {
-        if (this.process) {
-          this.opts.onLog('[sidecar] Force killing process')
-          this.process.kill('SIGKILL')
-        }
+        try { proc.kill('SIGKILL') } catch { /* already dead */ }
       }, 5000)
-      this.process.on('exit', () => clearTimeout(forceKillTimer), { once: true } as any)
+      proc.on('exit', () => clearTimeout(forceKillTimer), { once: true } as any)
     } else {
       this.setStatus('stopped')
     }
@@ -112,17 +110,16 @@ export class SidecarManager {
   /** 重启：停止后启动 */
   async restart(): Promise<void> {
     this.intentionalStop = true
+    const proc = this.process
     this.cleanup()
-    if (this.process) {
+    if (proc) {
       this.setStatus('stopping')
-      this.process.kill('SIGTERM')
+      proc.kill('SIGTERM')
       await new Promise<void>((resolve) => {
-        if (!this.process) { resolve(); return }
-        this.process.on('exit', () => resolve(), { once: true } as any)
+        proc.on('exit', () => resolve(), { once: true } as any)
         setTimeout(resolve, 5000)
       })
     }
-    this.process = null
     this.start()
   }
 
