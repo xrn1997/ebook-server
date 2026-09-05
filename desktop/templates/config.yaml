@@ -1,0 +1,32 @@
+server:
+  port: 9090
+  mode: release
+
+database:
+  path: ebook.db
+
+api_docs:
+  enabled: false
+
+jwt:
+  secret: ""
+  expire_min: 120
+
+admin:
+  username: admin
+  password: ""
+  jwt_secret: ""
+  expire_min: 60
+  listen_addr: 127.0.0.1
+  listen_port: 9091
+
+smtp:
+  host: ""
+  port: 465
+  username: ""
+  password: ""
+  from: ""
+  insecure: false
+
+upload:
+  dir: uploads
