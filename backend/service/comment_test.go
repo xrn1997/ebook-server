@@ -61,8 +61,8 @@ func TestCommentService_Create_WithChapter(t *testing.T) {
 	}
 }
 
-// TestCommentService_GetByChapter 按章节聚合键查询（ADR-0011）。
-func TestCommentService_GetByChapter(t *testing.T) {
+// TestCommentService_GetByChapterURLs_SingleKey 单键查询即精确匹配（ADR-0011）。
+func TestCommentService_GetByChapterURLs_SingleKey(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
@@ -79,7 +79,7 @@ func TestCommentService_GetByChapter(t *testing.T) {
 	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "B", ChapterURL: urlB, BookName: "书B"})
 	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "通用"})
 
-	result, err := commentService.GetByChapter(urlA, "", 1, 10)
+	result, err := commentService.GetByChapterURLs([]string{urlA}, "", 1, 10)
 	if err != nil {
 		t.Fatalf("Failed to get chapter comments: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestCommentService_GetByChapter(t *testing.T) {
 	}
 
 	// book_name 二次过滤：传错书名应过滤干净
-	result, err = commentService.GetByChapter(urlA, "书B", 1, 10)
+	result, err = commentService.GetByChapterURLs([]string{urlA}, "书B", 1, 10)
 	if err != nil {
 		t.Fatalf("Failed to get filtered comments: %v", err)
 	}
@@ -331,5 +331,122 @@ func TestCommentService_GetAll_PaginationBoundaries(t *testing.T) {
 	}
 	if result.PageSize != 10 {
 		t.Errorf("Expected PageSize 10 for pageSize=101, got %d", result.PageSize)
+	}
+}
+
+func TestCommentService_GetByChapterURLs_Union(t *testing.T) {
+	setupTestDB(t)
+	defer cleanupTestDB(t)
+
+	authService := testAuth
+	user := serviceRegister(t, authService, "multi_url@example.com", "password123")
+	commentService := testComments
+
+	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "A1", ChapterURL: "key-a", BookName: "书A"})
+	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "A2", ChapterURL: "key-a", BookName: "书A"})
+	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "B1", ChapterURL: "key-b", BookName: "书A"})
+	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "C1", ChapterURL: "key-c", BookName: "书B"})
+
+	result, err := commentService.GetByChapterURLs([]string{"key-a", "key-b"}, "", 1, 10)
+	if err != nil {
+		t.Fatalf("GetByChapterURLs failed: %v", err)
+	}
+	if result.Total != 3 {
+		t.Errorf("Expected total 3, got %d", result.Total)
+	}
+}
+
+func TestCommentService_MigrateKey_Success(t *testing.T) {
+	setupTestDB(t)
+	defer cleanupTestDB(t)
+
+	authService := testAuth
+	user := serviceRegister(t, authService, "migrate@example.com", "password123")
+	commentService := testComments
+
+	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "c1", ChapterURL: "old-key"})
+	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "c2", ChapterURL: "old-key"})
+
+	count, err := commentService.MigrateKey(user.UID, "old-key", "new-key")
+	if err != nil {
+		t.Fatalf("MigrateKey failed: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("Expected 2 migrated, got %d", count)
+	}
+
+	// 新键下应有 2 条
+	result, _ := commentService.GetByChapterURLs([]string{"new-key"}, "", 1, 10)
+	if result.Total != 2 {
+		t.Errorf("Expected 2 under new-key, got %d", result.Total)
+	}
+}
+
+func TestCommentService_MigrateKey_SameKey(t *testing.T) {
+	setupTestDB(t)
+	defer cleanupTestDB(t)
+
+	commentService := testComments
+	_, err := commentService.MigrateKey(1, "same-key", "same-key")
+	if err != model.ErrCommentKeySame {
+		t.Errorf("Expected ErrCommentKeySame, got %v", err)
+	}
+	// 两键同时为空也是「相同」：空串是书籍级评论这个合法键（ADR-0011）
+	if _, err := commentService.MigrateKey(1, "", ""); err != model.ErrCommentKeySame {
+		t.Errorf("Expected empty-empty to be ErrCommentKeySame, got %v", err)
+	}
+}
+
+// TestCommentService_MigrateKey_BookLevelToChapter 旧键为空 = 把书籍级评论归到章节。
+func TestCommentService_MigrateKey_BookLevelToChapter(t *testing.T) {
+	setupTestDB(t)
+	defer cleanupTestDB(t)
+
+	user := serviceRegister(t, testAuth, "mig_book@example.com", "password123")
+	commentService := testComments
+
+	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "b1"})
+	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "b2", ChapterURL: ""})
+	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "c1", ChapterURL: "key-a"})
+
+	count, err := commentService.MigrateKey(user.UID, "", "ch-1")
+	if err != nil {
+		t.Fatalf("MigrateKey with empty old key failed: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("Expected 2 book-level comments migrated, got %d", count)
+	}
+
+	result, _ := commentService.GetByChapterURLs([]string{"ch-1"}, "", 1, 10)
+	if result.Total != 2 {
+		t.Errorf("Expected 2 under ch-1, got %d", result.Total)
+	}
+}
+
+func TestCommentService_MigrateKey_UserIsolation(t *testing.T) {
+	setupTestDB(t)
+	defer cleanupTestDB(t)
+
+	authService := testAuth
+	user1 := serviceRegister(t, authService, "mig_u1@example.com", "password123")
+	user2 := serviceRegister(t, authService, "mig_u2@example.com", "password123")
+	commentService := testComments
+
+	commentService.Create(user1.UID, &model.CreateCommentRequest{Content: "u1c1", ChapterURL: "shared-key"})
+	commentService.Create(user2.UID, &model.CreateCommentRequest{Content: "u2c1", ChapterURL: "shared-key"})
+
+	// user1 迁移：只影响自己的 1 条
+	count, err := commentService.MigrateKey(user1.UID, "shared-key", "new-key")
+	if err != nil {
+		t.Fatalf("MigrateKey user1 failed: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("Expected 1 migrated for user1, got %d", count)
+	}
+
+	// user2 的评论仍在旧键下
+	result, _ := commentService.GetByChapterURLs([]string{"shared-key"}, "", 1, 10)
+	if result.Total != 1 {
+		t.Errorf("Expected 1 under shared-key for user2, got %d", result.Total)
 	}
 }

@@ -8,6 +8,256 @@
     },
     "basePath": "/",
     "paths": {
+        "/admin/api/comments": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "管理后台"
+                ],
+                "summary": "后台评论列表",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "内容关键字（模糊匹配）",
+                        "name": "keyword",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "书名过滤",
+                        "name": "book_name",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "页码",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 20,
+                        "description": "每页数量",
+                        "name": "page_size",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/model.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/api/comments/{id}": {
+            "delete": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "管理后台"
+                ],
+                "summary": "后台删除评论（治理）",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "评论 ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/model.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/api/login": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "管理后台"
+                ],
+                "summary": "后台登录",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/model.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/api/logs": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "管理后台"
+                ],
+                "summary": "后台操作日志列表",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "HTTP 方法（如 GET/POST）",
+                        "name": "method",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "路径片段（模糊匹配）",
+                        "name": "path",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "按用户 UID 过滤",
+                        "name": "user_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "业务码（如 A0303）",
+                        "name": "error_code",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "只看失败请求：1 或 true",
+                        "name": "failed",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "页码",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 20,
+                        "description": "每页数量",
+                        "name": "page_size",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/model.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/api/stats": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "管理后台"
+                ],
+                "summary": "后台统计概览",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/model.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/api/users": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "管理后台"
+                ],
+                "summary": "后台用户列表",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "关键字（模糊匹配邮箱/用户名/昵称，纯数字兼命中 UID）",
+                        "name": "keyword",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "页码",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 20,
+                        "description": "每页数量",
+                        "name": "page_size",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/model.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/api/users/{uid}": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "管理后台"
+                ],
+                "summary": "后台用户详情",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "用户 UID",
+                        "name": "uid",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/model.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/auth/forgot-password/reset": {
             "post": {
                 "description": "使用邮箱验证码重置密码",
@@ -236,7 +486,7 @@
         },
         "/api/comments": {
             "get": {
-                "description": "获取评论列表，可按章节过滤（chapter_url/book_name）",
+                "description": "获取评论列表，可按章节过滤（chapter_url 支持多个，返回并集；book_name 可单独或配合过滤）",
                 "produces": [
                     "application/json"
                 ],
@@ -246,14 +496,18 @@
                 "summary": "获取评论列表",
                 "parameters": [
                     {
-                        "type": "string",
-                        "description": "书源章节 URL（提供则返回该章节评论）",
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "collectionFormat": "multi",
+                        "description": "书源章节聚合键（可传多个，返回并集；最多 50 个，单键最长 2048）",
                         "name": "chapter_url",
                         "in": "query"
                     },
                     {
                         "type": "string",
-                        "description": "书名（与 chapter_url 配合二次过滤）",
+                        "description": "书名（配合 chapter_url 二次过滤，或单独过滤全书）",
                         "name": "book_name",
                         "in": "query"
                     },
@@ -306,6 +560,45 @@
                         "required": true,
                         "schema": {
                             "$ref": "#/definitions/model.CreateCommentRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/model.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/comments/migrate-key": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "将当前用户在旧聚合键下的评论批量迁移到新聚合键（合并书籍场景）\n两键均可为空串，空 = 书籍级评论（因此「书籍级↔章节」两个方向都支持）；单键最长 2048。\n只影响本人评论；新旧相同返回 A0305；无匹配评论返回 0（幂等，可重复调用）。",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "评论"
+                ],
+                "summary": "迁移评论聚合键",
+                "parameters": [
+                    {
+                        "description": "迁移请求",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/model.MigrateCommentKeyRequest"
                         }
                     }
                 ],
@@ -753,6 +1046,19 @@
                 },
                 "password": {
                     "type": "string"
+                }
+            }
+        },
+        "model.MigrateCommentKeyRequest": {
+            "type": "object",
+            "properties": {
+                "new_key": {
+                    "type": "string",
+                    "maxLength": 2048
+                },
+                "old_key": {
+                    "type": "string",
+                    "maxLength": 2048
                 }
             }
         },

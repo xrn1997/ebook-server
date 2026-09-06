@@ -3,6 +3,7 @@ package repository
 import (
 	"testing"
 
+	"ebook-server/model"
 	"ebook-server/pkg/testdb"
 
 	"gorm.io/gorm"
@@ -24,4 +25,14 @@ func setupTestDB(t *testing.T) {
 func cleanupTestDB(t *testing.T) {
 	t.Helper()
 	testDB = nil
+}
+
+// seedUser 造一个账号，返回其 UID。
+func seedUser(t *testing.T, email, username, nickname string) uint {
+	t.Helper()
+	user := &model.User{Email: email, Password: "hp", Username: username, Nickname: nickname}
+	if err := NewUserRepository(testDB).Create(user); err != nil {
+		t.Fatalf("seed user failed: %v", err)
+	}
+	return user.UID
 }

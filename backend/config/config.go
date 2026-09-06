@@ -108,6 +108,12 @@ func LoadConfig(path string) error {
 	viper.SetDefault("admin.listen_addr", "127.0.0.1")
 	viper.SetDefault("admin.listen_port", 9091)
 
+	// SMTP 密码：桌面应用把它从 config.yaml 拆到 .env（键 SMTP_PASSWORD），
+	// 因此配置文件里通常没有这个键。viper 的 Unmarshal 只遍历它「已知」的键
+	// （默认值 / 配置文件 / BindEnv），未注册的键即使开了 AutomaticEnv 也不会去查
+	// 环境变量——注册默认值就是为了让 smtp.password 进入已知键集合，否则邮件永远无密码。
+	viper.SetDefault("smtp.password", "")
+
 	// 文件上传（ADR-0011）：默认存仓库根下 uploads/ 目录
 	viper.SetDefault("upload.dir", "uploads")
 

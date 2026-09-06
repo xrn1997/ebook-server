@@ -46,3 +46,18 @@ func Init() error {
 func GetDB() *gorm.DB {
 	return DB
 }
+
+// Close 关闭底层连接池，释放 SQLite 文件句柄。
+//
+// 供优雅退出调用：连接池里的空闲连接不会自己断开，句柄不释放时 Windows 上数据库
+// 文件持续被占用，紧接着的备份或替换会失败。
+func Close() error {
+	if DB == nil {
+		return nil
+	}
+	sqlDB, err := DB.DB()
+	if err != nil {
+		return fmt.Errorf("failed to get database instance: %w", err)
+	}
+	return sqlDB.Close()
+}

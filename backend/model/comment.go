@@ -41,6 +41,33 @@ type CreateCommentRequest struct {
 	BookName    string `json:"book_name" binding:"omitempty,max=200"`
 }
 
+// MigrateCommentKeyRequest 迁移评论聚合键请求（合并书籍修键场景）。
+//
+// old_key/new_key 对应 comment 的 chapter_url 字段；只迁移当前用户名下的评论。
+// 长度上限必须与 CreateCommentRequest.ChapterURL 一致（同一列同一约束）：否则可以把
+// 评论迁到一个自己再也提交不出、也就永远读不回来的键上。
+// 两键都用 omitempty 而非 required：chapter_url 的空串是有含义的合法值（书籍级评论，
+// 见 CONTEXT.md），required 会把「书籍级→章节」和「章节→书籍级」两个方向都堵死。
+// 两键同时为空即「新旧相同」，由 service 判 A0305。
+type MigrateCommentKeyRequest struct {
+	OldKey string `json:"old_key" binding:"omitempty,max=2048"`
+	NewKey string `json:"new_key" binding:"omitempty,max=2048"`
+}
+
+// MigrateCommentKeyResponse 迁移评论聚合键响应。
+type MigrateCommentKeyResponse struct {
+	MigratedCount int64 `json:"migrated_count"`
+}
+
+// CommentQuery 后台评论列表的筛选条件。
+//
+// 零值字段一律不参与过滤，因此空调 = 全量列表（后台「评论搜索」用关键字，
+// 按书名收窄是同一件事的另一个维度，不必再开一个方法）。
+type CommentQuery struct {
+	Keyword  string // 评论内容模糊匹配
+	BookName string // 书名精确匹配
+}
+
 // CommentUserView 评论内嵌的用户视图（ADR-0011 契约：仅 uid/username/nickname/avatar）。
 //
 // 与 User 实体分离：不序列化 email 等账号字段，避免评论列表泄露用户隐私。

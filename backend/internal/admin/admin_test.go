@@ -60,6 +60,9 @@ func setup(t *testing.T) (*gin.Engine, *gorm.DB) {
 		{
 			api.GET("/stats", h.Stats)
 			api.GET("/users", h.ListUsers)
+			api.GET("/users/:uid", h.GetUser)
+			api.GET("/comments", h.ListComments)
+			api.DELETE("/comments/:id", h.DeleteComment)
 			api.GET("/logs", h.ListLogs)
 		}
 	}

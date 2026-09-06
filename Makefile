@@ -17,7 +17,8 @@ LDFLAGS := -X ebook-server/pkg/version.Version=$(VERSION) \
 
 .PHONY: build run clean test frontend-build frontend-dev all fmt deps docs linux windows \
 	test-coverage test-verbose test-model test-pkg test-service test-handler \
-	test-auth test-user test-comment db-init docker docker-run
+	test-auth test-user test-comment db-init docker docker-run \
+	desktop-build-backend desktop-build-frontend desktop-package desktop-dev desktop-test desktop-e2e
 
 # 构建单 exe：把前端产物（若存在）镜象进 embed 目录，再 go build 到 build/。
 # 未执行 frontend-build 时 web/ 仅含 .gitkeep，产物会是「前端资源缺失」提示页，
@@ -118,3 +119,33 @@ linux:
 # 交叉编译 Windows
 windows:
 	cd $(BACKEND) && GOOS=windows GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o ebook-server.exe .
+
+# ── Desktop App ──────────────────────────────────────────
+
+# 编译 Go 后端到 desktop/resources/backend/（桌面应用 sidecar）
+desktop-build-backend:
+	mkdir -p desktop/resources/backend
+	cd $(BACKEND) && go build -ldflags "$(LDFLAGS)" -o ../desktop/resources/backend/ebook-server$(if $(filter windows,$(GOOS)),.exe,) .
+
+# 构建桌面应用前端
+desktop-build-frontend:
+	cd desktop && npm install && npm run build:renderer
+
+# 打包桌面应用安装包
+desktop-package: desktop-build-backend desktop-build-frontend
+	cd desktop && npm run package
+
+# 桌面应用测试门禁（typecheck + vitest）。先编译 sidecar：backend-integration.test.ts
+# 在二进制缺失时整段 describe.skip，直接跑 npm test 会得到「绿但没测到真后端」的假阴性，
+# 所以门禁必须先保证二进制存在。
+desktop-test: desktop-build-backend
+	cd desktop && npm run typecheck && npx vitest run
+
+# 桌面 E2E 冒烟测试（Playwright _electron）。需要 sidecar 二进制与 renderer 产物齐备；
+# 产物缺失时测试整段 skip，不因 skip 导致 make 失败。
+desktop-e2e: desktop-build-backend desktop-build-frontend
+	cd desktop && npm run build:main && npm run test:preload && npx playwright test
+
+# 开发模式运行桌面应用（需先 desktop-build-backend）
+desktop-dev: desktop-build-backend
+	cd desktop && npm run dev

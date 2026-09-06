@@ -40,12 +40,15 @@ type CommentStore interface {
 	Create(comment *model.Comment) error
 	FindByID(id uint) (*model.Comment, error)
 	FindAll(page, pageSize int) ([]model.Comment, int64, error)
-	// FindByChapter 按章节聚合键查评论（chapterURL 精确匹配，bookName 可选二次过滤）。
-	FindByChapter(chapterURL, bookName string, page, pageSize int) ([]model.Comment, int64, error)
 	// FindByBook 按书名查评论（聚合某书全部章节评论，供 book_name 单独过滤）。
 	FindByBook(bookName string, page, pageSize int) ([]model.Comment, int64, error)
 	FindByUserID(userID uint, page, pageSize int) ([]model.Comment, int64, error)
 	FindAllByUserID(userID uint) ([]model.Comment, error)
+	// FindByChapterURLs 按章节聚合键查评论（bookName 可选二次过滤）：
+	// 传单个键即精确匹配该键，传多个键返回并集（合并书籍场景，M2）。
+	FindByChapterURLs(chapterURLs []string, bookName string, page, pageSize int) ([]model.Comment, int64, error)
+	// MigrateKey 批量迁移某用户在旧聚合键下的评论到新聚合键，返回受影响行数。
+	MigrateKey(userID uint, oldKey, newKey string) (int64, error)
 	Delete(id uint) error
 	CanDelete(commentID, userID uint) (bool, error)
 }

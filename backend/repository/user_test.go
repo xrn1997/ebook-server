@@ -1,9 +1,11 @@
 package repository
 
 import (
-	"ebook-server/model"
+	"strconv"
 	"testing"
 	"time"
+
+	"ebook-server/model"
 )
 
 func TestUserRepository_Create(t *testing.T) {
@@ -182,5 +184,40 @@ func TestUserRepository_LoginAttemptsFields(t *testing.T) {
 	}
 	if found.LockedUntil == nil {
 		t.Error("Expected LockedUntil to be set")
+	}
+}
+
+// TestUserRepository_Search 关键字命中邮箱/用户名/昵称，纯数字时兼命中 UID。
+func TestUserRepository_Search(t *testing.T) {
+	setupTestDB(t)
+	defer cleanupTestDB(t)
+
+	repo := NewUserRepository(testDB)
+	uid := seedUser(t, "alice@example.com", "alice", "小艾")
+	seedUser(t, "bob@example.com", "bob", "阿鲍")
+
+	cases := []struct {
+		name    string
+		keyword string
+		want    int64
+	}{
+		{"按邮箱", "alice@example", 1},
+		{"按昵称", "小艾", 1},
+		{"按 UID 数字", strconv.FormatUint(uint64(uid), 10), 1},
+		{"空关键字即全量", "", 2},
+		{"通配符不被当模式", "%", 0},
+		{"无匹配", "zzz", 0},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, total, err := repo.Search(c.keyword, 1, 10)
+			if err != nil {
+				t.Fatalf("Search failed: %v", err)
+			}
+			if total != c.want {
+				t.Errorf("Search(%q) total = %d, want %d", c.keyword, total, c.want)
+			}
+		})
 	}
 }

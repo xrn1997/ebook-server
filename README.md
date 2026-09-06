@@ -40,6 +40,7 @@ ebook-server/
 │   │   └── upload/        # 头像文件存储与公开访问（ADR-0011）
 │   └── docs/              # swag 生成的 Swagger 文档（make docs 更新）
 ├── frontend/              # 后台管理前端（Vue 3 + Vite，构建后灌入 backend/internal/admin/web）
+├── desktop/               # 桌面管理应用（Electron + Vue 3，以 sidecar 复用 Go 后端，ADR-0012）
 ├── docs/                  # ADR 设计决策记录
 ├── sql/                   # 数据库脚本（MySQL 参考，实际用 SQLite）
 ├── config.yaml            # 运行配置
@@ -123,9 +124,10 @@ make docker   # Docker 构建
 
 | 方法 | 路径 | 说明 | 认证 |
 |------|------|------|------|
-| GET | /api/comments | 评论列表，支持 `chapter_url`/`book_name` 章节过滤 | 否 |
+| GET | /api/comments | 评论列表，支持 `chapter_url`/`book_name` 章节过滤；`chapter_url` 可传多个，返回并集 | 否 |
 | POST | /api/comments | 创建评论，支持章节归属（`chapter_url`/`chapter_name`/`book_name`，可选） | 是 |
 | GET | /api/comments/my | 获取我的评论 | 是 |
+| POST | /api/comments/migrate-key | 迁移自己评论的聚合键（旧键→新键，仅本人；同键返回 `A0305`） | 是 |
 | DELETE | /api/comments/:id | 删除评论（仅本人，非本人返回 `A0303`） | 是 |
 
 > **评论章节归属**（[ADR-0011](docs/adr/0011-comment-chapter-and-avatar-upload.md)）：
@@ -133,7 +135,7 @@ make docker   # Docker 构建
 > 后端原样存储、不校验格式）。不传章节字段 = 书籍级评论，兼容既有数据。
 > 评论响应用独立视图：`user` 只含 `uid/username/nickname/avatar`（不含 email），
 > `add_time` 固定上海时区 `yyyy-MM-dd HH:mm:ss` 格式。
-> 评论域错误码：`A0303` 无权删除、`A0304` 评论不存在（`A0301`/`A0302` 预留）。
+> 评论域错误码：`A0303` 无权删除、`A0304` 评论不存在、`A0305` 聚合键与旧键相同（`A0301`/`A0302` 预留）。
 
 ### 头像上传
 
@@ -163,6 +165,33 @@ make docker   # Docker 构建
 - **登录限流**：后台登录 5 次/分钟/来源 IP，超限返回 `A0241`
 - 本机访问：`http://127.0.0.1:9091/admin`（账号密码见 `config.yaml` 的 `admin` 段，生产必须修改）
 - 后台引擎自带 Swagger 文档（`http://127.0.0.1:9091/api-docs/`），供本机查阅
+
+### 后台管理 API
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | /admin/api/stats | 用户数 + 评论数 |
+| GET | /admin/api/users | 用户列表（分页；`keyword` 模糊匹配邮箱/用户名/昵称，纯数字兼命中 UID） |
+| GET | /admin/api/users/:uid | 用户详情（资料 + 该用户评论数） |
+| GET | /admin/api/comments | 评论列表（分页；`keyword` 内容模糊、`book_name` 精确过滤） |
+| DELETE | /admin/api/comments/:id | 删除评论（后台治理，软删除，不做归属校验） |
+| GET | /admin/api/logs | 操作日志（分页；`method`/`path`/`user_id`/`error_code`/`failed` 筛选） |
+
+### 桌面管理应用
+
+`desktop/`（Electron + Vue 3）把上面这套后台能力装进一个桌面窗口（[ADR-0012](docs/adr/0012-desktop-admin-app-sidecar.md)）：
+
+- **同一后端**：Go 二进制作为 sidecar 子进程被带动，桌面端不含任何业务逻辑
+- **托管配置**：`config.yaml` 与 `.env` 存在用户数据目录（Windows `%APPDATA%/ebook-server/`，
+  开发与安装版同路径），GUI 改端口/SMTP/密钥后保存，重启服务即生效；密钥只写 `.env` 不写 `config.yaml`
+- **免登录**：用户/评论/日志视图所需的后台 JWT 由主进程用受管的 `admin` 凭据自动换取，
+  密码不进渲染进程
+- **完整管理能力**（[ADR-0013](docs/adr/0013-comment-key-migration-and-admin-api.md)）：
+  用户搜索与详情、评论搜索与删除（两步确认）、日志筛选、全部列表支持分页
+- **优雅停止**：停止先向 sidecar 的 stdin 写退出指令，Go 侧优雅关闭两个监听并落库，
+  5 秒宽限期只兜底
+- 开发/测试：`make desktop-test`（先编译 sidecar，再 typecheck + vitest——集成用例需要
+  sidecar 二进制，直接 `npm test` 会整段跳过）；运行：`make desktop-dev`；打包：`make desktop-package`
 
 ## 请求示例
 
@@ -281,6 +310,12 @@ curl "http://localhost:9090/api/comments?chapter_url=https%3A%2F%2Fsrc.example.c
 
 > 列表统一返回分页包裹结构 `{items, total, page, page_size}`，按 `add_time` 倒序。
 
+`chapter_url` 可重复传，返回这些章节评论的**并集**（合并书籍场景）：
+
+```bash
+curl "http://localhost:9090/api/comments?chapter_url=<key-a>&chapter_url=<key-b>"
+```
+
 ### 上传头像（两步提交）
 
 第一步上传拿 URL：
@@ -330,7 +365,7 @@ database:
   path: ebook.db      # SQLite 数据库文件路径
 
 api_docs:
-  enabled: false      # 公开 API 端口是否提供 Swagger 文档（默认关，防接口清单泄露；联调时改 true）
+  enabled: false      # 公开端口是否提供 Swagger 文档（默认关，防接口清单泄露；开启后会连后台管理端点清单一并展示，仅限受控网络临时开启）
 
 jwt:
   secret: your-secret-key  # JWT 密钥（请修改）

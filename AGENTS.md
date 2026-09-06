@@ -47,6 +47,21 @@ make run         # 运行
 make clean       # 清理
 make docker      # Docker 构建
 make docs        # 重新生成 API 文档（swag init，产物入 backend/docs/）
+
+# 桌面管理应用（desktop/，独立 npm 工具链，见 ADR-0012）
+cd desktop
+npm install
+npm run dev            # 主进程 tsc watch + vite 开发服务器
+npm run typecheck      # 主进程与 renderer 各一套 tsconfig，都要过
+npm test               # vitest run
+npm run build          # tsc + vite build
+make desktop-build-backend   # 编译 sidecar 到 desktop/resources/backend/
+make desktop-dev             # 先构建 sidecar 再跑桌面应用
+make desktop-package         # electron-builder 打安装包
+make desktop-test            # 桌面测试门禁：先编译 sidecar，再 typecheck + vitest
+                             # （集成用例在二进制缺失时会整段跳过，别用裸 npm test 当门禁）
+make desktop-e2e             # 桌面 E2E 冒烟测试（Playwright _electron）
+                             # 需 sidecar 二进制与 renderer 产物齐备；缺失时整段 skip
 ```
 
 ## 项目架构
@@ -70,6 +85,17 @@ pkg/             → 公共组件
   ├── mail/      → SMTP 邮件发送
   └── ratelimit/ → 内存固定窗口限流器
 sql/             → 数据库初始化脚本（MySQL 参考，实际用 SQLite + GORM AutoMigrate）
+
+desktop/         → Electron 桌面管理应用（独立 npm 工具链，见 ADR-0012）
+  ├── src/main/      → 主进程：sidecar 子进程生命周期、配置读写、IPC、后台自动登录
+  │   ├── sidecar.ts   → spawn/kill/健康检查/崩溃重启
+  │   ├── config.ts    → config.yaml 与 .env 的拆分、结构收敛、端点派生
+  │   ├── admin-auth.ts→ 用受管凭据换取后台 JWT（凭据不出主进程）
+  │   ├── ipc.ts       → handler 注册（通道名见 src/shared/channels.ts）
+  │   └── paths.ts     → 用户数据目录与 sidecar 二进制路径
+  ├── src/preload/   → contextBridge 暴露固定 API（不把 ipcRenderer 交给页面）
+  ├── src/renderer/  → Vue 3 界面（概览/配置/服务/用户/评论/日志）
+  └── src/shared/    → 三方共用的契约：IPC 通道名、跨进程数据类型
 ```
 
 ### 核心架构模式
@@ -86,11 +112,13 @@ sql/             → 数据库初始化脚本（MySQL 参考，实际用 SQLite 
 
 * **数据库**：SQLite + GORM AutoMigrate，启动时自动建表/更新表结构
 
+* **桌面应用**：`desktop/` 以 sidecar 子进程复用同一个 Go 后端（零业务逻辑重写）；`config.yaml` + `.env` 存放在用户数据目录、只由主进程读写；端口/监听地址/数据库路径由主进程解析后下发给界面，renderer 不得自行猜端口。详见 [ADR-0012](docs/adr/0012-desktop-admin-app-sidecar.md)
+
 ### API 路由结构
 
 ```
 /health                    → 健康检查（无需认证）
-/api-docs                  → Swagger UI + OpenAPI spec（**公开端口默认关闭**，由 `api_docs.enabled` 控制；后台端口 9091 始终提供，供本机查阅）
+/api-docs                  → Swagger UI + OpenAPI spec（**公开端口默认关闭**，由 `api_docs.enabled` 控制；后台端口 9091 始终提供，供本机查阅；开启后会连后台端点清单一并展示）
 /api/auth/send-code        → 按邮箱发注册/验证码
 /api/auth/register         → 注册（邮箱+验证码+密码），激活建号，不发 token
 /api/auth/login            → 邮箱+密码登录，返回双 token
@@ -103,7 +131,8 @@ sql/             → 数据库初始化脚本（MySQL 参考，实际用 SQLite 
 /api/users/me/data         → 导出我的数据（用户资料+本人评论，需认证）
 /api/users/me/deletion/send-code → 发注销验证码到当前账号邮箱（需认证）
 /api/users/me/deletion     → 注销账号（验证码确认，匿名化并返回数据副本，需认证）
-/api/comments              → 评论列表（公开，支持 chapter_url/book_name 章节过滤）/ 创建评论（需认证，支持章节字段）
+/api/comments              → 评论列表（公开，chapter_url 支持多个返回并集；book_name 可单独或配合过滤）/ 创建评论（需认证，支持章节字段）
+/api/comments/migrate-key  → 迁移评论聚合键（需认证，旧键→新键，仅本人，同键 A0305）
 /api/comments/my           → 我的评论（需认证）
 /api/comments/:id          → 删除评论（需认证，仅本人，非本人 A0303）
 /api/uploads/avatar        → 头像上传（需认证，multipart，返回绝对 URL）
@@ -118,6 +147,10 @@ sql/             → 数据库初始化脚本（MySQL 参考，实际用 SQLite 
 > 后台使用独立 JWT 鉴权（`admin.jwt_secret`，与用户 token 互不可用），登录接口按
 > 来源 IP 限流 5 次/分钟（超限返回 `A0241`）。远程管理请走 SSH 隧道/VPN，
 > 不要直接开放后台端口。需局域网访问时改 `admin.listen_addr` 为内网 IP。
+> 后台管理 API：`GET /admin/api/{stats,users,comments,logs}`（users 支持 `keyword` 搜索、
+> comments 支持 `keyword`/`book_name`、logs 支持 `method`/`path`/`user_id`/`error_code`/`failed`
+> 筛选）、`GET /admin/api/users/:uid`（详情）、`DELETE /admin/api/comments/:id`（治理删除，
+> 不做归属校验）。见 [ADR-0013](docs/adr/0013-comment-key-migration-and-admin-api.md)。
 >
 > **评论与头像契约（ADR-0011）**：评论支持章节归属——`chapter_url`（书源章节 URL，
 > 聚合键）/`chapter_name`/`book_name` 为冗余快照，可选、不校验格式仅限长；
@@ -147,6 +180,8 @@ sql/             → 数据库初始化脚本（MySQL 参考，实际用 SQLite 
 * **配置**: Viper（支持 YAML）
 
 * **日志**: Zap（结构化日志）
+
+* **桌面应用**: Electron 33 + TypeScript + Vue 3 + Vite + Vitest，打包用 electron-builder（`desktop/`，见 ADR-0012）
 
 ## 构建约定
 
@@ -183,6 +218,11 @@ sql/             → 数据库初始化脚本（MySQL 参考，实际用 SQLite 
 * 覆盖率目标：model > 90%、pkg > 85%、service > 80%、handler > 75%
 
 * 详细测试文档见 [TESTING.md](TESTING.md)
+
+* **桌面应用（`desktop/`）**：独立 Vitest 工具链，与 Go 测试互不包含——改动涉及 `desktop/` 时
+  `npm run typecheck` 与 `npm test` 都要过。主进程逻辑跑 node 环境，需要渲染组件的视图测试
+  在文件首行标 `// @vitest-environment happy-dom`；能跑真东西就不打桩（真实 HTTP 假后台、
+  真实临时文件系统），详见 TESTING.md 的桌面应用测试一节
 
 ### 添加新接口的标准流程
 
@@ -279,6 +319,13 @@ go build -o ebook-server .
   即可恢复并重试注销，无锁死、无数据丢失；而真正危险的问题（access token 匿名化后仍有效）
   是无状态 JWT 的固有缺陷，事务治不了（见上条）。跨 repo 事务需引入 TxRunner seam，
   为一个可自愈的瞬态加这层间接不划算。审查者不要再标记此条——加事务前先推翻这里的推理
+
+* **~~桌面应用的停止不是真优雅退出~~**（已解决）：Go 侧 `main.go` 现有 `signal.Notify` +
+  `http.Server.Shutdown`（覆盖公开与后台两个监听、并关闭数据库），同时监听 stdin 的
+  `shutdown` 行——Windows 上无窗口控制台子进程收不到 SIGTERM（`taskkill` 不带 `/F` 无效），
+  父子双方都拿得到的通道只有 stdin。桌面端 `sidecar.stop()` 先写 `shutdown\n`、
+  5 秒宽限期后才强杀，集成测试断言停止耗时远小于 5 秒。`shutdown` 字面量在
+  `backend/main.go` 与 `desktop/src/main/sidecar.ts` 各有一份，改动任一侧必须同步另一侧
 
 * **`ErrMailSendFailed`** **无产生方**：`pkg/mail` 的发送错误原样向上返回，handler 中
   `err == model.ErrMailSendFailed` 的分支永远不会命中，SMTP 失败实际落 `C0500`。
@@ -426,6 +473,12 @@ BREAKING CHANGE: config.yaml 必须包含 jwt.expire_hour 字段
 ### 提交前验证
 
 * 运行 `go test ./...`，确保全量测试通过
+
+* 改动涉及 `desktop/` 时，运行 `make desktop-test`（先编译 sidecar 再 typecheck + vitest；
+  裸 `npm test` 会让真后端集成用例因二进制缺失整段跳过）；
+  涉及窗口/启动/退出流程的改动还需 `make desktop-e2e`（E2E 冒烟，产物缺失时 skip）
+
+* 改动接口注解（`@Router`/`@Param` 等）后运行 `make docs`，提交重新生成的 `backend/docs/`
 
 * 运行 `go mod tidy`，确保依赖干净
 

@@ -34,3 +34,15 @@ type LogListResponse struct {
 	Page     int            `json:"page"`
 	PageSize int            `json:"page_size"`
 }
+
+// LogFilter 操作日志筛选条件（后台「日志筛选」）。
+//
+// 零值字段一律不参与过滤，因此空调 = 全量列表。用结构而非四个平铺参数：这些条件
+// 总是一起动，以后加维度（时间段、状态码区间）不该改一遍所有调用方的签名。
+type LogFilter struct {
+	Method     string // HTTP 方法精确匹配，如 GET / POST
+	Path       string // 路径片段模糊匹配
+	UserID     uint   // 按账号过滤，0 = 不限
+	ErrorCode  string // 信封业务码精确匹配，如 A0303
+	OnlyFailed bool   // 只看业务失败的请求
+}

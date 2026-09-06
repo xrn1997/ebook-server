@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bufio"
+	"context"
 	"ebook-server/config"
 	"ebook-server/handler"
 	"ebook-server/internal/admin"
@@ -19,6 +21,10 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
 
 	// 引入 swag 生成的文档（swag init 产物），供 gin-swagger 提供 OpenAPI 3.0 spec。
 	_ "ebook-server/docs"
@@ -26,6 +32,7 @@ import (
 	ginSwagger "github.com/swaggo/gin-swagger"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 )
 
 // 以下为 swag 通用的 API 文档元信息（与各 handler 上的 Swagger 注释搭配，
@@ -154,10 +161,11 @@ func main() {
 		comments := api.Group("/comments")
 		{
 			commentHandler := handler.NewCommentHandler(commentService)
-			comments.GET("", commentHandler.GetList)                                // 公开
-			comments.POST("", middleware.JWTAuth(), commentHandler.Create)          // 需要登录
-			comments.GET("/my", middleware.JWTAuth(), commentHandler.GetMyComments) // 需要登录
-			comments.DELETE("/:id", middleware.JWTAuth(), commentHandler.Delete)    // 需要登录
+			comments.GET("", commentHandler.GetList)                                       // 公开
+			comments.POST("", middleware.JWTAuth(), commentHandler.Create)                 // 需要登录
+			comments.POST("/migrate-key", middleware.JWTAuth(), commentHandler.MigrateKey) // 需要登录
+			comments.GET("/my", middleware.JWTAuth(), commentHandler.GetMyComments)        // 需要登录
+			comments.DELETE("/:id", middleware.JWTAuth(), commentHandler.Delete)           // 需要登录
 		}
 
 		// 日志相关（需要登录）
@@ -192,7 +200,9 @@ func main() {
 		{
 			api.GET("/stats", adminHandler.Stats)
 			api.GET("/users", adminHandler.ListUsers)
+			api.GET("/users/:uid", adminHandler.GetUser)
 			api.GET("/comments", adminHandler.ListComments)
+			api.DELETE("/comments/:id", adminHandler.DeleteComment)
 			api.GET("/logs", adminHandler.ListLogs)
 		}
 
@@ -210,18 +220,79 @@ func main() {
 	// 启动后台服务器（独立监听地址；goroutine 内运行，主协程继续启动公开 API）
 	adminAddr := fmt.Sprintf("%s:%d", config.AppConfig.Admin.ListenAddr, config.AppConfig.Admin.ListenPort)
 	adminSrv := &http.Server{Addr: adminAddr, Handler: admEngine}
+	go serve(adminSrv, "Admin server")
+
+	// 启动公开 API 服务器。刻意不用 r.Run()：它内部自建 http.Server 且不暴露出去，
+	// 于是收不到停止信号时只能被直接终止——在途请求丢失、SQLite 只能靠自身日志文件
+	// 兜底恢复。要与后台一样能被 Shutdown，就必须自己持有 Server。
+	publicSrv := &http.Server{Addr: fmt.Sprintf(":%d", config.AppConfig.Server.Port), Handler: r}
+	go serve(publicSrv, "Server")
+
+	waitForShutdown()
+	shutdown(publicSrv, adminSrv)
+}
+
+// shutdownGracePeriod 停止接受新连接后留给在途请求完成的时间。
+const shutdownGracePeriod = 10 * time.Second
+
+// shutdownCommand 标准输入里的退出指令，由托管本进程的父进程（桌面应用）写入。
+const shutdownCommand = "shutdown"
+
+// serve 启动一个 HTTP 监听；正常退出（Shutdown）不算错误。
+func serve(srv *http.Server, label string) {
+	fmt.Printf("%s starting on %s...\n", label, srv.Addr)
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatalf("Failed to start %s: %v", label, err)
+	}
+}
+
+// waitForShutdown 阻塞直到收到退出指令，两条通道任一命中即返回：
+//
+//   - SIGINT / SIGTERM：终端 Ctrl-C 与 POSIX 侧 kill 的常规通道；
+//   - 标准输入收到一行 "shutdown"：被父进程托管时的通道。Windows 上无窗口的控制台
+//     子进程收不到 SIGTERM（taskkill 不带 /F 对这类进程直接无效），父子双方都拿得到
+//     的只有 stdin。
+//
+// stdin 的 EOF 刻意**不**算退出指令：nohup、systemd 与 `... < /dev/null` 都会立刻
+// 给一个 EOF，那样会把正常启动的服务当场带走。
+func waitForShutdown() {
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+
+	shutdownLine := make(chan struct{})
 	go func() {
-		fmt.Printf("Admin server starting on %s...\n", adminAddr)
-		if err := adminSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Failed to start admin server: %v", err)
+		defer close(shutdownLine)
+		scanner := bufio.NewScanner(os.Stdin)
+		for scanner.Scan() {
+			if strings.TrimSpace(scanner.Text()) == shutdownCommand {
+				return
+			}
 		}
 	}()
 
-	// 启动公开 API 服务器
-	port := config.AppConfig.Server.Port
-	fmt.Printf("Server starting on port %d...\n", port)
-	if err := r.Run(fmt.Sprintf(":%d", port)); err != nil {
-		log.Fatalf("Failed to start server: %v", err)
+	select {
+	case sig := <-stop:
+		logger.Info("收到退出信号，开始优雅关闭", zap.String("signal", sig.String()))
+	case <-shutdownLine:
+		logger.Info("收到 stdin 退出指令，开始优雅关闭")
+	}
+}
+
+// shutdown 优雅停掉每个监听（停止接受新连接 + 等在途请求跑完），再关数据库。
+//
+// 超过 shutdownGracePeriod 就放弃等待：继续挂着只会让父进程把整个进程强杀，
+// 那时连这条日志都来不及落盘。
+func shutdown(servers ...*http.Server) {
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownGracePeriod)
+	defer cancel()
+
+	for _, srv := range servers {
+		if err := srv.Shutdown(ctx); err != nil {
+			logger.Error("优雅关闭监听失败，可能有请求未跑完", zap.String("addr", srv.Addr), zap.Error(err))
+		}
+	}
+	if err := database.Close(); err != nil {
+		logger.Error("关闭数据库连接失败", zap.Error(err))
 	}
 }
 

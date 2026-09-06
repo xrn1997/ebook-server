@@ -87,6 +87,9 @@ URL 或删除失败均只告警不阻断（不引入事务复杂度，孤儿文�
   `chapter_url` 是聚合键，加索引（`gorm:"type:text;index"`）防全表扫描；
 * `CommentStore` 接口新增 `FindByChapter`（chapter_url 精确 + book_name 可选二次过滤）
   与 `FindByBook`（book_name 单独过滤全书）；
+  （后续变更：`FindByChapter` 已并入 `FindByChapterURLs`——单元素 `IN` 与等值匹配等价，
+  两份方法的查询体只差一个 WHERE 形式；并新增聚合键迁移端点与 `A0305`。
+  见 [ADR-0013](0013-comment-key-migration-and-admin-api.md)）
 * `service.CommentService` 的 Create/列表方法改返回 `CommentResponse` 视图；
   `GetList` 按 `chapter_url` → `book_name` → 全局 三级降级过滤；
 * `pkg/errcode` 新增 `A0301`–`A0304`；`ErrCommentNotFound → A0304`、

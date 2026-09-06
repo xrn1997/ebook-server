@@ -134,3 +134,43 @@ func TestLogRepository_FindAll_Empty(t *testing.T) {
 		t.Errorf("Expected 0 logs, got %d", len(logs))
 	}
 }
+
+// TestLogRepository_FindBy 后台日志筛选：方法/路径/账号/业务码/只看失败。
+func TestLogRepository_FindBy(t *testing.T) {
+	setupTestDB(t)
+	defer cleanupTestDB(t)
+
+	uid := seedUser(t, "log@example.com", "log", "log")
+	repo := NewLogRepository(testDB)
+	repo.Create(&model.OperationLog{UserID: uid, Method: "GET", Path: "/api/comments", ErrorCode: "00000"})
+	repo.Create(&model.OperationLog{UserID: uid, Method: "POST", Path: "/api/comments", ErrorCode: "A0303"})
+	repo.Create(&model.OperationLog{UserID: uid, Method: "GET", Path: "/api/users/me", ErrorCode: "00000"})
+	// 非信封流量（404 等）没有业务码，「只看失败」不该把它们捞出来
+	repo.Create(&model.OperationLog{Method: "GET", Path: "/missing", ResponseCode: 404})
+
+	cases := []struct {
+		name   string
+		filter model.LogFilter
+		want   int64
+	}{
+		{"空调=全量", model.LogFilter{}, 4},
+		{"按方法", model.LogFilter{Method: "POST"}, 1},
+		{"按路径片段", model.LogFilter{Path: "/api/comments"}, 2},
+		{"按账号", model.LogFilter{UserID: uid}, 3},
+		{"按业务码", model.LogFilter{ErrorCode: "A0303"}, 1},
+		{"只看失败", model.LogFilter{OnlyFailed: true}, 1},
+		{"组合条件", model.LogFilter{Method: "GET", Path: "/api"}, 2},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, total, err := repo.FindBy(c.filter, 1, 10)
+			if err != nil {
+				t.Fatalf("FindBy failed: %v", err)
+			}
+			if total != c.want {
+				t.Errorf("FindBy(%+v) total = %d, want %d", c.filter, total, c.want)
+			}
+		})
+	}
+}

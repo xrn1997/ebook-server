@@ -5,10 +5,25 @@ import (
 	"ebook-server/model"
 	"ebook-server/pkg/errcode"
 	"ebook-server/service"
+	"fmt"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
 )
+
+// maxChapterURLFilters 单次请求允许的 chapter_url 聚合键个数上限。
+//
+// 必须设上限：每个键都会被 GORM 展开成一个绑定变量，SQLite 单语句变量数默认上限 999，
+// 超出直接报错并落成 C0500；而这是无需登录的公开端点，不限长度即可被任意人打满。
+// 50 远大于「合并一本书涉及的章节数」这一真实场景。
+const maxChapterURLFilters = 50
+
+// maxChapterURLFilterLength 单个聚合键的字节上限，必须与写入该列时
+// model.CreateCommentRequest.ChapterURL 的 `max=2048` 一致。
+//
+// Gin 的 binding tag 只能写字面量、拼不了常量，所以这条一致性由
+// TestChapterURLLengthLimitMatchesModelBinding 在 CI 里锁住。
+const maxChapterURLFilterLength = 2048
 
 // CommentHandler 评论 HTTP 处理器。
 type CommentHandler struct {
@@ -56,11 +71,11 @@ func (h *CommentHandler) Create(c *gin.Context) {
 
 // GetList 获取评论列表
 // @Summary 获取评论列表
-// @Description 获取评论列表，可按章节过滤（chapter_url/book_name）
+// @Description 获取评论列表，可按章节过滤（chapter_url 支持多个，返回并集；book_name 可单独或配合过滤）
 // @Tags 评论
 // @Produce json
-// @Param chapter_url query string false "书源章节 URL（提供则返回该章节评论）"
-// @Param book_name query string false "书名（与 chapter_url 配合二次过滤）"
+// @Param chapter_url query []string false "书源章节聚合键（可传多个，返回并集；最多 50 个，单键最长 2048）" collectionFormat(multi)
+// @Param book_name query string false "书名（配合 chapter_url 二次过滤，或单独过滤全书）"
 // @Param page query int false "页码" default(1)
 // @Param page_size query int false "每页数量" default(10)
 // @Success 200 {object} model.Response
@@ -69,14 +84,22 @@ func (h *CommentHandler) GetList(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
 
-	// 章节/书名过滤（ADR-0011）：chapter_url 精确匹配章节，book_name 可单独过滤全书
+	chapterURLs, filterErr := parseChapterURLFilters(c)
+	if filterErr != "" {
+		errcode.Error(c, errcode.BadRequest, filterErr)
+		return
+	}
+
+	bookName := c.Query("book_name")
+
 	var result *model.CommentListResponse
 	var err error
 	switch {
-	case c.Query("chapter_url") != "":
-		result, err = h.commentService.GetByChapter(c.Query("chapter_url"), c.Query("book_name"), page, pageSize)
-	case c.Query("book_name") != "":
-		result, err = h.commentService.GetByBook(c.Query("book_name"), page, pageSize)
+	// 单键与多键走同一条路径：一个元素的 IN 与等值匹配等价
+	case len(chapterURLs) > 0:
+		result, err = h.commentService.GetByChapterURLs(chapterURLs, bookName, page, pageSize)
+	case bookName != "":
+		result, err = h.commentService.GetByBook(bookName, page, pageSize)
 	default:
 		result, err = h.commentService.GetAll(page, pageSize)
 	}
@@ -86,6 +109,30 @@ func (h *CommentHandler) GetList(c *gin.Context) {
 	}
 
 	errcode.Success(c, result)
+}
+
+// parseChapterURLFilters 解析并校验公开的 chapter_url 多键过滤参数。
+//
+// 空串按「未提供该键」丢弃（?chapter_url= 不带值是常见形态）。校验两条边界：
+// 单键长度不超过 maxChapterURLFilterLength（比写入该列的上限还长的键永远匹配不到，
+// 属无效输入而非空结果），键数不超过 maxChapterURLFilters。
+// 第二个返回值非空即为应回给客户端的错误文案，调用方统一以 A0400 返回。
+func parseChapterURLFilters(c *gin.Context) ([]string, string) {
+	raw := c.QueryArray("chapter_url")
+	keys := make([]string, 0, len(raw))
+	for _, u := range raw {
+		if u == "" {
+			continue
+		}
+		if len(u) > maxChapterURLFilterLength {
+			return nil, fmt.Sprintf("chapter_url 过长（上限 %d）", maxChapterURLFilterLength)
+		}
+		keys = append(keys, u)
+	}
+	if len(keys) > maxChapterURLFilters {
+		return nil, fmt.Sprintf("chapter_url 最多 %d 个", maxChapterURLFilters)
+	}
+	return keys, ""
 }
 
 // GetMyComments 获取我的评论列表
@@ -145,4 +192,38 @@ func (h *CommentHandler) Delete(c *gin.Context) {
 	}
 
 	errcode.SuccessMsg(c, "删除成功", nil)
+}
+
+// MigrateKey 迁移评论聚合键
+// @Summary 迁移评论聚合键
+// @Description 将当前用户在旧聚合键下的评论批量迁移到新聚合键（合并书籍场景）
+// @Description 两键均可为空串，空 = 书籍级评论（因此「书籍级↔章节」两个方向都支持）；单键最长 2048。
+// @Description 只影响本人评论；新旧相同返回 A0305；无匹配评论返回 0（幂等，可重复调用）。
+// @Tags 评论
+// @Accept json
+// @Produce json
+// @Security ApiKeyAuth
+// @Param request body model.MigrateCommentKeyRequest true "迁移请求"
+// @Success 200 {object} model.Response
+// @Router /api/comments/migrate-key [post]
+func (h *CommentHandler) MigrateKey(c *gin.Context) {
+	userID, exists := middleware.GetCurrentUserID(c)
+	if !exists {
+		errcode.Error(c, errcode.LoginExpired, "未登录")
+		return
+	}
+
+	var req model.MigrateCommentKeyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		errcode.Error(c, errcode.BadRequest, "请求参数错误: "+err.Error())
+		return
+	}
+
+	count, err := h.commentService.MigrateKey(userID, req.OldKey, req.NewKey)
+	if err != nil {
+		errcode.Respond(c, err, "迁移评论聚合键失败")
+		return
+	}
+
+	errcode.Success(c, model.MigrateCommentKeyResponse{MigratedCount: count})
 }

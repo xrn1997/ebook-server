@@ -305,6 +305,90 @@ func TestAPIEndpoint(t *testing.T) {
 }
 ```
 
+## 桌面应用测试（`desktop/`）
+
+桌面应用有独立 npm 工具链（Vitest），与 Go 测试互不包含——**两边都要绿才算通过全量测试**。
+
+```bash
+make desktop-test        # 门禁：先编译 sidecar，再 typecheck + vitest（推荐）
+# 或手动：
+cd desktop
+npm install
+npm test                # vitest run
+npm run typecheck       # 主进程 + renderer 各一套 tsconfig
+npm run build           # tsc + vite build（vite 不做类型检查，别拿它当校验）
+```
+
+> **为什么门禁要先用 make**：`backend-integration.test.ts`（真起 Go 子进程的集成用例）
+> 在 sidecar 二进制缺失时整段 `describe.skip`——fresh clone 直接 `npm test` 会得到
+> 「绿但没测到真后端」的假阴性。`make desktop-test` 先执行
+> `desktop-build-backend` 保证二进制存在，集成层不会静默缺席。
+
+### 两套测试环境
+
+* 默认 `environment: 'node'`：主进程模块（`sidecar`/`config`/`ipc`/`admin-auth`）与
+  纯逻辑模块（`api`/`useAdminList`/`format`）都在 node 环境跑；
+* 需要渲染组件的视图测试在文件首行标注 `// @vitest-environment happy-dom`
+  （如 `src/renderer/tests/Overview.test.ts`、`Config.test.ts`、`AdminViews.test.ts`）。
+
+### 取向：能跑真东西就不打桩
+
+沿用后端「不写 mock、跑真语义」（ADR-0007）的精神：
+
+* `src/main/__tests__/backend-integration.test.ts` 起**真实 Go 子进程**：健康检查、
+  后台自动登录、用户/评论/日志/统计接口拉通、改配置重启后健康检查拨新端口、
+  停止耗时远小于 5 秒（真优雅退出）——这是设计文档「关键用户流程」的集成层兑现；
+* `admin-auth.test.ts` 起**真实 HTTP 假后台**（端口 0 由系统分配），
+  验证统一信封能被解开、令牌合流与重取确实只发一次登录——这条链路当初就是因为
+  没人真跑过请求而整条不通；
+* `config.test.ts` 用 `fs.mkdtemp` 走**真实文件系统**，断言敏感字段只落 `.env`、
+  往返后完整还原、用户自加的 env 键不被抹掉，并验证通配监听地址（含 `[::]`）被拒存；
+* `AdminViews.test.ts`（用户/评论/日志三视图）打桩的只有 `window.electronAPI` 与
+  全局 fetch，查询串拼装、信封判断、两步删除确认、分页钳制都是真代码；
+* `ipc.test.ts` 打桩的只有 `electron.ipcMain`（收集注册的 handler 后直接调用），
+  配置读写仍是真实文件；
+* 只有 `sidecar.test.ts` 需要 mock `node:child_process` 与 `node:http`：子进程 stdin
+  优雅退出指令与 10 秒超时必须被控制。它显式传 `platform`，否则平台相关断言
+  会随宿主平台漂移。
+
+### E2E 冒烟测试（Playwright `_electron`）
+
+```bash
+make desktop-e2e           # 先编译 sidecar + renderer 产物，再跑 Playwright
+# 或手动：
+cd desktop
+npm run build:main && npm run test:preload && npx playwright test
+```
+
+E2E 用 Playwright 的 `_electron.launch` 直接驱动本机 `node_modules/electron` 运行时，
+不需要下载浏览器二进制。测试把 `userData` 指到临时目录（`EBOOK_SERVER_USER_DATA`），
+renderer 走打包后的 `dist/renderer/index.html`（`EBOOK_SERVER_RENDERER_FILE`），
+避免污染真实用户数据或依赖 vite dev server。
+
+**前置条件**：sidecar 二进制（`desktop/resources/backend/ebook-server.exe`）与
+renderer 产物（`desktop/dist/renderer/index.html`）都要存在。产物缺失时整段 `test.skip`，
+与「裸 `npm test` 会让集成用例因二进制缺失整段跳过」的门禁逻辑一致——
+`make desktop-e2e` 先跑 `desktop-build-backend` 与 `desktop-build-frontend` 保证产物齐备。
+
+E2E 项目有独立的 `tsconfig.e2e.json`（不并入主 typecheck 的 `rootDir: "src"`，
+否则 `e2e/` 会触发 TS6059），`typecheck` 脚本末尾追加 `tsc -p tsconfig.e2e.json --noEmit`；
+vitest 的 `exclude` 已把 `e2e/**` 排除，两套测试互不干扰。
+
+### 覆盖点
+
+sidecar 生命周期与崩溃重启退避、端口每次启动重新求值、stdin 优雅退出与 5 秒强杀兜底、
+stopping 期间不重复启动、停止不得复活进程、运行时长、配置结构收敛与未知键丢弃、
+ADR-0010 通配地址拒存（含 `[::]`）、IPC 通道契约、后台自动登录与令牌失效重取、
+renderer 信封判断与失败文案透出、列表分页与越界钳制、评论两步删除、
+用户详情、日志筛选、概览页运行监控渲染。
+
+### 后端配置的 env 覆盖契约
+
+`backend/config/config_test.go` 锁住一条容易被忽略的契约：`SMTP_PASSWORD` /
+`JWT_SECRET` / `ADMIN_PASSWORD` 必须能覆盖 YAML。桌面应用把密钥从 `config.yaml` 拆到
+`.env`，而 `viper.Unmarshal` 只遍历它已知的键——没注册默认值的键即使开了
+`AutomaticEnv` 也读不到环境变量（详见 ADR-0012 §2）。
+
 ## 常见问题
 
 ### Q: 如何运行需要数据库的测试?

@@ -1,0 +1,41 @@
+appId: com.ebook-server.desktop
+productName: ebook-server
+
+directories:
+  output: release
+  buildResources: resources
+
+files:
+  - dist/**/*
+  - templates/**/*
+
+extraResources:
+  - from: resources/backend
+    to: backend
+    filter:
+      - ebook-server*
+      - '!**/.gitkeep'
+  - from: templates
+    to: templates
+  # 托盘与应用图标共用同一份（主进程 getIconPath 在打包模式查 <resources>/icon.png）
+  - from: resources/icon.png
+    to: icon.png
+
+win:
+  target: nsis
+  # icon.png（≥512px）放 buildResources（resources/）下，electron-builder 自动转 ico/icns
+  icon: icon.png
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+
+mac:
+  target: dmg
+  icon: icon.png
+
+linux:
+  target:
+    - AppImage
+    - deb
+  icon: icon.png

@@ -5,6 +5,8 @@
 package repository
 
 import (
+	"strconv"
+
 	"ebook-server/model"
 
 	"gorm.io/gorm"
@@ -69,15 +71,34 @@ func (r *UserRepository) Count() (int64, error) {
 // 返回列表与总数；`model.User.Password` 等字段带 `json:"-"`，序列化时不会出网。
 func (r *UserRepository) FindAll(page, pageSize int) ([]model.User, int64, error) {
 	var users []model.User
-	var total int64
-
-	query := r.db.Model(&model.User{})
-	if err := query.Count(&total).Error; err != nil {
+	total, err := paginateQuery(r.db.Model(&model.User{}), "created_at DESC", page, pageSize, &users)
+	if err != nil {
 		return nil, 0, err
 	}
+	return users, total, nil
+}
 
-	offset := (page - 1) * pageSize
-	if err := query.Order("created_at DESC").Offset(offset).Limit(pageSize).Find(&users).Error; err != nil {
+// Search 按关键字分页搜账号（后台「用户搜索」）。
+//
+// 模糊匹配 email / username / nickname（LIKE 通配符已转义，输入 % 不会退化成全表）；
+// keyword 为纯数字时额外按 uid 精确命中——后台最常见的动作就是拿 UID 找人。
+// 空 keyword 与 FindAll 同义（不参与过滤），调用方无需自己分支。
+func (r *UserRepository) Search(keyword string, page, pageSize int) ([]model.User, int64, error) {
+	var users []model.User
+
+	query := r.db.Model(&model.User{})
+	if keyword != "" {
+		pattern := likePattern(keyword)
+		cond := r.db.Where("email LIKE ? ESCAPE '\\' OR username LIKE ? ESCAPE '\\' OR nickname LIKE ? ESCAPE '\\'",
+			pattern, pattern, pattern)
+		if uid, err := strconv.ParseUint(keyword, 10, 64); err == nil {
+			cond = cond.Or("uid = ?", uid)
+		}
+		query = query.Where(cond)
+	}
+
+	total, err := paginateQuery(query, "created_at DESC", page, pageSize, &users)
+	if err != nil {
 		return nil, 0, err
 	}
 	return users, total, nil
