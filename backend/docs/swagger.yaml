@@ -1,5 +1,17 @@
 basePath: /
 definitions:
+  admin.rehashRequest:
+    properties:
+      new_key:
+        maxLength: 200
+        type: string
+      old_key:
+        maxLength: 200
+        type: string
+    required:
+    - new_key
+    - old_key
+    type: object
   model.CreateCommentRequest:
     properties:
       book_name:
@@ -11,11 +23,15 @@ definitions:
       chapter_url:
         maxLength: 2048
         type: string
+      comment_key:
+        maxLength: 200
+        type: string
       content:
         maxLength: 1000
         minLength: 1
         type: string
     required:
+    - comment_key
     - content
     type: object
   model.DeleteAccountRequest:
@@ -38,11 +54,13 @@ definitions:
   model.MigrateCommentKeyRequest:
     properties:
       new_key:
-        maxLength: 2048
+        maxLength: 200
         type: string
       old_key:
-        maxLength: 2048
+        maxLength: 200
         type: string
+    required:
+    - new_key
     type: object
   model.ModifyPwdRequest:
     properties:
@@ -181,6 +199,27 @@ paths:
           schema:
             $ref: '#/definitions/model.Response'
       summary: 后台删除评论（治理）
+      tags:
+      - 管理后台
+  /admin/api/comments/rehash:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: 新旧聚合键
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/admin.rehashRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.Response'
+      summary: 后台全局改评论聚合键（跨用户）
       tags:
       - 管理后台
   /admin/api/login:
@@ -444,16 +483,22 @@ paths:
       - 认证
   /api/comments:
     get:
-      description: 获取评论列表，可按章节过滤（chapter_url 支持多个，返回并集；book_name 可单独或配合过滤）
+      description: |-
+        获取评论列表。comment_keys 是 M2 聚合键过滤（逗号分隔，返回并集）；
+        chapter_url / book_name 已废弃，仅为让未换键的历史行继续可读而保留。
       parameters:
+      - description: M2 聚合键列表（逗号分隔，返回并集；最多 50 个，单键最长 200）
+        in: query
+        name: comment_keys
+        type: string
       - collectionFormat: multi
-        description: 书源章节聚合键（可传多个，返回并集；最多 50 个，单键最长 2048）
+        description: 已废弃：旧聚合键（可传多个，返回并集；最多 50 个，单键最长 2048）
         in: query
         items:
           type: string
         name: chapter_url
         type: array
-      - description: 书名（配合 chapter_url 二次过滤，或单独过滤全书）
+      - description: 已废弃：书名（配合 chapter_url 二次过滤，或单独过滤全书）
         in: query
         name: book_name
         type: string
@@ -480,7 +525,9 @@ paths:
     post:
       consumes:
       - application/json
-      description: 创建新评论
+      description: |-
+        创建新评论。comment_key（M2 聚合键）必填，服务端只存不解释其格式；
+        chapter_url / chapter_name / book_name 可选，仅作过渡期兼容与展示快照。
       parameters:
       - description: 评论内容
         in: body
@@ -521,13 +568,14 @@ paths:
       summary: 删除评论
       tags:
       - 评论
-  /api/comments/migrate-key:
+  /api/comments/migrate:
     post:
       consumes:
       - application/json
       description: |-
-        将当前用户在旧聚合键下的评论批量迁移到新聚合键（合并书籍场景）
-        两键均可为空串，空 = 书籍级评论（因此「书籍级↔章节」两个方向都支持）；单键最长 2048。
+        将当前用户在旧聚合键（comment_key）下的评论批量迁移到新聚合键（合并书籍 / 改元数据修键场景）
+        new_key 必填非空——迁往空键会让评论落进任何 comment_keys 查询都命中不到的桶。
+        old_key 可为空串：空 = 尚未换键的历史行，因此「把本人旧评论收进正确桶」这一方向可表达；单键最长 200。
         只影响本人评论；新旧相同返回 A0305；无匹配评论返回 0（幂等，可重复调用）。
       parameters:
       - description: 迁移请求

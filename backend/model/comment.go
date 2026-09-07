@@ -8,16 +8,21 @@ import (
 
 // Comment 评论实体（GORM 模型）。
 //
-// 每条评论属于一个用户，支持软删除。
-// 章节归属字段（ChapterURL/ChapterName/BookName）为**冗余快照**：后端不消费
-// 书源数据，原样存储客户端提交的值，仅作评论聚合键与展示（ADR-0011）。
-// ChapterURL 为空串 = 书籍级评论（不归属任何章节，见 CONTEXT.md「书籍级评论」）。
+// 每条评论属于一个用户，支持软删除。聚合键是 CommentKey：由客户端从「书名+作者」
+// 派生的不透明 token（ck1:sha256[...]，章评再追加 #章序号），服务端不校验格式、
+// 不解释含义，只按它过滤与改键——正因没有人分配，各客户端才能无协调地算出同一个桶。
+//
+// ChapterName/BookName 为**冗余展示快照**：只供列表显示，不再参与聚合。
+// ChapterURL 是 M2 之前的旧聚合键（书源章节 URL），已降级为过渡期兼容读路径：
+// 服务端无法把它重算成 CommentKey（算 ck1 需要作者，而作者从未入库），
+// 因此旧行只能靠 chapter_url 参数继续可见。见 docs/adr/0014。
 type Comment struct {
 	ID          uint           `json:"id" gorm:"primaryKey"`
 	UserID      uint           `json:"user_id" gorm:"index;not null"` // 关联 users.uid
 	User        User           `json:"user" gorm:"foreignKey:UserID"` // 所属用户（预加载）
 	Content     string         `json:"content" gorm:"type:text;not null"`
-	ChapterURL  string         `json:"chapter_url" gorm:"type:text;index"` // 书源章节 URL（空=书籍级评论，见 CONTEXT.md），聚合键需索引
+	CommentKey  string         `json:"comment_key" gorm:"type:text;index"` // 评论聚合键（M2）：客户端派生的不透明 token，服务端只存不解释
+	ChapterURL  string         `json:"chapter_url" gorm:"type:text;index"` // 已废弃：旧聚合键，降级为过渡期兼容读路径与展示字段
 	ChapterName string         `json:"chapter_name" gorm:"size:200"`       // 章节名快照
 	BookName    string         `json:"book_name" gorm:"size:200"`          // 书名快照
 	CreatedAt   time.Time      `json:"created_at"`
@@ -29,29 +34,38 @@ func (Comment) TableName() string {
 	return "comments"
 }
 
-// CreateCommentRequest 创建评论请求
+// CreateCommentRequest 创建评论请求。
 //
-// 章节字段全部可选：不传/传空串时行为退化为书籍级评论（兼容既有客户端与历史数据）。
-// chapter_url 刻意**不校验 URL 格式**（ADR-0011）：后端无书源数据，无法判断章节
-// 是否存在，且第三方书源 URL 形态各异，仅做长度限制防脏数据。
+// comment_key **必填**（M2）：它是评论唯一的聚合键，缺了键的评论会落进空桶、
+// 再没有任何查询路径能把它读回来。刻意用 required 而非 omitempty——静默丢弃这个
+// 字段正是本次要对齐掉的 bug，宁可回 A0400 让客户端当场发现。
+// 键由客户端派生，服务端**不校验格式**（只限长度，理由同 ADR-0011 不校验 URL 格式）：
+// 后端无书源与作者数据，既无法判断键是否正确，也不该把算法版本写死进服务端。
+//
+// chapter_url / chapter_name / book_name 全部可选，仅作过渡期兼容与展示快照。
 type CreateCommentRequest struct {
 	Content     string `json:"content" binding:"required,min=1,max=1000"`
+	CommentKey  string `json:"comment_key" binding:"required,max=200"`
 	ChapterURL  string `json:"chapter_url" binding:"omitempty,max=2048"`
 	ChapterName string `json:"chapter_name" binding:"omitempty,max=200"`
 	BookName    string `json:"book_name" binding:"omitempty,max=200"`
 }
 
-// MigrateCommentKeyRequest 迁移评论聚合键请求（合并书籍修键场景）。
+// MigrateCommentKeyRequest 迁移评论聚合键请求（合并书籍 / 改元数据修键场景）。
 //
-// old_key/new_key 对应 comment 的 chapter_url 字段；只迁移当前用户名下的评论。
-// 长度上限必须与 CreateCommentRequest.ChapterURL 一致（同一列同一约束）：否则可以把
+// old_key/new_key 对应 comment 的 **comment_key** 字段（M2 前指向 chapter_url，
+// 随聚合键换轨一并改指）；只迁移当前用户名下的评论。
+// 长度上限必须与 CreateCommentRequest.CommentKey 一致（同一列同一约束）：否则可以把
 // 评论迁到一个自己再也提交不出、也就永远读不回来的键上。
-// 两键都用 omitempty 而非 required：chapter_url 的空串是有含义的合法值（书籍级评论，
-// 见 CONTEXT.md），required 会把「书籍级→章节」和「章节→书籍级」两个方向都堵死。
-// 两键同时为空即「新旧相同」，由 service 判 A0305。
+//
+// **old_key 用 omitempty**：空串对应尚未换键的历史行（chapter_url 时代入库、没有
+// comment_key 的记录），允许用户把自己的旧评论一次性收进正确的桶——这是换轨时必需的迁移方向。
+// **new_key 用 required**：迁往空键等于把评论推进没有任何 `comment_keys` 查询能命中的
+// 黑洞，与「创建评论必须带键」是同一条理由，不能从迁移侧开后门。
+// 旧的空键语义（「书籍级评论」）在 M2 已由「不含 # 的作品键」表达，因此空 new_key 不再有用武之地。
 type MigrateCommentKeyRequest struct {
-	OldKey string `json:"old_key" binding:"omitempty,max=2048"`
-	NewKey string `json:"new_key" binding:"omitempty,max=2048"`
+	OldKey string `json:"old_key" binding:"omitempty,max=200"`
+	NewKey string `json:"new_key" binding:"required,max=200"`
 }
 
 // MigrateCommentKeyResponse 迁移评论聚合键响应。
@@ -82,9 +96,12 @@ type CommentUserView struct {
 //
 // 与实体分离的独立契约结构（ADR-0011）：user 只含四个展示字段；
 // add_time 固定 Asia/Shanghai 时区 + "yyyy-MM-dd HH:mm:ss" 格式，不依赖服务器时区。
+// comment_key 是 M2 的聚合键；未换键的历史行序列化为空串（客户端按「无键」处理）。
+// chapter_url 刻意继续返回：旧客户端仍靠它展示与再查询，新客户端忽略。
 type CommentResponse struct {
 	ID          uint            `json:"id"`
 	User        CommentUserView `json:"user"`
+	CommentKey  string          `json:"comment_key"`
 	Content     string          `json:"content"`
 	ChapterURL  string          `json:"chapter_url"`
 	ChapterName string          `json:"chapter_name"`
@@ -97,6 +114,7 @@ func NewCommentResponse(c *Comment) CommentResponse {
 	return CommentResponse{
 		ID:          c.ID,
 		User:        newCommentUserView(&c.User),
+		CommentKey:  c.CommentKey,
 		Content:     c.Content,
 		ChapterURL:  c.ChapterURL,
 		ChapterName: c.ChapterName,

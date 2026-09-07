@@ -132,17 +132,19 @@ func commentRoutes(t *testing.T, router *gin.Engine, app *testApp) {
 	router.POST("/api/auth/login", app.auth.Login)
 	router.POST("/api/comments", middleware.JWTAuth(), app.comment.Create)
 	router.GET("/api/comments", app.comment.GetList)
-	router.POST("/api/comments/migrate-key", middleware.JWTAuth(), app.comment.MigrateKey)
+	router.POST("/api/comments/migrate", middleware.JWTAuth(), app.comment.MigrateKey)
 }
 
-// createComment 以 token 身份发一条归属 chapterURL 章节的评论，失败即终止用例。
+// createComment 以 token 身份发一条归属 commentKey 聚合键的评论，失败即终止用例。
 //
-// chapterURL 传空串 = 书籍级评论（ADR-0011）。刻意断言成功：造数据阶段的失败不是
-// 被测行为，留在这里失败比让后续断言报出迷惑性错误更好定位。
-func createComment(t *testing.T, router *gin.Engine, token, content, chapterURL string) {
+// 键走 M2 契约的 comment_key 字段（创建评论必填）：不带键的创建会被服务端当场拒绝。
+// 需要造 chapter_url 时代的旧行时用 seedLegacyComment——换键后那条写路径已不可达。
+// 刻意断言成功：造数据阶段的失败不是被测行为，留在这里失败比让后续断言
+// 报出迷惑性错误更好定位。
+func createComment(t *testing.T, router *gin.Engine, token, content, commentKey string) {
 	t.Helper()
 	w := doJSON(t, router, http.MethodPost, "/api/comments", map[string]string{
-		"content": content, "chapter_url": chapterURL,
+		"content": content, "comment_key": commentKey,
 	}, token)
 	assertErrorCode(t, w.Body.Bytes(), "00000")
 }

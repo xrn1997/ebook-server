@@ -34,6 +34,7 @@ func (s *CommentService) Create(userID uint, req *model.CreateCommentRequest) (*
 	comment := &model.Comment{
 		UserID:      userID,
 		Content:     req.Content,
+		CommentKey:  req.CommentKey,
 		ChapterURL:  req.ChapterURL,
 		ChapterName: req.ChapterName,
 		BookName:    req.BookName,
@@ -52,7 +53,24 @@ func (s *CommentService) Create(userID uint, req *model.CreateCommentRequest) (*
 	return &resp, nil
 }
 
-// GetByBook 按书名获取评论列表（聚合某书全部章节评论，ADR-0011）。
+// GetByCommentKeys 按 M2 聚合键查评论（主读路径）。
+//
+// commentKeys 非空（由调用方保证）：单键即精确匹配，多键返回并集——
+// 跨书源合并同一作品时客户端会把该作品的多个键一并传来。
+func (s *CommentService) GetByCommentKeys(commentKeys []string, page, pageSize int) (*model.CommentListResponse, error) {
+	page, pageSize = normalizePage(page, pageSize)
+
+	comments, total, err := s.comments.FindByCommentKeys(commentKeys, page, pageSize)
+	if err != nil {
+		return nil, err
+	}
+
+	return toListResponse(comments, total, page, pageSize), nil
+}
+
+// GetByBook 按书名获取评论列表。
+//
+// 已废弃：书名在 M2 后只是展示快照，不再参与聚合。保留仅为兼容旧客户端。
 func (s *CommentService) GetByBook(bookName string, page, pageSize int) (*model.CommentListResponse, error) {
 	page, pageSize = normalizePage(page, pageSize)
 
@@ -76,9 +94,10 @@ func (s *CommentService) GetByUserID(userID uint, page, pageSize int) (*model.Co
 	return toListResponse(comments, total, page, pageSize), nil
 }
 
-// GetByChapterURLs 按章节聚合键获取评论列表（ADR-0011）。
+// GetByChapterURLs 按旧聚合键（chapter_url）查评论。
 //
-// chapterURLs 非空（由调用方保证）：传单个键即精确匹配该键，传多个键返回并集（合并书籍场景，M2）。
+// 已废弃：M2 后聚合键换成 comment_key，此路径只为让未换键的历史行继续可读而保留。
+// chapterURLs 非空（由调用方保证）：传单个键即精确匹配该键，传多个键返回并集（合并书籍场景）。
 func (s *CommentService) GetByChapterURLs(chapterURLs []string, bookName string, page, pageSize int) (*model.CommentListResponse, error) {
 	page, pageSize = normalizePage(page, pageSize)
 
@@ -136,8 +155,9 @@ func (s *CommentService) Delete(commentID, userID uint) error {
 	return s.comments.Delete(commentID)
 }
 
-// MigrateKey 迁移当前用户在旧聚合键下的评论到新聚合键（合并书籍场景，M2）。
+// MigrateKey 迁移当前用户在旧聚合键下的评论到新聚合键（合并书籍 / 改元数据修键）。
 //
+// 作用列是 comment_key。oldKey 传空串 = 把本人尚未换键的历史行一次性收进正确的桶。
 // oldKey == newKey 时返回 model.ErrCommentKeySame（映射 A0305）；
 // 无匹配评论时返回 0 而非错误（幂等语义）。
 func (s *CommentService) MigrateKey(userID uint, oldKey, newKey string) (int64, error) {

@@ -32,6 +32,8 @@ type CommentStore interface {
 	FindByID(id uint) (*model.Comment, error)
 	CountByUserID(userID uint) (int64, error)
 	Delete(id uint) error
+	// RehashKey 全局改键（不限用户），返回受影响行数——用于桶污染修复。
+	RehashKey(oldKey, newKey string) (int64, error)
 }
 
 // LogStore 管理面对操作日志的访问能力（consumer-defined，ADR-0007）。
@@ -244,6 +246,50 @@ func (h *Handler) DeleteComment(c *gin.Context) {
 		return
 	}
 	errcode.SuccessMsg(c, "删除成功", nil)
+}
+
+// rehashRequest 后台全局改键请求体。
+//
+// 与公开的 migrate 端点不同，两键都是 **required**：全局改键若允许空旧键，会把
+// 所有用户尚未换键的历史行一次性扫进同一个桶——那不是修复桶污染，而是制造一个
+// 更大的污染桶。长度上限与写入 comment_key 列的约束一致（同一列同一约束）。
+type rehashRequest struct {
+	OldKey string `json:"old_key" binding:"required,max=200"`
+	NewKey string `json:"new_key" binding:"required,max=200"`
+}
+
+// RehashComments 后台全局改键：把所有用户挂在旧聚合键下的评论迁到新键。
+//
+// 这是 M2 客户端派生键的配套运维能力：某个键算错了（归一化规则变更、书名作者
+// 解析出错）会让一堆评论聚错桶，而公开端点的 migrate 只动本人行，救不了别人的评论。
+// 放在后台引擎而非公开 API（ADR-0010）：它按定义要跨用户写数据，
+// 挂到公网端口等于把「任意改全员评论归属」暴露给未认证流量。
+// 新旧相同返回 A0305；无匹配行返回 0（幂等，可重复调用）。
+//
+// @Summary 后台全局改评论聚合键（跨用户）
+// @Tags 管理后台
+// @Accept json
+// @Produce json
+// @Param request body rehashRequest true "新旧聚合键"
+// @Success 200 {object} model.Response
+// @Router /admin/api/comments/rehash [post]
+func (h *Handler) RehashComments(c *gin.Context) {
+	var req rehashRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		errcode.Error(c, errcode.BadRequest, "请求参数错误: "+err.Error())
+		return
+	}
+	if req.OldKey == req.NewKey {
+		errcode.Error(c, errcode.CommentKeySame, "新旧聚合键相同")
+		return
+	}
+
+	count, err := h.comments.RehashKey(req.OldKey, req.NewKey)
+	if err != nil {
+		errcode.Respond(c, err, "改键失败")
+		return
+	}
+	errcode.Success(c, gin.H{"migrated_count": count})
 }
 
 // ListLogs 后台操作日志（请求审计）列表：分页 + 方法/路径/账号/业务码筛选。

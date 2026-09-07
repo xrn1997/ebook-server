@@ -124,15 +124,18 @@ make docker   # Docker 构建
 
 | 方法 | 路径 | 说明 | 认证 |
 |------|------|------|------|
-| GET | /api/comments | 评论列表，支持 `chapter_url`/`book_name` 章节过滤；`chapter_url` 可传多个，返回并集 | 否 |
-| POST | /api/comments | 创建评论，支持章节归属（`chapter_url`/`chapter_name`/`book_name`，可选） | 是 |
+| GET | /api/comments | 评论列表，按 `comment_keys`（逗号分隔的聚合键）过滤并返回并集；`chapter_url`/`book_name` 已废弃，仅兼容旧数据 | 否 |
+| POST | /api/comments | 创建评论，`comment_key` **必填**，`chapter_name`/`book_name` 为可选展示快照 | 是 |
 | GET | /api/comments/my | 获取我的评论 | 是 |
-| POST | /api/comments/migrate-key | 迁移自己评论的聚合键（旧键→新键，仅本人；同键返回 `A0305`） | 是 |
+| POST | /api/comments/migrate | 迁移自己评论的聚合键（旧键→新键，作用列 `comment_key`，仅本人；同键返回 `A0305`） | 是 |
 | DELETE | /api/comments/:id | 删除评论（仅本人，非本人返回 `A0303`） | 是 |
 
-> **评论章节归属**（[ADR-0011](docs/adr/0011-comment-chapter-and-avatar-upload.md)）：
-> 评论按书源章节 URL 组织（`chapter_url` 为聚合键，`chapter_name`/`book_name` 为展示快照，
-> 后端原样存储、不校验格式）。不传章节字段 = 书籍级评论，兼容既有数据。
+> **评论聚合键**（[ADR-0011](docs/adr/0011-comment-chapter-and-avatar-upload.md) →
+> [ADR-0014](docs/adr/0014-comment-key-reshift-to-client-derived-token.md)）：
+> 聚合键 `comment_key` 由**客户端**从「书名+作者」派生（`ck1:` + sha256，章评追加 `#章序号`），
+> 后端**只存不解释**：不校验格式、不建书籍表、不提供「列出所有书」。创建时缺键直接 `A0400`——
+> 缺键的评论会落进任何查询都命中不到的空桶。`chapter_url`/`book_name` 已废弃（前者仅作历史行
+> 的兼容读路径，两者都只是展示快照）；`comment_key` 为空串代表换轨前的历史行，不是书籍级评论。
 > 评论响应用独立视图：`user` 只含 `uid/username/nickname/avatar`（不含 email），
 > `add_time` 固定上海时区 `yyyy-MM-dd HH:mm:ss` 格式。
 > 评论域错误码：`A0303` 无权删除、`A0304` 评论不存在、`A0305` 聚合键与旧键相同（`A0301`/`A0302` 预留）。
@@ -279,16 +282,19 @@ curl http://localhost:9090/api/users/me \
 
 ### 创建评论
 
+`comment_key` 必填。作品键（不含 `#`）即书籍级评论：
+
 ```bash
 curl -X POST http://localhost:9090/api/comments \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <your-token>" \
   -d '{
-    "content": "这是一条评论"
+    "content": "这是一条评论",
+    "comment_key": "ck1:3a7f...e91"
   }'
 ```
 
-带章节归属（可选字段，不传则为书籍级评论）：
+章评键在作品键后追加 `#章序号`，展示快照可选：
 
 ```bash
 curl -X POST http://localhost:9090/api/comments \
@@ -296,25 +302,28 @@ curl -X POST http://localhost:9090/api/comments \
   -H "Authorization: Bearer <your-token>" \
   -d '{
     "content": "这一章的剧情真精彩",
-    "chapter_url": "https://src.example.com/book/42/5.html",
+    "comment_key": "ck1:3a7f...e91#4",
     "chapter_name": "第五章",
     "book_name": "示例之书"
   }'
 ```
 
-### 查询章节评论
+### 查询评论
 
 ```bash
-curl "http://localhost:9090/api/comments?chapter_url=https%3A%2F%2Fsrc.example.com%2Fbook%2F42%2F5.html&page=1&page_size=20"
+curl "http://localhost:9090/api/comments?comment_keys=ck1%3A3a7f...e91%234&page=1&page_size=20"
 ```
 
 > 列表统一返回分页包裹结构 `{items, total, page, page_size}`，按 `add_time` 倒序。
 
-`chapter_url` 可重复传，返回这些章节评论的**并集**（合并书籍场景）：
+`comment_keys` 用逗号传多个键，返回这些桶评论的**并集**（跨书源合并同一作品）：
 
 ```bash
-curl "http://localhost:9090/api/comments?chapter_url=<key-a>&chapter_url=<key-b>"
+curl "http://localhost:9090/api/comments?comment_keys=ck1:aaa%234,ck1:bbb%234"
 ```
+
+> 已废弃的 `chapter_url`（可重复传）与 `book_name` 仍可用于读取换轨前的历史行，
+> 但新客户端不应依赖：后端算不出这些行对应的 `comment_key`（派生需要作者，而作者从未入库）。
 
 ### 上传头像（两步提交）
 

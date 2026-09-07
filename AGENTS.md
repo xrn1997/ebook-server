@@ -131,8 +131,8 @@ desktop/         → Electron 桌面管理应用（独立 npm 工具链，见 AD
 /api/users/me/data         → 导出我的数据（用户资料+本人评论，需认证）
 /api/users/me/deletion/send-code → 发注销验证码到当前账号邮箱（需认证）
 /api/users/me/deletion     → 注销账号（验证码确认，匿名化并返回数据副本，需认证）
-/api/comments              → 评论列表（公开，chapter_url 支持多个返回并集；book_name 可单独或配合过滤）/ 创建评论（需认证，支持章节字段）
-/api/comments/migrate-key  → 迁移评论聚合键（需认证，旧键→新键，仅本人，同键 A0305）
+/api/comments              → 评论列表（公开，comment_keys 逗号分隔多键返回并集；chapter_url/book_name 已废弃仅作兼容）/ 创建评论（需认证，comment_key 必填）
+/api/comments/migrate      → 迁移评论聚合键（需认证，旧键→新键，作用列 comment_key，仅本人，同键 A0305）
 /api/comments/my           → 我的评论（需认证）
 /api/comments/:id          → 删除评论（需认证，仅本人，非本人 A0303）
 /api/uploads/avatar        → 头像上传（需认证，multipart，返回绝对 URL）
@@ -150,11 +150,17 @@ desktop/         → Electron 桌面管理应用（独立 npm 工具链，见 AD
 > 后台管理 API：`GET /admin/api/{stats,users,comments,logs}`（users 支持 `keyword` 搜索、
 > comments 支持 `keyword`/`book_name`、logs 支持 `method`/`path`/`user_id`/`error_code`/`failed`
 > 筛选）、`GET /admin/api/users/:uid`（详情）、`DELETE /admin/api/comments/:id`（治理删除，
-> 不做归属校验）。见 [ADR-0013](docs/adr/0013-comment-key-migration-and-admin-api.md)。
+> 不做归属校验）、`POST /admin/api/comments/rehash`（全局改 `comment_key`，跨用户，
+> 用于桶污染修复；空 `old_key` 一律拒绝）。
+> 见 [ADR-0013](docs/adr/0013-comment-key-migration-and-admin-api.md)
+> 与 [ADR-0014](docs/adr/0014-comment-key-reshift-to-client-derived-token.md)。
 >
-> **评论与头像契约（ADR-0011）**：评论支持章节归属——`chapter_url`（书源章节 URL，
-> 聚合键）/`chapter_name`/`book_name` 为冗余快照，可选、不校验格式仅限长；
-> 空章节 = 书籍级评论。评论响应用独立视图（user 只含 uid/username/nickname/avatar，
+> **评论与头像契约（ADR-0011 → ADR-0014）**：评论的聚合键是 `comment_key`——由**客户端**从
+> 「书名+作者」派生的不透明 token（`ck1:` + sha256，章评再追加 `#章序号`），服务端**只存不解释**：
+> 不校验格式、不建书籍表、不提供「列出所有书」。创建评论时 `comment_key` **必填**（缺键回 `A0400`，
+> 因为缺键的评论落进空桶后再无任何读路径能捞回）。`chapter_url`/`book_name` 已废弃，前者仅作
+> 历史行的兼容读路径、两者仅作展示快照；`comment_key` 为空串 ≠ 书籍级评论，而是换键前的历史行。
+> 评论响应用独立视图（user 只含 uid/username/nickname/avatar，
 > add_time 固定上海时区）。头像两步提交：`POST /api/uploads/avatar` 拿 URL →
 > `PUT /api/users/me` 更新；更换头像自动删除本服务旧文件（`upload.dir` 默认 uploads）。
 

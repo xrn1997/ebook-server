@@ -161,11 +161,11 @@ func main() {
 		comments := api.Group("/comments")
 		{
 			commentHandler := handler.NewCommentHandler(commentService)
-			comments.GET("", commentHandler.GetList)                                       // 公开
-			comments.POST("", middleware.JWTAuth(), commentHandler.Create)                 // 需要登录
-			comments.POST("/migrate-key", middleware.JWTAuth(), commentHandler.MigrateKey) // 需要登录
-			comments.GET("/my", middleware.JWTAuth(), commentHandler.GetMyComments)        // 需要登录
-			comments.DELETE("/:id", middleware.JWTAuth(), commentHandler.Delete)           // 需要登录
+			comments.GET("", commentHandler.GetList)                                   // 公开
+			comments.POST("", middleware.JWTAuth(), commentHandler.Create)             // 需要登录
+			comments.POST("/migrate", middleware.JWTAuth(), commentHandler.MigrateKey) // 需要登录
+			comments.GET("/my", middleware.JWTAuth(), commentHandler.GetMyComments)    // 需要登录
+			comments.DELETE("/:id", middleware.JWTAuth(), commentHandler.Delete)       // 需要登录
 		}
 
 		// 日志相关（需要登录）
@@ -203,6 +203,7 @@ func main() {
 			api.GET("/users/:uid", adminHandler.GetUser)
 			api.GET("/comments", adminHandler.ListComments)
 			api.DELETE("/comments/:id", adminHandler.DeleteComment)
+			api.POST("/comments/rehash", adminHandler.RehashComments)
 			api.GET("/logs", adminHandler.ListLogs)
 		}
 

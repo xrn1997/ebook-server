@@ -63,6 +63,7 @@ func setup(t *testing.T) (*gin.Engine, *gorm.DB) {
 			api.GET("/users/:uid", h.GetUser)
 			api.GET("/comments", h.ListComments)
 			api.DELETE("/comments/:id", h.DeleteComment)
+			api.POST("/comments/rehash", h.RehashComments)
 			api.GET("/logs", h.ListLogs)
 		}
 	}
@@ -210,5 +211,95 @@ func TestAdminListLogs(t *testing.T) {
 	data := resp["data"].(map[string]interface{})
 	if int(data["total"].(float64)) < 1 {
 		t.Errorf("expected at least 1 log, got total=%v", data["total"])
+	}
+}
+
+// seedComment 直接入库一条归属某用户、挂在某聚合键下的评论。
+func seedComment(t *testing.T, db *gorm.DB, userID uint, content, commentKey string) {
+	t.Helper()
+	if err := db.Create(&model.Comment{
+		UserID: userID, Content: content, CommentKey: commentKey,
+	}).Error; err != nil {
+		t.Fatalf("seed comment failed: %v", err)
+	}
+}
+
+// countUnder 统计某聚合键下的评论行数（直查库，绕开被测端点）。
+func countUnder(t *testing.T, db *gorm.DB, commentKey string) int64 {
+	t.Helper()
+	var count int64
+	if err := db.Model(&model.Comment{}).Where("comment_key = ?", commentKey).Count(&count).Error; err != nil {
+		t.Fatalf("count comments failed: %v", err)
+	}
+	return count
+}
+
+// TestAdminRehashComments_CrossUser 后台全局改键跨用户生效，且返回受影响行数。
+//
+// 这正是它与公开 migrate 端点的唯一区别：桶污染时错键上聚着别人的评论，
+// 只动本人行的迁移救不了场。
+func TestAdminRehashComments_CrossUser(t *testing.T) {
+	r, db := setup(t)
+
+	seedComment(t, db, 1, "u1-mine", "ck1:polluted")
+	seedComment(t, db, 2, "u2-theirs", "ck1:polluted")
+	seedComment(t, db, 3, "u3-other", "ck1:untouched")
+
+	tok := adminLogin(t, r)
+	resp := perform(r, http.MethodPost, "/admin/api/comments/rehash",
+		`{"old_key":"ck1:polluted","new_key":"ck1:fixed"}`, tok)
+	if resp["code"] != "00000" {
+		t.Fatalf("rehash failed: %v", resp)
+	}
+	data := resp["data"].(map[string]interface{})
+	if int64(data["migrated_count"].(float64)) != 2 {
+		t.Errorf("expected migrated_count 2, got %v", data["migrated_count"])
+	}
+	if got := countUnder(t, db, "ck1:polluted"); got != 0 {
+		t.Errorf("expected polluted bucket emptied, got %v rows", got)
+	}
+	if got := countUnder(t, db, "ck1:fixed"); got != 2 {
+		t.Errorf("expected 2 rows under new key, got %v", got)
+	}
+	if got := countUnder(t, db, "ck1:untouched"); got != 1 {
+		t.Errorf("expected unrelated bucket untouched, got %v rows", got)
+	}
+}
+
+// TestAdminRehashComments_SameKey 新旧相同返回 A0305，而不是谎报「改了 0 行」。
+func TestAdminRehashComments_SameKey(t *testing.T) {
+	r, _ := setup(t)
+	tok := adminLogin(t, r)
+
+	resp := perform(r, http.MethodPost, "/admin/api/comments/rehash",
+		`{"old_key":"ck1:same","new_key":"ck1:same"}`, tok)
+	if resp["code"] != "A0305" {
+		t.Errorf("expected A0305, got %v", resp["code"])
+	}
+}
+
+// TestAdminRehashComments_RejectsEmptyOldKey 空 old_key 必须被拒。
+//
+// 公开的 migrate 允许空旧键（把本人未换键的历史行收进正确桶），这里绝不允许：
+// 不带用户过滤的空旧键等于把全站所有未换键的行扫进同一个桶，是制造污染而非修复。
+func TestAdminRehashComments_RejectsEmptyOldKey(t *testing.T) {
+	r, _ := setup(t)
+	tok := adminLogin(t, r)
+
+	resp := perform(r, http.MethodPost, "/admin/api/comments/rehash",
+		`{"old_key":"","new_key":"ck1:target"}`, tok)
+	if resp["code"] != "A0400" {
+		t.Errorf("expected A0400 for empty old_key, got %v", resp["code"])
+	}
+}
+
+// TestAdminRehashComments_RequiresToken 全局改键必须走后台鉴权（ADR-0010）。
+func TestAdminRehashComments_RequiresToken(t *testing.T) {
+	r, _ := setup(t)
+
+	resp := perform(r, http.MethodPost, "/admin/api/comments/rehash",
+		`{"old_key":"ck1:a","new_key":"ck1:b"}`, "")
+	if resp["code"] != "A0403" {
+		t.Errorf("expected A0403 without admin token, got %v", resp["code"])
 	}
 }

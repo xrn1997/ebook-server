@@ -40,14 +40,16 @@ type CommentStore interface {
 	Create(comment *model.Comment) error
 	FindByID(id uint) (*model.Comment, error)
 	FindAll(page, pageSize int) ([]model.Comment, int64, error)
-	// FindByBook 按书名查评论（聚合某书全部章节评论，供 book_name 单独过滤）。
+	// FindByBook 按书名查评论。已废弃：书名在 M2 后只是展示快照，不再参与聚合。
 	FindByBook(bookName string, page, pageSize int) ([]model.Comment, int64, error)
 	FindByUserID(userID uint, page, pageSize int) ([]model.Comment, int64, error)
 	FindAllByUserID(userID uint) ([]model.Comment, error)
-	// FindByChapterURLs 按章节聚合键查评论（bookName 可选二次过滤）：
-	// 传单个键即精确匹配该键，传多个键返回并集（合并书籍场景，M2）。
+	// FindByCommentKeys 按 M2 聚合键查评论（主读路径）：
+	// 传单个键即精确匹配该键，传多个键返回并集（跨书源合并同一作品）。
+	FindByCommentKeys(commentKeys []string, page, pageSize int) ([]model.Comment, int64, error)
+	// FindByChapterURLs 按旧聚合键（chapter_url，已废弃）查评论，仅为让未换键的历史行继续可读而保留。
 	FindByChapterURLs(chapterURLs []string, bookName string, page, pageSize int) ([]model.Comment, int64, error)
-	// MigrateKey 批量迁移某用户在旧聚合键下的评论到新聚合键，返回受影响行数。
+	// MigrateKey 批量迁移某用户在旧聚合键下的评论到新聚合键（作用列 comment_key），返回受影响行数。
 	MigrateKey(userID uint, oldKey, newKey string) (int64, error)
 	Delete(id uint) error
 	CanDelete(commentID, userID uint) (bool, error)

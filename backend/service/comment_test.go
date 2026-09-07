@@ -34,7 +34,10 @@ func TestCommentService_Create_Success(t *testing.T) {
 	}
 }
 
-// TestCommentService_Create_WithChapter 创建带章节归属的评论（ADR-0011）。
+// TestCommentService_Create_WithChapter 创建带聚合键与章节归属的评论（M2 + ADR-0011）。
+//
+// comment_key 是唯一的聚合键（必填），chapter_url/chapter_name/book_name 只是
+// 过渡期兼容与展示快照——两列同时写入，旧客户端与新客户端才都能读到。
 func TestCommentService_Create_WithChapter(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
@@ -45,6 +48,7 @@ func TestCommentService_Create_WithChapter(t *testing.T) {
 	commentService := testComments
 	createReq := &model.CreateCommentRequest{
 		Content:     "章节评论",
+		CommentKey:  "ck1:9f2c#2",
 		ChapterURL:  "https://src.example.com/book/1/2.html",
 		ChapterName: "第二章",
 		BookName:    "天启之书",
@@ -54,6 +58,9 @@ func TestCommentService_Create_WithChapter(t *testing.T) {
 		t.Fatalf("Failed to create chapter comment: %v", err)
 	}
 
+	if comment.CommentKey != createReq.CommentKey {
+		t.Errorf("comment_key not persisted: got %q, want %q", comment.CommentKey, createReq.CommentKey)
+	}
 	if comment.ChapterURL != createReq.ChapterURL ||
 		comment.ChapterName != createReq.ChapterName ||
 		comment.BookName != createReq.BookName {
@@ -61,7 +68,167 @@ func TestCommentService_Create_WithChapter(t *testing.T) {
 	}
 }
 
-// TestCommentService_GetByChapterURLs_SingleKey 单键查询即精确匹配（ADR-0011）。
+// ── M2 主读路径：GetByCommentKeys ────────────────────────────────────────
+
+// TestCommentService_GetByCommentKeys_SingleKey 单键查询即精确匹配该键。
+//
+// 键由客户端派生、服务端不解释，所以断言只看命中集合与作者视图，不校验键形态。
+func TestCommentService_GetByCommentKeys_SingleKey(t *testing.T) {
+	setupTestDB(t)
+	defer cleanupTestDB(t)
+
+	user := serviceRegister(t, testAuth, "ck_single@example.com", "password123")
+	commentService := testComments
+
+	keyA := "ck1:aaaa#1"
+	keyB := "ck1:aaaa#2"
+	for i := 0; i < 2; i++ {
+		commentService.Create(user.UID, &model.CreateCommentRequest{Content: "A", CommentKey: keyA, BookName: "书A"})
+	}
+	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "B", CommentKey: keyB, BookName: "书A"})
+
+	result, err := commentService.GetByCommentKeys([]string{keyA}, 1, 10)
+	if err != nil {
+		t.Fatalf("GetByCommentKeys failed: %v", err)
+	}
+	if result.Total != 2 || len(result.Items) != 2 {
+		t.Errorf("single key = total %d len %d, want 2/2", result.Total, len(result.Items))
+	}
+	for _, item := range result.Items {
+		if item.CommentKey != keyA {
+			t.Errorf("item comment_key = %q, want %q", item.CommentKey, keyA)
+		}
+		// 作者视图必须填充：评论响应只暴露 uid/username/nickname/avatar
+		if item.User.UID != user.UID {
+			t.Errorf("item author UID = %d, want %d", item.User.UID, user.UID)
+		}
+	}
+}
+
+// TestCommentService_GetByCommentKeys_Union 多键返回并集（跨书源合并同一作品）。
+func TestCommentService_GetByCommentKeys_Union(t *testing.T) {
+	setupTestDB(t)
+	defer cleanupTestDB(t)
+
+	user := serviceRegister(t, testAuth, "ck_union@example.com", "password123")
+	commentService := testComments
+
+	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "A1", CommentKey: "ck1:a#1"})
+	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "A2", CommentKey: "ck1:a#1"})
+	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "B1", CommentKey: "ck1:b#1"})
+	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "C1", CommentKey: "ck1:c#1"})
+
+	result, err := commentService.GetByCommentKeys([]string{"ck1:a#1", "ck1:b#1"}, 1, 10)
+	if err != nil {
+		t.Fatalf("GetByCommentKeys union failed: %v", err)
+	}
+	if result.Total != 3 || len(result.Items) != 3 {
+		t.Errorf("union = total %d len %d, want 3/3", result.Total, len(result.Items))
+	}
+}
+
+// TestCommentService_GetByCommentKeys_Pagination 并集分页并把分页参数归一化。
+func TestCommentService_GetByCommentKeys_Pagination(t *testing.T) {
+	setupTestDB(t)
+	defer cleanupTestDB(t)
+
+	user := serviceRegister(t, testAuth, "ck_pg@example.com", "password123")
+	commentService := testComments
+
+	for i := 0; i < 5; i++ {
+		commentService.Create(user.UID, &model.CreateCommentRequest{Content: "A", CommentKey: "ck1:a"})
+	}
+	for i := 0; i < 3; i++ {
+		commentService.Create(user.UID, &model.CreateCommentRequest{Content: "B", CommentKey: "ck1:b"})
+	}
+
+	keys := []string{"ck1:a", "ck1:b"}
+	page1, err := commentService.GetByCommentKeys(keys, 1, 3)
+	if err != nil {
+		t.Fatalf("GetByCommentKeys page 1 failed: %v", err)
+	}
+	if page1.Total != 8 || len(page1.Items) != 3 {
+		t.Errorf("page 1 = total %d len %d, want 8/3", page1.Total, len(page1.Items))
+	}
+	if page1.Page != 1 || page1.PageSize != 3 {
+		t.Errorf("page 1 echo = (%d,%d), want (1,3)", page1.Page, page1.PageSize)
+	}
+
+	// 末页只剩 2 条
+	page3, _ := commentService.GetByCommentKeys(keys, 3, 3)
+	if len(page3.Items) != 2 || page3.Total != 8 {
+		t.Errorf("page 3 = len %d total %d, want 2/8", len(page3.Items), page3.Total)
+	}
+
+	// page/page_size 非法值归一化为 1/10（全站列表接口的统一约定）
+	normalized, _ := commentService.GetByCommentKeys(keys, 0, 0)
+	if normalized.Page != 1 || normalized.PageSize != 10 {
+		t.Errorf("normalized = (%d,%d), want (1,10)", normalized.Page, normalized.PageSize)
+	}
+}
+
+// TestCommentService_GetByCommentKeys_SkipsUnkeyedRows 空键不属于任何桶。
+//
+// 空 comment_key = 尚未换键的历史行。它们必须从非空键过滤里消失，否则客户端一旦
+// 拼错键，就会把无主评论当成自己章节的内容显示出来。
+func TestCommentService_GetByCommentKeys_SkipsUnkeyedRows(t *testing.T) {
+	setupTestDB(t)
+	defer cleanupTestDB(t)
+
+	user := serviceRegister(t, testAuth, "ck_unkeyed@example.com", "password123")
+	commentService := testComments
+
+	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "无键旧评"})
+	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "有键", CommentKey: "ck1:a#1"})
+
+	result, err := commentService.GetByCommentKeys([]string{"ck1:a#1"}, 1, 10)
+	if err != nil {
+		t.Fatalf("GetByCommentKeys failed: %v", err)
+	}
+	if result.Total != 1 || len(result.Items) != 1 || result.Items[0].Content != "有键" {
+		t.Errorf("filter result = %+v, want only 有键", result.Items)
+	}
+	if result.Items[0].CommentKey != "ck1:a#1" {
+		t.Errorf("item comment_key = %q, want ck1:a#1", result.Items[0].CommentKey)
+	}
+}
+
+// TestCommentService_LegacyChapterURLStillReadable 未换键的历史行仍经旧路径可读。
+//
+// 服务端无法把 chapter_url 重算成 comment_key（算键需要作者，而作者从未入库），
+// 所以废弃读路径是这些评论唯一的出口——换聚合键不能把它们变成孤儿。
+func TestCommentService_LegacyChapterURLStillReadable(t *testing.T) {
+	setupTestDB(t)
+	defer cleanupTestDB(t)
+
+	user := serviceRegister(t, testAuth, "ck_legacy@example.com", "password123")
+	commentService := testComments
+
+	legacyURL := "https://src.example.com/book/9/1.html"
+	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "旧行", ChapterURL: legacyURL})
+
+	legacy, err := commentService.GetByChapterURLs([]string{legacyURL}, "", 1, 10)
+	if err != nil {
+		t.Fatalf("GetByChapterURLs failed: %v", err)
+	}
+	if legacy.Total != 1 || legacy.Items[0].CommentKey != "" {
+		t.Errorf("legacy row = %+v, want 1 条且 comment_key 为空", legacy.Items)
+	}
+
+	// 同一个字符串不是新键：按 comment_key 查必须为空
+	viaKey, err := commentService.GetByCommentKeys([]string{legacyURL}, 1, 10)
+	if err != nil {
+		t.Fatalf("GetByCommentKeys failed: %v", err)
+	}
+	if viaKey.Total != 0 {
+		t.Errorf("chapter_url value must not match comment_key, got %d", viaKey.Total)
+	}
+}
+
+// TestCommentService_GetByChapterURLs_SingleKey 已废弃路径：单键即精确匹配（ADR-0011）。
+//
+// M2 后聚合键换成 comment_key，这里守的是「旧客户端带 chapter_url + book_name 仍能查到」
+// 这条兼容承诺，不是主读路径（主路径见 GetByCommentKeys）。
 func TestCommentService_GetByChapterURLs_SingleKey(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
@@ -72,7 +239,7 @@ func TestCommentService_GetByChapterURLs_SingleKey(t *testing.T) {
 
 	urlA := "https://src.example.com/book/1/2.html"
 	urlB := "https://src.example.com/book/1/3.html"
-	// 章节 A 两条、章节 B 一条、书籍级一条
+	// 章节 A 两条、章节 B 一条、未换键（chapter_url 为空）一条
 	for i := 0; i < 2; i++ {
 		commentService.Create(user.UID, &model.CreateCommentRequest{Content: "A", ChapterURL: urlA, BookName: "书A"})
 	}
@@ -356,6 +523,7 @@ func TestCommentService_GetByChapterURLs_Union(t *testing.T) {
 	}
 }
 
+// TestCommentService_MigrateKey_Success 迁移作用于 comment_key，幂等重试返回 0。
 func TestCommentService_MigrateKey_Success(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
@@ -364,8 +532,9 @@ func TestCommentService_MigrateKey_Success(t *testing.T) {
 	user := serviceRegister(t, authService, "migrate@example.com", "password123")
 	commentService := testComments
 
-	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "c1", ChapterURL: "old-key"})
-	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "c2", ChapterURL: "old-key"})
+	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "c1", CommentKey: "old-key"})
+	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "c2", CommentKey: "old-key"})
+	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "c3", CommentKey: "other-key"})
 
 	count, err := commentService.MigrateKey(user.UID, "old-key", "new-key")
 	if err != nil {
@@ -376,12 +545,24 @@ func TestCommentService_MigrateKey_Success(t *testing.T) {
 	}
 
 	// 新键下应有 2 条
-	result, _ := commentService.GetByChapterURLs([]string{"new-key"}, "", 1, 10)
+	result, _ := commentService.GetByCommentKeys([]string{"new-key"}, 1, 10)
 	if result.Total != 2 {
 		t.Errorf("Expected 2 under new-key, got %d", result.Total)
 	}
+	// 旧键清空，邻键不受影响
+	if old, _ := commentService.GetByCommentKeys([]string{"old-key"}, 1, 10); old.Total != 0 {
+		t.Errorf("old-key should be empty, got %d", old.Total)
+	}
+	if other, _ := commentService.GetByCommentKeys([]string{"other-key"}, 1, 10); other.Total != 1 {
+		t.Errorf("other-key should be untouched, got %d", other.Total)
+	}
+	// 幂等：客户端重试不该报错，只是没有可迁的行了
+	if retry, err := commentService.MigrateKey(user.UID, "old-key", "new-key"); err != nil || retry != 0 {
+		t.Errorf("retry MigrateKey = (%d, %v), want (0, nil)", retry, err)
+	}
 }
 
+// TestCommentService_MigrateKey_SameKey 新旧相同返回 A0305。
 func TestCommentService_MigrateKey_SameKey(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
@@ -391,13 +572,17 @@ func TestCommentService_MigrateKey_SameKey(t *testing.T) {
 	if err != model.ErrCommentKeySame {
 		t.Errorf("Expected ErrCommentKeySame, got %v", err)
 	}
-	// 两键同时为空也是「相同」：空串是书籍级评论这个合法键（ADR-0011）
+	// 两键同时为空也是「相同」：那是「尚未换键」这个合法状态，
+	// 空→空什么也不改变，与其静默返回 0 不如回 A0305 让客户端发现传错了。
 	if _, err := commentService.MigrateKey(1, "", ""); err != model.ErrCommentKeySame {
 		t.Errorf("Expected empty-empty to be ErrCommentKeySame, got %v", err)
 	}
 }
 
-// TestCommentService_MigrateKey_BookLevelToChapter 旧键为空 = 把书籍级评论归到章节。
+// TestCommentService_MigrateKey_BookLevelToChapter 旧键为空 = 把本人未换键的历史行收进真实桶。
+//
+// M2 之前这些行就是「书籍级评论」（没有 chapter_url 可用），换轨后它们统一表现为
+// comment_key 为空。合并书籍时客户端先做这一步，否则会留下一批谁也读不回来的孤儿。
 func TestCommentService_MigrateKey_BookLevelToChapter(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
@@ -406,23 +591,27 @@ func TestCommentService_MigrateKey_BookLevelToChapter(t *testing.T) {
 	commentService := testComments
 
 	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "b1"})
-	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "b2", ChapterURL: ""})
-	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "c1", ChapterURL: "key-a"})
+	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "b2", CommentKey: ""})
+	commentService.Create(user.UID, &model.CreateCommentRequest{Content: "c1", CommentKey: "key-a"})
 
 	count, err := commentService.MigrateKey(user.UID, "", "ch-1")
 	if err != nil {
 		t.Fatalf("MigrateKey with empty old key failed: %v", err)
 	}
 	if count != 2 {
-		t.Errorf("Expected 2 book-level comments migrated, got %d", count)
+		t.Errorf("Expected 2 unkeyed comments migrated, got %d", count)
 	}
 
-	result, _ := commentService.GetByChapterURLs([]string{"ch-1"}, "", 1, 10)
+	result, _ := commentService.GetByCommentKeys([]string{"ch-1"}, 1, 10)
 	if result.Total != 2 {
 		t.Errorf("Expected 2 under ch-1, got %d", result.Total)
 	}
+	if other, _ := commentService.GetByCommentKeys([]string{"key-a"}, 1, 10); other.Total != 1 {
+		t.Errorf("key-a should be untouched, got %d", other.Total)
+	}
 }
 
+// TestCommentService_MigrateKey_UserIsolation 只迁本人，空键收拢也不例外。
 func TestCommentService_MigrateKey_UserIsolation(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
@@ -432,8 +621,10 @@ func TestCommentService_MigrateKey_UserIsolation(t *testing.T) {
 	user2 := serviceRegister(t, authService, "mig_u2@example.com", "password123")
 	commentService := testComments
 
-	commentService.Create(user1.UID, &model.CreateCommentRequest{Content: "u1c1", ChapterURL: "shared-key"})
-	commentService.Create(user2.UID, &model.CreateCommentRequest{Content: "u2c1", ChapterURL: "shared-key"})
+	commentService.Create(user1.UID, &model.CreateCommentRequest{Content: "u1c1", CommentKey: "shared-key"})
+	commentService.Create(user1.UID, &model.CreateCommentRequest{Content: "u1-unkeyed"})
+	commentService.Create(user2.UID, &model.CreateCommentRequest{Content: "u2c1", CommentKey: "shared-key"})
+	commentService.Create(user2.UID, &model.CreateCommentRequest{Content: "u2-unkeyed"})
 
 	// user1 迁移：只影响自己的 1 条
 	count, err := commentService.MigrateKey(user1.UID, "shared-key", "new-key")
@@ -445,8 +636,18 @@ func TestCommentService_MigrateKey_UserIsolation(t *testing.T) {
 	}
 
 	// user2 的评论仍在旧键下
-	result, _ := commentService.GetByChapterURLs([]string{"shared-key"}, "", 1, 10)
-	if result.Total != 1 {
-		t.Errorf("Expected 1 under shared-key for user2, got %d", result.Total)
+	result, _ := commentService.GetByCommentKeys([]string{"shared-key"}, 1, 10)
+	if result.Total != 1 || result.Items[0].User.UID != user2.UID {
+		t.Errorf("Expected 1 under shared-key owned by user2, got %+v", result.Items)
+	}
+
+	// 空键收拢同样按 user_id 收窄：只能带走 user1 自己那条未换键的行
+	swept, err := commentService.MigrateKey(user1.UID, "", "ch-1")
+	if err != nil || swept != 1 {
+		t.Fatalf("empty-old-key sweep = (%d, %v), want (1, nil)", swept, err)
+	}
+	remaining, _ := commentService.GetByCommentKeys([]string{""}, 1, 10)
+	if remaining.Total != 1 || remaining.Items[0].User.UID != user2.UID {
+		t.Errorf("user2's unkeyed row must stay unkeyed, got %+v", remaining.Items)
 	}
 }
