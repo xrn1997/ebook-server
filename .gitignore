@@ -197,8 +197,11 @@ Thumbs.db
 # Project-specific
 # =============================================================================
 
-# Database (SQLite)
+# Database (SQLite)。WAL 模式还会在库文件旁边生成 -wal/-shm 边车，
+# `*.db` 覆盖不到它们：跑一次服务就会让这两类运行时状态出现在 git status。
 *.db
+*.db-wal
+*.db-shm
 
 # Uploads
 uploads/
