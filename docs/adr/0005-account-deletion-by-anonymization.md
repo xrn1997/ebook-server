@@ -1,5 +1,7 @@
 # 账号注销用匿名化而非删除
 
+Status: accepted
+
 注销账号时清空凭据与可识别信息、把 `email` 改写为占位值，但**保留数据行与公开评论**；既不硬删除，也不软删除。
 
 ## 动机
@@ -34,8 +36,13 @@
 - 同一邮箱可无限次"注册 → 注销 → 再注册"，每次产生新的 uid。占位值因 uid 自增唯一而互不冲突。
 - 已注销的行永久保留（否则评论关联会断），但不含任何可识别信息与凭据。
 - 匿名化后的账号不可登录、不可按邮箱检索——`password` 已清空，`email` 已是占位值。
-- 注销后，用户的公开评论永久留在公开列表中，且他再也无法删改；重新注册也拿不回来。这是"保留公开内容"的固有代价。
+- 注销后，用户的公开评论永久留在公开列表中；重新注册也拿不回来。这是"保留公开内容"的固有代价。
+- 注销只删除 refresh token；无状态 access token 在剩余有效期内仍可调用 API（当前已知问题，见 `docs/development.md`）。token 过期后该账号不可登录，也就无法再删改公开内容。彻底作废需要 token 版本或黑名单。
 
-## 冲突
+## 与 ADR-0001 的关系
 
-与 ADR-0001 §3 冲突。该节要求 `refresh_tokens` 通过外键 `REFERENCES users(id)` 级联删除；本 ADR 保留 users 行，级联删除不再发生，注销时需显式删除该用户的 refresh token。
+ADR-0001 §3 规定的是双 token 的形态与轮换，不涉及外键；`backend/migrations/0001_init.sql`
+里的 `refresh_tokens` 也没有外键，注销不依赖级联删除。`AccountService.Delete` 显式删除
+该用户的 refresh token（清理失败只告警，见 `docs/development.md` 的「当前已知问题」）。
+
+锚点：`backend/service/account.go` 的 `Delete`；`backend/service/profile.go` 的 `ClearAvatar`。

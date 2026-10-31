@@ -1,18 +1,25 @@
-<script setup>
+<script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { login, token } from '../api.js'
+import { login, SUCCESS_CODE, token } from '../api'
 
 const router = useRouter()
 const username = ref('')
 const password = ref('')
 const error = ref('')
 
-async function submit() {
+async function submit(): Promise<void> {
   error.value = ''
   const resp = await login(username.value, password.value)
-  if (resp.code === '00000') {
-    token.set(resp.data.token)
+  const issued = resp.data?.token
+  if (resp.code === SUCCESS_CODE && issued) {
+    token.set(issued)
+    // token.set 在 localStorage 不可用/配额满时静默失败；继续跳转只会被路由守卫弹回
+    // 登录页，用户看不到任何原因。以读回值确认令牌真的落库了。
+    if (token.value !== issued) {
+      error.value = '无法保存登录状态，请检查浏览器是否禁用了本地存储'
+      return
+    }
     router.push('/')
   } else {
     error.value = resp.error || '登录失败'

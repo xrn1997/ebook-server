@@ -38,10 +38,10 @@ func TestPaginateQueryReturnsPageWindow(t *testing.T) {
 	uid := seedUser(t, "page@example.com", "page", "page")
 	repo := NewCommentRepository(testDB)
 	for _, key := range []string{"k1", "k2", "k3", "k4", "k5"} {
-		repo.Create(&model.Comment{UserID: uid, Content: "c", ChapterURL: key})
+		repo.Create(testCtx, &model.Comment{UserID: uid, Content: "c", ChapterURL: key})
 	}
 
-	comments, total, err := repo.FindByChapterURLs([]string{"k1", "k2", "k3"}, "", 2, 2)
+	comments, total, err := repo.FindByChapterURLs(testCtx, []string{"k1", "k2", "k3"}, "", 2, 2)
 	if err != nil {
 		t.Fatalf("FindByChapterURLs failed: %v", err)
 	}

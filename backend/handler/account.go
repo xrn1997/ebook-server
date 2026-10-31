@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"ebook-server/middleware"
 	"ebook-server/model"
 	"ebook-server/pkg/errcode"
 	"ebook-server/service"
@@ -33,13 +32,12 @@ func NewAccountHandler(accountService *service.AccountService) *AccountHandler {
 // @Success 200 {object} model.Response
 // @Router /api/users/me/data [get]
 func (h *AccountHandler) ExportMyData(c *gin.Context) {
-	userID, exists := middleware.GetCurrentUserID(c)
-	if !exists {
-		errcode.Error(c, errcode.LoginExpired, "未登录")
+	userID, signedIn := CurrentUser(c)
+	if !signedIn {
 		return
 	}
 
-	data, err := h.accountService.Export(userID)
+	data, err := h.accountService.Export(c.Request.Context(), userID)
 	if err != nil {
 		errcode.Respond(c, err, "导出用户数据失败")
 		return
@@ -57,13 +55,12 @@ func (h *AccountHandler) ExportMyData(c *gin.Context) {
 // @Success 200 {object} model.Response
 // @Router /api/users/me/deletion/send-code [post]
 func (h *AccountHandler) SendDeletionCode(c *gin.Context) {
-	userID, exists := middleware.GetCurrentUserID(c)
-	if !exists {
-		errcode.Error(c, errcode.LoginExpired, "未登录")
+	userID, signedIn := CurrentUser(c)
+	if !signedIn {
 		return
 	}
 
-	if err := h.accountService.SendDeletionCode(userID); err != nil {
+	if err := h.accountService.SendDeletionCode(c.Request.Context(), userID); err != nil {
 		errcode.Respond(c, err, "发送注销验证码失败")
 		return
 	}
@@ -82,19 +79,18 @@ func (h *AccountHandler) SendDeletionCode(c *gin.Context) {
 // @Success 200 {object} model.Response
 // @Router /api/users/me/deletion [post]
 func (h *AccountHandler) DeleteAccount(c *gin.Context) {
-	userID, exists := middleware.GetCurrentUserID(c)
-	if !exists {
-		errcode.Error(c, errcode.LoginExpired, "未登录")
+	userID, signedIn := CurrentUser(c)
+	if !signedIn {
 		return
 	}
 
 	var req model.DeleteAccountRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		errcode.Error(c, errcode.BadRequest, "请求参数错误: "+err.Error())
+		errcode.RespondBindError(c, err, "账号注销")
 		return
 	}
 
-	data, err := h.accountService.Delete(userID, req.Code)
+	data, err := h.accountService.Delete(c.Request.Context(), userID, req.Code)
 	if err != nil {
 		errcode.Respond(c, err, "注销账号失败")
 		return

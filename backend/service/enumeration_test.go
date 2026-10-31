@@ -1,7 +1,6 @@
 package service
 
 import (
-	"ebook-server/pkg/code"
 	"testing"
 )
 
@@ -10,15 +9,13 @@ func TestAuthService_SendForgotCode_UnknownEmail(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	authService := testAuth
-
-	if err := authService.SendForgotCode("nobody@example.com"); err != nil {
+	if err := testAuth.SendForgotCode(testCtx, "nobody@example.com"); err != nil {
 		t.Fatalf("Expected silent success for unknown email, got %v", err)
 	}
 
-	// 不得存下验证码——存了就等于向能探测该 key 的人泄露"邮箱未注册"
-	if got := testCodes.Verify("forgot:nobody@example.com", ""); got != code.ResultNotFound {
-		t.Error("Expected no code stored for an unregistered email")
+	// 不得下发验证码——下发了就等于向能收到该邮件的人泄露"邮箱未注册"
+	if n := testMails.countTo("nobody@example.com"); n != 0 {
+		t.Errorf("Expected no code mailed for an unregistered email, got %d", n)
 	}
 }
 
@@ -27,13 +24,12 @@ func TestAuthService_SendForgotCode_KnownEmail(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
-	authService := testAuth
-	serviceRegister(t, authService, "known@example.com", "password123")
+	serviceRegister(t, testAuth, "known@example.com", "password123")
 
-	if err := authService.SendForgotCode("known@example.com"); err != nil {
+	if err := testAuth.SendForgotCode(testCtx, "known@example.com"); err != nil {
 		t.Fatalf("Expected success for known email, got %v", err)
 	}
-	if got := testCodes.Verify("forgot:known@example.com", ""); got == code.ResultNotFound {
-		t.Error("Expected a code stored for a registered email")
+	if testMails.last("known@example.com") == "" {
+		t.Error("Expected a code mailed for a registered email")
 	}
 }

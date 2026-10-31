@@ -1,5 +1,8 @@
 # 前后端 monorepo 重组：backend/ + frontend/，单 exe 内嵌 Vue 管理前端
 
+Status: accepted
+Superseded in part by: 0024（desktop 成员撤销）
+
 将一个纯 Go 仓库重组为「Go 后端 + Vue 前端」的单一 monorepo：全部 Go 代码迁入 `backend/`，
 新增 `frontend/`（Vue 3 + Vite）承载后台管理系统，构建时把前端产物灌进 `backend/internal/admin/web`
 并以 `go:embed` 打进同一可执行文件——交付形态仍是单 exe。后台作为独立表面，与公开 API 分离鉴权。
@@ -35,13 +38,13 @@ ebook-server/
 ├── backend/        # Go module（现全部 Go 代码迁入，go.mod/go.sum 一并迁移）
 ├── frontend/       # Vue 3 + Vite 后台前端（独立 npm 工具链，不入 Go module）
 ├── docs/ sql/ README.md AGENTS.md CONTEXT.md TESTING.md config.yaml
-├── Makefile        # build = 前端 build → 灌 dist → go build(单 exe)
-└── Dockerfile      # 改为 backend/ 多阶段构建
+└── Makefile        # build = 前端 build → 灌 dist → go build(单 exe)
 ```
 
 * Go 入口保持单入口 `backend/main.go`（沿用「cmd/ 暂不使用」的既有约定）。
 
-* 公开 REST API 继续由 `backend/handler` 承载，路由在 `backend/main.go` 统一注册。
+* 公开 REST API 继续由 `backend/handler` 承载，路由表住 `backend/router/router.go`
+  （装配仍在 `backend/main.go`；路由登记与覆盖由 `backend/router` 的测试把关）。
 
 ### 2. 后台独立表面（backend/internal/admin）
 
@@ -63,10 +66,11 @@ ebook-server/
 
 * 产物仍是单 exe：运行时由 Go 静态服务 `web/`，并挂到 `/admin` 前端路由。
 
-### 4. 后台范围（四块）
+### 4. 后台范围
 
-只读运维概览（状态/健康/最近日志）、用户管理（列表/搜索/封禁）、内容审核（评论管理）、
-数据统计/图表。以 `frontend/src/` 的页面与 `backend/internal/admin/` 的 handler 对应实现。
+只读概览（用户数/评论数）、用户管理（列表/搜索/详情，不含封禁）、内容审核（评论搜索/删除/改键）、
+操作日志筛选。以 `frontend/src/views/` 的页面与 `backend/internal/admin/` 的 handler 对应实现；
+配置编辑、服务启停与运行监控不进后台（见 ADR-0024）。
 
 ## 被拒方案
 
@@ -84,9 +88,10 @@ ebook-server/
 
 * `backend/internal/admin` 新增：管理鉴权、users/comments/stats handler、`web/`(go:embed)。
 
-* `frontend/` 新增 Vue 3 + Vite 工程：`src/views/{overview,users,comments,stats}` + `api/` client。
+* `frontend/` 新增 Vue 3 + Vite 工程：`src/views/`（Dashboard/Users/Comments/Logs/ApiDocs/Login）+
+  `src/api.ts` 调用层 + `src/useAdminList.ts` 列表状态。
 
-* `Makefile`/`Dockerfile` 增加「前端 build → 灌 dist → go build」编排。
+* `Makefile` 增加「前端 build → 灌 dist → go build」编排。
 
 * `README.md`/`AGENTS.md`/`TESTING.md` 同步更新结构说明与命令。
 
@@ -95,7 +100,9 @@ ebook-server/
 ## 验收
 
 1. 结构迁入 `backend/` 后 `go build ./...`、`go test -count=1 ./backend/...` 全绿，对外 REST API 行为不变。
-2. `make build` 从零产出单文件 `ebook-server.exe`（内嵌 `frontend/dist/www` 静态资源与 index.html）。
+2. `make build` 从零产出单文件 `ebook-server.exe`（内嵌 `frontend/dist/` 的静态资源与 index.html，经 `backend/internal/admin/web` 灌入后由 `//go:embed all:web` 打进二进制）。
 3. 浏览器 `GET /admin` 返回内嵌前端首页；`backend/internal/admin` 的接口有独立鉴权，与公开 JWT 互不可用。
 4. 公开 API（认证/账号/评论）在重组后请求/响应与迁移前完全一致。
+
+锚点：`backend/internal/admin`；`frontend/`；`backend/router/router.go`。
 

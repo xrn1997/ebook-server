@@ -72,14 +72,16 @@ func TestCommentFields(t *testing.T) {
 
 func TestOperationLogFields(t *testing.T) {
 	log := OperationLog{
-		ID:           1,
-		UserID:       1,
-		Username:     "testuser",
-		Method:       "POST",
-		Path:         "/api/comments",
-		IP:           "127.0.0.1",
-		ResponseCode: 200,
-		CreatedAt:    time.Now(),
+		ID: 1,
+		OperationRecord: OperationRecord{
+			UserID:       1,
+			Username:     "testuser",
+			Method:       "POST",
+			Path:         "/api/comments",
+			IP:           "127.0.0.1",
+			ResponseCode: 200,
+		},
+		CreatedAt: time.Now(),
 	}
 
 	if log.Method != "POST" {

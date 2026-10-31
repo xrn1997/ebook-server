@@ -1,8 +1,10 @@
 # 桌面管理应用：Go 后端以 sidecar 复用，配置与凭据由主进程托管
 
+Status: superseded by 0024
+
 为「零命令行管理自己的 ebook-server」这一需求增加 `desktop/`（Electron + Vue 3）。
-设计文档见 `docs/superpowers/specs/2026-09-05-desktop-app-design.md`。本 ADR 记录其中
-三条会长期约束后续改动的决策：进程拓扑、配置所有权、后台鉴权的取得方式。
+本 ADR 记录三条会长期约束后续改动的决策：进程拓扑、配置所有权、后台鉴权的取得方式；
+实现细节以 `desktop/` 代码与测试为准。
 
 ## 现状
 
@@ -39,6 +41,17 @@ package.json 的 name、打包用 productName，两边落到不同目录，配�
 * 保存前按已知结构收敛（`sanitizeConfig`）：renderer 传来的未知键一律丢弃，
   一份畸形配置不能污染后端启动文件；
 * 密钥只进 `.env`，因此磁盘上的 `config.yaml` 不含任何明文凭据；
+* **首启由主进程生成随机 `JWT_SECRET` / `ADMIN_JWT_SECRET`**（`ensureManagedSecrets`）：
+  出厂模板里这两个字段是空串，而配置文件中的显式空值优先于后端的 `SetDefault`，空 HMAC
+  密钥等于让任何客户端给自己签一个任意 uid 的 access token。后端现在直接拒绝这种配置
+  启动，但那只让新装应用「点了启动却没服务」——在这里生成随机值，首启才既是安全的
+  又仍是零配置的。生成前同时检查 `.env` 与 `config.yaml`：只看 `.env` 会在升级或手工
+  删掉 `.env` 时覆盖用户已写在 YAML 里的密钥（合并时 `.env` 优先），下一次保存还会把它
+  永久搬走。`ADMIN_PASSWORD` **不在**自动生成之列：它是人要输入登录后台的口令，
+  随机生成等于把人永久挡在门外（读路径把敏感字段掩成空串，界面也无从把它显示出来），
+  留空只是让后台功能不可用，不构成安全破口；
+* **启动前也跑一次** **`validateConfig`**：过去只有保存路径校验，手工改盘的配置能一路走到
+  spawn，界面收到的只剩「后端启动超时」。拦在 `applyServiceConfig` 里才能给出人话；
 * **主进程是端点的唯一来源**：`server.port`、`admin.listen_port`、`database.path` 都
   由它解析后交给界面与健康检查。写死 9090/9091 会让用户改完端口后功能静默失效。
 
@@ -51,14 +64,16 @@ package.json 的 name、打包用 productName，两边落到不同目录，配�
 用户/评论/日志三个视图都要访问 `/admin/api/*`，而这些端点全部在 ADR-0010 的独立后台
 鉴权之后。桌面应用不再摆一个登录表单让用户重复输入自己刚在配置页填过的密码，而是由
 主进程用同一份受管配置里的 `admin.username`/`admin.password` 调 `POST /admin/api/login`，
-把换来的 JWT 交给 renderer（renderer 只拿得到可过期的令牌，拿不到密码）：
+把换来的 JWT **只留在主进程**（renderer 既拿不到密码，也拿不到令牌——它递一个 path 进来、
+拿回后端原样的信封，后台调用由主进程代调）：
 
 * 凭据与端点是**一体两面**：二者都由主进程持有，故「自动登录必然成功」的前提是
   后端启动时读的正是这份 `.env`；
-* token 生命周期跟随子进程：进入 `running` 时换取，停止/报错时作废
-  （已实现：`stopped` 与 `error` 都会 invalidate）；
-* 后台 JWT 60 分钟过期（ADR-0010），故 renderer 收到 `A0403/A0240/A0230` 时向主进程
-  强制重取一次并重试；换取请求在两侧都做合流，避免并发打爆 5 次/分钟的登录限流（`A0241`）。
+* token 生命周期跟随子进程：进入 `running` 时换取，停止/崩溃退避/报错时作废
+  （`stopped`、`restarting` 与 `error` 都会 invalidate）；
+* 后台 JWT 60 分钟过期（ADR-0010），故收到 `A0403/A0240/A0230` 时重取一次并重试；
+  换取请求的**合流与失效只有主进程一处**（renderer 拿不到 token，也不持有第二份缓存），
+  避免并发打爆 5 次/分钟的登录限流（`A0241`）。
 
 ### 4. 后台监听地址不接受通配值
 
@@ -103,3 +118,5 @@ GUI 暴露 `admin.listen_addr` 供局域网管理（ADR-0010 文档给出的用�
 * `.env` 里写 `SMTP_PASSWORD` 后，`config_test.go` 证明后端读到的 `smtp.password` 非空。
 * 停止服务走真优雅退出（后端 `signal.Notify`/`Shutdown` + stdin `shutdown` 指令），
   集成测试断言停止耗时远小于 5 秒宽限期。
+
+锚点：`backend/main.go` 的 `shutdown`（§1「请求优雅退出」的兑现）；ADR-0024。

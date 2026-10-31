@@ -19,8 +19,8 @@ func TestAdminSearchUsers(t *testing.T) {
 	tok := adminLogin(t, r)
 
 	users := repository.NewUserRepository(db)
-	users.Create(&model.User{Email: "alice@example.com", Password: "hp", Username: "alice", Nickname: "小艾"})
-	users.Create(&model.User{Email: "bob@example.com", Password: "hp", Username: "bob", Nickname: "阿鲍"})
+	users.Create(testCtx, &model.User{Email: "alice@example.com", Password: "hp", Username: "alice", Nickname: "小艾"})
+	users.Create(testCtx, &model.User{Email: "bob@example.com", Password: "hp", Username: "bob", Nickname: "阿鲍"})
 
 	cases := []struct {
 		name    string
@@ -53,9 +53,9 @@ func TestAdminGetUser(t *testing.T) {
 	users := repository.NewUserRepository(db)
 	comments := repository.NewCommentRepository(db)
 	user := &model.User{Email: "detail@example.com", Password: "hp", Username: "detail", Nickname: "详"}
-	users.Create(user)
-	comments.Create(&model.Comment{UserID: user.UID, Content: "c1"})
-	comments.Create(&model.Comment{UserID: user.UID, Content: "c2"})
+	users.Create(testCtx, user)
+	comments.Create(testCtx, &model.Comment{UserID: user.UID, Content: "c1"})
+	comments.Create(testCtx, &model.Comment{UserID: user.UID, Content: "c2"})
 
 	resp := perform(r, http.MethodGet, "/admin/api/users/"+strconv.FormatUint(uint64(user.UID), 10), "", tok)
 	if resp["code"] != "00000" {
@@ -84,11 +84,11 @@ func TestAdminSearchComments(t *testing.T) {
 
 	users := repository.NewUserRepository(db)
 	user := &model.User{Email: "c@example.com", Password: "hp", Username: "c", Nickname: "c"}
-	users.Create(user)
+	users.Create(testCtx, user)
 	comments := repository.NewCommentRepository(db)
-	comments.Create(&model.Comment{UserID: user.UID, Content: "很精彩", BookName: "书A"})
-	comments.Create(&model.Comment{UserID: user.UID, Content: "一般", BookName: "书A"})
-	comments.Create(&model.Comment{UserID: user.UID, Content: "精彩绝伦", BookName: "书B"})
+	comments.Create(testCtx, &model.Comment{UserID: user.UID, Content: "很精彩", BookName: "书A"})
+	comments.Create(testCtx, &model.Comment{UserID: user.UID, Content: "一般", BookName: "书A"})
+	comments.Create(testCtx, &model.Comment{UserID: user.UID, Content: "精彩绝伦", BookName: "书B"})
 
 	cases := []struct {
 		name  string
@@ -113,6 +113,43 @@ func TestAdminSearchComments(t *testing.T) {
 	}
 }
 
+// TestAdminListComments_UsesFixedViewWithoutEmail 后台评论列表用固定视图：
+// 含 content/created_at，user 只含展示字段，不再夹带 email。
+func TestAdminListComments_UsesFixedViewWithoutEmail(t *testing.T) {
+	r, db := setup(t)
+	tok := adminLogin(t, r)
+
+	users := repository.NewUserRepository(db)
+	user := &model.User{Email: "comment-view@example.com", Password: "hp", Username: "commenter", Nickname: "commenter"}
+	if err := users.Create(testCtx, user); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	comments := repository.NewCommentRepository(db)
+	if err := comments.Create(testCtx, &model.Comment{UserID: user.UID, Content: "可见内容", CommentKey: "ck1:admin-view"}); err != nil {
+		t.Fatalf("seed comment: %v", err)
+	}
+
+	resp := perform(r, http.MethodGet, "/admin/api/comments", "", tok)
+	if resp["code"] != "00000" {
+		t.Fatalf("resp = %v", resp)
+	}
+	list := resp["data"].(map[string]interface{})["list"].([]interface{})
+	item := list[0].(map[string]interface{})
+	if item["content"] != "可见内容" {
+		t.Fatalf("content missing: %v", item)
+	}
+	if _, ok := item["created_at"]; !ok {
+		t.Fatal("created_at missing")
+	}
+	userView := item["user"].(map[string]interface{})
+	if _, ok := userView["email"]; ok {
+		t.Fatal("后台评论视图不应包含 email；它只在用户详情里出现")
+	}
+	if userView["username"] != "commenter" {
+		t.Fatalf("user view missing username: %v", userView)
+	}
+}
+
 // TestAdminDeleteComment 后台删除不做归属校验；删后从列表消失，重复删返回 A0304。
 func TestAdminDeleteComment(t *testing.T) {
 	r, db := setup(t)
@@ -120,10 +157,10 @@ func TestAdminDeleteComment(t *testing.T) {
 
 	users := repository.NewUserRepository(db)
 	user := &model.User{Email: "del@example.com", Password: "hp", Username: "del", Nickname: "del"}
-	users.Create(user)
+	users.Create(testCtx, user)
 	comments := repository.NewCommentRepository(db)
 	comment := &model.Comment{UserID: user.UID, Content: "target", BookName: "书A"}
-	comments.Create(comment)
+	comments.Create(testCtx, comment)
 
 	path := fmt.Sprintf("/admin/api/comments/%d", comment.ID)
 	assertAdminCode(t, perform(r, http.MethodDelete, path, "", tok), "00000")
@@ -145,12 +182,12 @@ func TestAdminFilterLogs(t *testing.T) {
 
 	users := repository.NewUserRepository(db)
 	user := &model.User{Email: "l@example.com", Password: "hp", Username: "l", Nickname: "l"}
-	users.Create(user)
+	users.Create(testCtx, user)
 	logs := repository.NewLogRepository(db)
-	logs.Create(&model.OperationLog{UserID: user.UID, Method: "GET", Path: "/api/comments", ErrorCode: "00000"})
-	logs.Create(&model.OperationLog{UserID: user.UID, Method: "POST", Path: "/api/comments", ErrorCode: "A0303"})
+	logs.Create(testCtx, &model.OperationLog{OperationRecord: model.OperationRecord{UserID: user.UID, Method: "GET", Path: "/api/comments", ErrorCode: "00000"}})
+	logs.Create(testCtx, &model.OperationLog{OperationRecord: model.OperationRecord{UserID: user.UID, Method: "POST", Path: "/api/comments", ErrorCode: "A0303"}})
 	// 非信封流量无业务码，「只看失败」不得把它算进去
-	logs.Create(&model.OperationLog{Method: "GET", Path: "/missing", ResponseCode: 404})
+	logs.Create(testCtx, &model.OperationLog{OperationRecord: model.OperationRecord{Method: "GET", Path: "/missing", ResponseCode: 404}})
 
 	cases := []struct {
 		name  string

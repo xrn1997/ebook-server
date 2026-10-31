@@ -7,52 +7,31 @@ Go 后端 + Vue 后台管理前端，构建后前端内嵌进单一可执行文�
 
 ## 技术栈
 
-- **语言**: Go 1.22
+- **语言**: Go 1.23
 - **Web 框架**: Gin
 - **ORM**: GORM + SQLite（glebarez/sqlite，纯 Go 驱动，零配置）
 - **认证**: JWT（用户 token 与后台管理 token 相互隔离）
 - **配置**: Viper（YAML + `.env` 覆盖）
 - **日志**: Zap
-- **数据库**: SQLite（单文件数据库，AutoMigrate 自动建表）
+- **数据库**: SQLite（单文件数据库，版本化迁移）
 - **后台前端**: Vue 3 + Vite（构建产物 go:embed 进单 exe）
 
 ## 项目结构
 
-```
-ebook-server/
-├── backend/               # Go 后端（module 根，全部 Go 代码在此）
-│   ├── main.go            # 程序入口（依赖装配唯一装配点，ADR-0007）
-│   ├── config/            # 配置管理
-│   ├── internal/admin/    # 后台管理系统（独立表面、独立鉴权、内嵌前端）
-│   ├── middleware/        # 中间件（JWT 认证、CORS、日志、操作审计、panic 恢复）
-│   ├── model/             # 数据模型（GORM 实体、请求/响应结构体、错误）
-│   ├── handler/           # HTTP 处理器
-│   ├── service/           # 业务逻辑（事务编排、业务规则）
-│   ├── repository/        # 数据访问（GORM 查询）
-│   ├── pkg/               # 公共组件
-│   │   ├── code/          # 验证码存储与校验
-│   │   ├── database/      # 数据库连接初始化
-│   │   ├── errcode/       # 五位业务码与统一响应
-│   │   ├── jwt/           # JWT token 生成与解析
-│   │   ├── logger/        # Zap 日志初始化
-│   │   ├── mail/          # SMTP 邮件发送
-│   │   ├── ratelimit/     # 内存限流器
-│   │   └── upload/        # 头像文件存储与公开访问（ADR-0011）
-│   └── docs/              # swag 生成的 Swagger 文档（make docs 更新）
-├── frontend/              # 后台管理前端（Vue 3 + Vite，构建后灌入 backend/internal/admin/web）
-├── desktop/               # 桌面管理应用（Electron + Vue 3，以 sidecar 复用 Go 后端，ADR-0012）
-├── docs/                  # ADR 设计决策记录
-├── sql/                   # 数据库脚本（MySQL 参考，实际用 SQLite）
-├── config.yaml            # 运行配置
-├── Dockerfile             # Docker 构建
-└── Makefile               # 常用命令
-```
+- `backend/` — Go 后端（公开 API、后台 API、业务与数据层）
+- `frontend/` — 后台管理前端（构建产物内嵌进 Go 二进制）
+- `docs/` — 架构、ADR、开发手册与文档规范
+- `sql/` — 数据库参考脚本（实际使用 SQLite）
+
+分层、依赖方向与每条语义的主人见 [docs/architecture.md](docs/architecture.md)；构建与测试命令见 [docs/development.md](docs/development.md)。
 
 ## 快速开始
 
 ### 环境要求
 
-- Go 1.22+
+- Go 1.23+
+- Node.js 20+（仅构建后台前端时需要）
+- Windows 构建服务端 exe 时需要 MinGW-w64（提供 `windres`；WinLibs 自带）
 - 无需安装数据库（SQLite 自动创建）
 
 ### 安装步骤
@@ -66,26 +45,42 @@ ebook-server/
 2. **安装依赖**
    ```bash
    cd backend && go mod tidy
+   cd ..
    ```
 
-3. **运行项目**
+3. **构建并运行项目**
    ```bash
-   make run    # 等价于 cd backend && go run main.go
+   make all
+   ./build/ebook-server   # Windows 为 build/ebook-server.exe
    ```
+
+   `make all` 会先构建后台前端，再把产物内嵌进 Go 二进制；这样 `/admin` 才是完整后台。
+   只需要公开 API 时可改用 `make run`，但它在未执行 `make all` 时只提供占位页。
+
+   必须从仓库根启动：`main.go` 按相对路径读 `config.yaml`，而该文件（以及 `ebook.db`、
+   `uploads/`）都落在工作目录下——在 `backend/` 里 `go run main.go` 会找不到配置。
 
    首次运行会自动创建 `ebook.db` 数据库文件与 `uploads/` 目录。
 
 ### 使用 Makefile
 
 ```bash
-make build    # 前端 build → 灌 dist → go build，产出单 exe（内嵌后台前端）
-make run      # 运行
+make all      # 前端 build + 后端 build，产出内嵌后台前端的单 exe
+make build    # 仅构建 Go 后端（复用已有的 frontend/dist）
+make run      # 在 backend/ 构建到 build/，再从仓库根启动
 make docs     # 重新生成 Swagger 文档（swag init，需先安装 swag）
+make frontend-test  # 后台前端类型检查 + vitest
 make clean    # 清理
-make docker   # Docker 构建
 ```
 
 ## API 接口
+
+### 服务自身
+
+| 方法 | 路径 | 说明 | 认证 |
+|------|------|------|------|
+| GET | /health | 健康检查，无需认证、不入操作审计 | 否 |
+| GET | /api-docs/ | Swagger UI + OpenAPI spec。**公开端口默认关闭**（`api_docs.enabled`，防接口清单泄露）；后台端口 9091 始终提供 | 否 |
 
 ### 认证相关
 
@@ -101,6 +96,12 @@ make docker   # Docker 构建
 
 > **账号模型**：`email` 是登录主标识（唯一必填），`uid` 是主键，`username` 非空但
 > 可重复（注册时自动生成，可后改）。详见 [ADR-0002](docs/adr/0002-email-based-registration-and-account-model.md)。
+>
+> **验证码错误码**：注册 / 找回密码 / 注销三个流程共用一套判定，下发与校验同源于
+> `VerificationCodes` 模块（[ADR-0008](docs/adr/0008-verification-code-sender-module.md)）。
+> `A0132` 验证码错误或已过期（含没发过、已消费、跨流程使用）；`A0241` 尝试次数超限
+> ——既指发码限流（每邮箱每流程 1 次/分钟、5 次/小时），也指校验累计错满 5 次，
+> 三个用验证码的端点都会回它。
 
 ### 用户相关
 
@@ -115,7 +116,8 @@ make docker   # Docker 构建
 
 > **账号注销说明**（[ADR-0005](docs/adr/0005-account-deletion-by-anonymization.md)）
 >
-> * 注销采用**匿名化**而非删除：改写 `email` 为占位值、清空密码与头像，账号不可再登录
+> * 注销采用**匿名化**而非删除：改写 `email` 为占位值、清空密码与头像（头像文件尽力清理，
+>   仍被其他账号引用的文件保留），账号不可再登录
 > * 同一邮箱注销后可以**重新注册**（占位 email 释放了唯一索引）
 > * **公开评论与操作日志保留**——评论作者将显示为"已注销用户"
 > * **不可撤销**：注销前请先用 `GET /api/users/me/data` 导出数据，注销响应也会带上同一份副本
@@ -124,34 +126,42 @@ make docker   # Docker 构建
 
 | 方法 | 路径 | 说明 | 认证 |
 |------|------|------|------|
-| GET | /api/comments | 评论列表，支持 `chapter_url`/`book_name` 章节过滤；`chapter_url` 可传多个，返回并集 | 否 |
-| POST | /api/comments | 创建评论，支持章节归属（`chapter_url`/`chapter_name`/`book_name`，可选） | 是 |
+| GET | /api/comments | 评论列表，按 `comment_keys`（逗号分隔的聚合键）过滤并返回并集；`chapter_url`/`book_name` 已废弃，仅兼容旧数据 | 否 |
+| POST | /api/comments | 创建评论，`comment_key` **必填**，`chapter_name`/`book_name` 为可选展示快照 | 是 |
 | GET | /api/comments/my | 获取我的评论 | 是 |
-| POST | /api/comments/migrate-key | 迁移自己评论的聚合键（旧键→新键，仅本人；同键返回 `A0305`） | 是 |
+| POST | /api/comments/migrate | 迁移自己评论的聚合键（旧键→新键，作用列 `comment_key`，仅本人；同键返回 `A0305`） | 是 |
 | DELETE | /api/comments/:id | 删除评论（仅本人，非本人返回 `A0303`） | 是 |
 
-> **评论章节归属**（[ADR-0011](docs/adr/0011-comment-chapter-and-avatar-upload.md)）：
-> 评论按书源章节 URL 组织（`chapter_url` 为聚合键，`chapter_name`/`book_name` 为展示快照，
-> 后端原样存储、不校验格式）。不传章节字段 = 书籍级评论，兼容既有数据。
+> **评论聚合键**（[ADR-0011](docs/adr/0011-comment-chapter-and-avatar-upload.md) →
+> [ADR-0014](docs/adr/0014-comment-key-switch-to-client-derived-token.md)）：
+> 聚合键 `comment_key` 由**客户端**从「书名+作者」派生（`ck1:` + sha256，章评追加 `#章序号`），
+> 后端**只存不解释**：不校验格式、不建书籍表、不提供「列出所有书」。创建时缺键直接 `A0400`——
+> 缺键的评论会落进任何查询都命中不到的空桶。`chapter_url`/`book_name` 已废弃（前者仅作历史行
+> 的兼容读路径，两者都只是展示快照）；`comment_key` 为空串代表换轨前的历史行，不是书籍级评论。
 > 评论响应用独立视图：`user` 只含 `uid/username/nickname/avatar`（不含 email），
 > `add_time` 固定上海时区 `yyyy-MM-dd HH:mm:ss` 格式。
 > 评论域错误码：`A0303` 无权删除、`A0304` 评论不存在、`A0305` 聚合键与旧键相同（`A0301`/`A0302` 预留）。
+> 键的规则只有一处实现：公开的 `/api/comments/migrate`（改**本人**行）与后台
+> `/admin/api/comments/rehash`（改**全员**行）只差[改键归属范围](CONTEXT.md)，空目标键、
+> 全员范围内的空旧键、超过 200 字节的键都回 `A0400`；列表的 `comment_keys`/`chapter_url`
+> 过滤同样以 `A0400` 挡住超长与超数（上限 50 个键、单键 200/2048 字节）。
+> 后台的 rehash 只有 API：管理页面不提供改键按钮，跨用户修键是运维动作，不是日常治理动作。
 
 ### 头像上传
 
 | 方法 | 路径 | 说明 | 认证 |
 |------|------|------|------|
 | POST | /api/uploads/avatar | 上传头像（multipart，字段名 `avatar`，jpg/png/webp ≤5MB），返回图片 URL | 是 |
-| GET | /uploads/* | 上传文件的静态访问（仅头像等公开资源） | 否 |
+| GET | /uploads/avatar/* | 头像的静态访问（只挂头像子目录，upload.dir 下的其他文件不放出去） | 否 |
 
 > **头像两步提交**（ADR-0011）：先 `POST /api/uploads/avatar` 拿到 `{url}`，
-> 再 `PUT /api/users/me` 携带 `{"avatar": "<url>"}` 完成更新；更换头像时旧文件自动清理。
+> 再 `PUT /api/users/me` 携带 `{"avatar": "<url>"}` 完成更新；更换头像时，旧文件在没有任何
+> 账号的头像仍指向它时自动清理（引用按 URL 的文件名判定，host 写法不同也算同一个文件）。
 
 ### 日志相关
 
 | 方法 | 路径 | 说明 | 认证 |
 |------|------|------|------|
-| GET | /api/logs | 获取操作日志 | 是 |
 | GET | /api/logs/my | 获取我的操作日志 | 是 |
 
 ## 后台管理系统
@@ -162,36 +172,38 @@ make docker   # Docker 构建
 - **网络隔离**（[ADR-0010](docs/adr/0010-admin-network-isolation.md)）：后台独立监听
   `admin.listen_addr:admin.listen_port`（默认 `127.0.0.1:9091`），**公网物理上无法连接**；
   远程管理请走 SSH 隧道 / VPN，不要直接开放后台端口
-- **登录限流**：后台登录 5 次/分钟/来源 IP，超限返回 `A0241`
-- 本机访问：`http://127.0.0.1:9091/admin`（账号密码见 `config.yaml` 的 `admin` 段，生产必须修改）
+- **登录限流**：后台登录失败尝试 5 次/分钟/来源 IP，超限返回 `A0241`；成功登录不消耗配额
+- 本机访问：`http://127.0.0.1:9091/admin`（账号见 `admin.username`，密码来自 `config.yaml` 或 `.env` 的 `ADMIN_PASSWORD`；生产必须修改）
 - 后台引擎自带 Swagger 文档（`http://127.0.0.1:9091/api-docs/`），供本机查阅
 
 ### 后台管理 API
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
+| POST | /admin/api/login | 后台登录（失败尝试按来源 IP 限流 5 次/分钟，超限 `A0241`），返回管理端 token |
 | GET | /admin/api/stats | 用户数 + 评论数 |
 | GET | /admin/api/users | 用户列表（分页；`keyword` 模糊匹配邮箱/用户名/昵称，纯数字兼命中 UID） |
 | GET | /admin/api/users/:uid | 用户详情（资料 + 该用户评论数） |
 | GET | /admin/api/comments | 评论列表（分页；`keyword` 内容模糊、`book_name` 精确过滤） |
 | DELETE | /admin/api/comments/:id | 删除评论（后台治理，软删除，不做归属校验） |
+| POST | /admin/api/comments/rehash | 全局改评论聚合键（跨用户，旧键→新键；空旧键一律拒绝 `A0400`，同键 `A0305`） |
 | GET | /admin/api/logs | 操作日志（分页；`method`/`path`/`user_id`/`error_code`/`failed` 筛选） |
 
-### 桌面管理应用
+> 评论列表返回固定视图 `AdminCommentView`：作者只含 `uid`/`username`/`nickname`/`avatar`，
+> **不含 email**，也不直接序列化评论实体。后台治理删与作者删共用同一删除实现，只差归属范围
+> （[ADR-0015](docs/adr/0015-comment-scope-and-admin-view.md)）。
 
-`desktop/`（Electron + Vue 3）把上面这套后台能力装进一个桌面窗口（[ADR-0012](docs/adr/0012-desktop-admin-app-sidecar.md)）：
+### 内嵌 web 后台
 
-- **同一后端**：Go 二进制作为 sidecar 子进程被带动，桌面端不含任何业务逻辑
-- **托管配置**：`config.yaml` 与 `.env` 存在用户数据目录（Windows `%APPDATA%/ebook-server/`，
-  开发与安装版同路径），GUI 改端口/SMTP/密钥后保存，重启服务即生效；密钥只写 `.env` 不写 `config.yaml`
-- **免登录**：用户/评论/日志视图所需的后台 JWT 由主进程用受管的 `admin` 凭据自动换取，
-  密码不进渲染进程
+后台页面随二进制一起交付，与后台 API 同源（`/admin/api/*`），无需另起前端服务：
+
 - **完整管理能力**（[ADR-0013](docs/adr/0013-comment-key-migration-and-admin-api.md)）：
-  用户搜索与详情、评论搜索与删除（两步确认）、日志筛选、全部列表支持分页
-- **优雅停止**：停止先向 sidecar 的 stdin 写退出指令，Go 侧优雅关闭两个监听并落库，
-  5 秒宽限期只兜底
-- 开发/测试：`make desktop-test`（先编译 sidecar，再 typecheck + vitest——集成用例需要
-  sidecar 二进制，直接 `npm test` 会整段跳过）；运行：`make desktop-dev`；打包：`make desktop-package`
+  用户搜索与详情、评论搜索与删除（两步确认）、日志筛选，全部列表支持分页
+- **会话**：管理 token 存浏览器 `localStorage`，只用于同源 `/admin/api` 调用；
+  鉴权失败自动清除并回登录页
+- **配置与服务控制不在页面里**：`config.yaml` / `.env` 由部署者维护，进程交给 systemd
+  或直接启动；后台只做数据管理，不托管密钥
+- 开发/测试：`make frontend-dev` / `make frontend-test`；构建：`make all`
 
 ## 请求示例
 
@@ -279,16 +291,19 @@ curl http://localhost:9090/api/users/me \
 
 ### 创建评论
 
+`comment_key` 必填。作品键（不含 `#`）即书籍级评论：
+
 ```bash
 curl -X POST http://localhost:9090/api/comments \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <your-token>" \
   -d '{
-    "content": "这是一条评论"
+    "content": "这是一条评论",
+    "comment_key": "ck1:3a7f...e91"
   }'
 ```
 
-带章节归属（可选字段，不传则为书籍级评论）：
+章评键在作品键后追加 `#章序号`，展示快照可选：
 
 ```bash
 curl -X POST http://localhost:9090/api/comments \
@@ -296,25 +311,28 @@ curl -X POST http://localhost:9090/api/comments \
   -H "Authorization: Bearer <your-token>" \
   -d '{
     "content": "这一章的剧情真精彩",
-    "chapter_url": "https://src.example.com/book/42/5.html",
+    "comment_key": "ck1:3a7f...e91#4",
     "chapter_name": "第五章",
     "book_name": "示例之书"
   }'
 ```
 
-### 查询章节评论
+### 查询评论
 
 ```bash
-curl "http://localhost:9090/api/comments?chapter_url=https%3A%2F%2Fsrc.example.com%2Fbook%2F42%2F5.html&page=1&page_size=20"
+curl "http://localhost:9090/api/comments?comment_keys=ck1%3A3a7f...e91%234&page=1&page_size=20"
 ```
 
 > 列表统一返回分页包裹结构 `{items, total, page, page_size}`，按 `add_time` 倒序。
 
-`chapter_url` 可重复传，返回这些章节评论的**并集**（合并书籍场景）：
+`comment_keys` 用逗号传多个键，返回这些桶评论的**并集**（跨书源合并同一作品）：
 
 ```bash
-curl "http://localhost:9090/api/comments?chapter_url=<key-a>&chapter_url=<key-b>"
+curl "http://localhost:9090/api/comments?comment_keys=ck1:aaa%234,ck1:bbb%234"
 ```
+
+> 已废弃的 `chapter_url`（可重复传）与 `book_name` 仍可用于读取换轨前的历史行，
+> 但新客户端不应依赖：后端算不出这些行对应的 `comment_key`（派生需要作者，而作者从未入库）。
 
 ### 上传头像（两步提交）
 
@@ -335,22 +353,19 @@ curl -X PUT http://localhost:9090/api/users/me \
   -d '{"avatar": "http://<host>:9090/uploads/avatar/xxxx.png"}'
 ```
 
-## Docker 部署
+## 部署
 
-### 构建镜像
-
-```bash
-docker build -t ebook-server .
-```
-
-### 运行容器
+后台前端已内嵌在二进制里，部署只需要二进制、`config.yaml` 与可选的 `.env`：
 
 ```bash
-docker run -p 9090:9090 ebook-server
+make all
+./build/ebook-server   # Windows 为 build/ebook-server.exe
 ```
 
-> 后台管理（`/admin`）默认监听容器内 `127.0.0.1:9091`，**不从容器外部暴露**（安全默认）。
-> 如需外部访问后台，改 `admin.listen_addr` 为 `0.0.0.0` 并映射端口——仅限内网受信环境。
+服务必须从放有 `config.yaml` 的工作目录启动；`ebook.db`、`uploads/`、`logs/` 都相对该目录。
+交付物只有这一个二进制与配置文件：**不提供容器镜像**，进程由 systemd 或其它进程管理器
+托管，把工作目录设为部署目录即可。后台默认只监听
+`127.0.0.1:9091`，远程管理请走 SSH 隧道/VPN，不要改成通配监听。
 
 ## 配置说明
 
@@ -360,6 +375,7 @@ docker run -p 9090:9090 ebook-server
 server:
   port: 9090            # 服务端口（config.yaml 与代码默认值一致，均为 9090）
   mode: debug           # 运行模式: debug, release, test
+  public_base_url: ""   # 头像等公开资源的来源，如 https://book.example.com；留空则按请求 Host 拼接（仅限受信网络，见 ADR-0011）
 
 database:
   path: ebook.db      # SQLite 数据库文件路径
@@ -368,19 +384,19 @@ api_docs:
   enabled: false      # 公开端口是否提供 Swagger 文档（默认关，防接口清单泄露；开启后会连后台管理端点清单一并展示，仅限受控网络临时开启）
 
 jwt:
-  secret: your-secret-key  # JWT 密钥（请修改）
+  secret: your-secret-key-change-this  # JWT 密钥（请修改）
   expire_min: 120          # access token 过期时间（分钟）
 
 admin:
   username: admin            # 后台管理系统账号
-  password: change-me        # 后台密码（真实值放 .env 的 ADMIN_PASSWORD）
-  jwt_secret: your-admin-secret  # 管理端 JWT 密钥（.env 的 ADMIN_JWT_SECRET 覆盖）
+  password: change-me-admin  # 后台密码（真实值放 .env 的 ADMIN_PASSWORD）
+  jwt_secret: your-admin-secret-change-this  # 管理端 JWT 密钥（.env 的 ADMIN_JWT_SECRET 覆盖）
   expire_min: 60             # 管理端 token 有效期（分钟）
   listen_addr: 127.0.0.1     # 后台监听地址：默认仅本机（公网不可达）；局域网访问改内网 IP
   listen_port: 9091          # 后台监听端口（与公开 API 的 9090 分离）
 
 smtp:
-  host: smtp.example.com   # SMTP 服务器（留空则验证码写日志）
+  host: smtp.example.com   # SMTP 服务器（非 release 模式下留空则验证码写日志）
   port: 465                # 465 走 TLS；587 走 STARTTLS
   username: no-reply@example.com
   password: change-me      # 真实授权码放 .env 的 SMTP_PASSWORD
@@ -388,132 +404,38 @@ smtp:
   insecure: false
 
 upload:
-  dir: uploads             # 上传文件根目录（头像存 <dir>/avatar/，经 /uploads/* 公开）
+  dir: uploads             # 上传文件根目录（头像存 <dir>/avatar/，仅该子目录经 /uploads/avatar/* 公开）
 ```
 
-> 敏感项走本地 `.env`（已被 git 排除）：`SMTP_PASSWORD` 覆盖 `smtp.password`，
-> `JWT_SECRET` 覆盖 `jwt.secret`。见 `.env.example`。
+> 敏感项走本地 `.env`（已被 git 排除）：`JWT_SECRET` 覆盖 `jwt.secret`，`SMTP_PASSWORD` 覆盖
+> `smtp.password`，`ADMIN_PASSWORD` 覆盖 `admin.password`，`ADMIN_JWT_SECRET` 覆盖
+> `admin.jwt_secret`。见 `.env.example`。
+>
+> **不安全的密钥配置会在启动时被拒绝**：`jwt.secret` / `admin.jwt_secret` / `upload.dir`
+> 留空一律拒绝启动，`mode: release` 下还拒绝代码内置的默认值。注意配置文件里的显式空值
+> **优先于**代码默认值——留空不等于「用默认的」，那会把 HMAC 密钥变成空串、任何人都能给自己
+> 签一个任意用户的 access token。环境变量（`JWT_SECRET` / `ADMIN_JWT_SECRET` / `ADMIN_PASSWORD`）
+> 优先于 YAML。
+>
+> **配置契约只有一份**：字段来自 `backend/config/config.go` 的 `mapstructure` 标签，
+> 默认值、环境变量覆盖与校验规则来自 `backend/config/schema.go`；`config.Load` 在启动时执行
+> 完整校验（空密钥、非法端口、通配后台监听等直接拒绝）。配置只由部署者通过 YAML/.env
+> 维护，不经过浏览器后台。
 
 ## 开发说明
 
-### 添加新接口
+添加新接口的标准流程、依赖方向与测试门禁见 [docs/development.md](docs/development.md) 与 [docs/architecture.md](docs/architecture.md)。
 
-Go 代码全部位于 `backend/` 下：
-
-1. 在 `backend/model/` 中定义数据模型
-2. 在 `backend/repository/` 中实现数据访问
-3. 在 `backend/service/` 中实现业务逻辑
-4. 在 `backend/handler/` 中实现 API 处理（含 Swagger 注解）
-5. 在 `backend/main.go` 中注册路由
-6. 编写对应测试（见测试结构）
-7. 修改接口注解后运行 `make docs` 重新生成 Swagger 文档
-
-> 详细规范见 [AGENTS.md](AGENTS.md)（分层约定、提交规范、已知问题等）。
-
-### 数据库迁移
-
-项目使用 GORM 自动迁移，启动时会自动创建/更新表结构。
+数据库使用版本化迁移（`backend/migrations/`）：新库启动时执行 SQL 基线，AutoMigrate 时代的旧库会自动收养。新增 schema 变更见 [docs/development.md](docs/development.md) 的「数据库迁移」。
 
 ## 测试
 
-### 运行测试
-
 ```bash
-# 运行所有测试（Go 代码在 backend/ 下）
-cd backend
-go test ./...
-
-# 运行测试并显示详细信息
-go test -v ./...
-
-# 运行测试并生成覆盖率报告
-go test -cover ./...
-
-# 生成详细的覆盖率报告
-go test -coverprofile=coverage.out ./...
-go tool cover -html=coverage.out -o coverage.html
-
-# 运行指定包的测试
-go test -v ./model/...
-go test -v ./service/...
-go test -v ./handler/...
-go test -v ./pkg/upload/...
-
-# 运行指定测试函数
-go test -v -run TestGenerateToken ./pkg/jwt/...
+cd backend && go test ./...
+make frontend-test   # 后台前端类型检查 + vitest
 ```
 
-### 测试结构
-
-```
-backend/
-├── model/
-│   └── model_test.go          # 模型测试
-├── pkg/
-│   ├── code/
-│   │   └── store_test.go      # 验证码存储测试
-│   ├── errcode/
-│   │   └── errcode_test.go    # 业务码测试
-│   ├── jwt/
-│   │   └── jwt_test.go        # JWT 工具测试
-│   ├── ratelimit/
-│   │   └── limiter_test.go    # 限流器测试
-│   └── upload/
-│       └── upload_test.go     # 头像存储测试（校验/命名/删除/防穿越）
-├── middleware/
-│   ├── auth_test.go           # 认证中间件测试
-│   ├── cors_test.go           # 跨域中间件测试
-│   └── recovery_test.go       # 恢复中间件测试
-├── repository/
-│   ├── user_test.go           # 用户仓库测试
-│   ├── comment_test.go        # 评论仓库测试（含章节过滤）
-│   ├── log_test.go            # 日志仓库测试
-│   └── refresh_token_test.go  # 刷新令牌仓库测试
-├── service/
-│   ├── auth_test.go           # 认证服务测试
-│   ├── user_test.go           # 用户服务测试
-│   ├── comment_test.go        # 评论服务测试（含章节归属/过滤）
-│   └── log_test.go            # 日志服务测试
-└── handler/
-    ├── auth_test.go           # 认证接口测试
-    ├── user_test.go           # 用户接口测试
-    ├── comment_test.go        # 评论接口测试（含章节/删除权限）
-    ├── upload_test.go         # 头像上传接口测试
-    └── log_test.go            # 日志接口测试
-```
-
-### 测试覆盖率目标
-
-- **model**: > 90%
-- **pkg**: > 85%
-- **service**: > 80%
-- **handler**: > 75%
-
-详细测试文档请查看 [TESTING.md](TESTING.md)
-
-### 测试类型
-
-1. **单元测试**: 测试单个函数/方法的逻辑
-2. **集成测试**: 测试模块间的交互
-3. **接口测试**: 测试 HTTP API 的请求和响应
-
-### 使用 testify 增强测试
-
-```bash
-go get -u github.com/stretchr/testify
-```
-
-```go
-import (
-    "github.com/stretchr/testify/assert"
-    "github.com/stretchr/testify/require"
-)
-
-func TestSomething(t *testing.T) {
-    assert.Equal(t, expected, actual)
-    require.NoError(t, err)
-}
-```
+完整的测试策略、测试结构、覆盖率口径、前端测试见 [TESTING.md](TESTING.md)；构建/门禁命令见 [docs/development.md](docs/development.md)。
 
 ## License
 

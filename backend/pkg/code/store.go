@@ -39,8 +39,8 @@ type item struct {
 
 // Store 基于内存 map 的验证码存储（单进程直接可用）
 //
-// 以调用方传入的 key 为键（形如 "reg:"+email / "forgot:"+email，见 service/auth.go），
-// 支持验证码再获取与错误重试次数限制（A0241）。
+// 键的形态由调用方决定（电子书服务侧由 VerificationCodes 统一按流程命名，见
+// service/verification.go），本包对其含义无感。支持错误重试次数限制（A0241）。
 type Store struct {
 	mu    sync.RWMutex
 	codes map[string]*item
@@ -63,21 +63,21 @@ func NewCode() string {
 	return fmt.Sprintf("%06d", n.Int64())
 }
 
-// Save 以 key 为键保存新生成的验证码并返回该验证码
+// Save 以 key 为键保存新生成的验证码并返回该验证码。
+//
+// 本包刻意不提供「写入指定码」的入口：码由这里生成，测试想拿到码就得走
+// 真实的下发链路（VerificationCodes.Send + 记录型 Mailer），
+// 而不是猜调用方的键格式——那会把命名空间约定漏到每个用例里。
 func (s *Store) Save(key string) string {
 	codeVal := NewCode()
-	s.Set(key, codeVal)
-	return codeVal
-}
 
-// Set 直接写入指定验证码（测试或重放场景使用）
-func (s *Store) Set(key, codeVal string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.codes[key] = &item{
 		code:     codeVal,
 		expireAt: time.Now().Add(TTL),
 	}
+	return codeVal
 }
 
 // Verify 校验验证码：成功删除记录并返回 ResultOK；

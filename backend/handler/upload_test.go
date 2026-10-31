@@ -42,7 +42,7 @@ func TestUploadAvatar_Success(t *testing.T) {
 	uploadHandler := app.uploads
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
-	router.POST("/api/uploads/avatar", middleware.JWTAuth(), uploadHandler.UploadAvatar)
+	router.POST("/api/uploads/avatar", middleware.JWTAuth(app.tokens), uploadHandler.UploadAvatar)
 
 	_, token := registerUser(t, router, "upload@example.com")
 
@@ -65,7 +65,7 @@ func TestUploadAvatar_NoAuth(t *testing.T) {
 	app := newTestApp(t)
 	router := setupRouter()
 	uploadHandler := app.uploads
-	router.POST("/api/uploads/avatar", middleware.JWTAuth(), uploadHandler.UploadAvatar)
+	router.POST("/api/uploads/avatar", middleware.JWTAuth(app.tokens), uploadHandler.UploadAvatar)
 
 	body, contentType := uploadMultipartBody(t, "avatar", "me.png", "fake-png")
 	req := httptest.NewRequest(http.MethodPost, "/api/uploads/avatar", body)
@@ -74,6 +74,39 @@ func TestUploadAvatar_NoAuth(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assertErrorCode(t, w.Body.Bytes(), "A0230")
+}
+
+// TestUploadAvatar_MissingFile 未带 avatar 字段按请求格式错误处理，
+// 不回 multipart 解析器原文。
+func TestUploadAvatar_MissingFile(t *testing.T) {
+	app := newTestApp(t)
+
+	router := setupRouter()
+	authHandler := app.auth
+	uploadHandler := app.uploads
+	router.POST("/api/auth/register", authHandler.Register)
+	router.POST("/api/auth/login", authHandler.Login)
+	router.POST("/api/uploads/avatar", middleware.JWTAuth(app.tokens), uploadHandler.UploadAvatar)
+
+	_, token := registerUser(t, router, "missing-avatar@example.com")
+
+	body, contentType := uploadMultipartBody(t, "other", "me.png", "fake-png")
+	req := httptest.NewRequest(http.MethodPost, "/api/uploads/avatar", body)
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("响应不是合法信封: %v / %s", err, w.Body.String())
+	}
+	if resp["code"] != "A0400" {
+		t.Errorf("业务码应为 A0400，got %v (error=%v)", resp["code"], resp["error"])
+	}
+	if resp["error"] != "请求格式不正确" {
+		t.Errorf("应回统一的绑定错误文案，got %q", resp["error"])
+	}
 }
 
 // TestUploadAvatar_BadFormat 非白名单格式返回 A0400。
@@ -85,7 +118,7 @@ func TestUploadAvatar_BadFormat(t *testing.T) {
 	uploadHandler := app.uploads
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
-	router.POST("/api/uploads/avatar", middleware.JWTAuth(), uploadHandler.UploadAvatar)
+	router.POST("/api/uploads/avatar", middleware.JWTAuth(app.tokens), uploadHandler.UploadAvatar)
 
 	_, token := registerUser(t, router, "upload_bad@example.com")
 
@@ -103,9 +136,9 @@ func TestUploadAvatar_BadFormat(t *testing.T) {
 func TestUpdateAvatar_DeletesOldFile(t *testing.T) {
 	app := newTestApp(t)
 
-	// 用可控的临时目录构建上传 store + userService（清理逻辑在 service.Update 内）
-	uploads := upload.New(t.TempDir())
-	userSvc := service.NewUserService(repository.NewUserRepository(app.db), uploads)
+	// 用可控的临时目录构建上传 store + ProfileService（清理逻辑在 service.Update 内）
+	uploads := upload.New(t.TempDir(), "")
+	userSvc := service.NewProfileService(repository.NewUserRepository(app.db), uploads)
 	app.user = NewUserHandler(userSvc, app.user.authService)
 
 	router := setupRouter()
@@ -114,8 +147,8 @@ func TestUpdateAvatar_DeletesOldFile(t *testing.T) {
 	userHandler := app.user
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
-	router.POST("/api/uploads/avatar", middleware.JWTAuth(), uploadHandler.UploadAvatar)
-	router.PUT("/api/users/me", middleware.JWTAuth(), userHandler.UpdateMe)
+	router.POST("/api/uploads/avatar", middleware.JWTAuth(app.tokens), uploadHandler.UploadAvatar)
+	router.PUT("/api/users/me", middleware.JWTAuth(app.tokens), userHandler.UpdateMe)
 
 	_, token := registerUser(t, router, "avatar_update@example.com")
 

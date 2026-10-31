@@ -31,7 +31,7 @@ func TestUserHandler_GetMe_WithAuth(t *testing.T) {
 	userHandler := app.user
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
-	router.GET("/api/users/me", middleware.JWTAuth(), userHandler.GetMe)
+	router.GET("/api/users/me", middleware.JWTAuth(app.tokens), userHandler.GetMe)
 
 	_, token := registerUser(t, router, "auth@example.com")
 
@@ -53,7 +53,7 @@ func TestUserHandler_GetMe_InvalidToken(t *testing.T) {
 	app := newTestApp(t)
 	router := setupRouter()
 	userHandler := app.user
-	router.GET("/api/users/me", middleware.JWTAuth(), userHandler.GetMe)
+	router.GET("/api/users/me", middleware.JWTAuth(app.tokens), userHandler.GetMe)
 
 	req, _ := http.NewRequest("GET", "/api/users/me", nil)
 	req.Header.Set("Authorization", "Bearer invalid-token")
@@ -71,7 +71,7 @@ func TestUserHandler_UpdateMe_Success(t *testing.T) {
 	userHandler := app.user
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
-	router.PUT("/api/users/me", middleware.JWTAuth(), userHandler.UpdateMe)
+	router.PUT("/api/users/me", middleware.JWTAuth(app.tokens), userHandler.UpdateMe)
 
 	_, token := registerUser(t, router, "update@example.com")
 
@@ -105,7 +105,7 @@ func TestUserHandler_UpdateMe_EmailImmutable(t *testing.T) {
 	userHandler := app.user
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
-	router.PUT("/api/users/me", middleware.JWTAuth(), userHandler.UpdateMe)
+	router.PUT("/api/users/me", middleware.JWTAuth(app.tokens), userHandler.UpdateMe)
 
 	_, token := registerUser(t, router, "immutable-h@example.com")
 
@@ -128,7 +128,7 @@ func TestUserHandler_UpdateMe_InvalidEmail(t *testing.T) {
 	userHandler := app.user
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
-	router.PUT("/api/users/me", middleware.JWTAuth(), userHandler.UpdateMe)
+	router.PUT("/api/users/me", middleware.JWTAuth(app.tokens), userHandler.UpdateMe)
 
 	_, token := registerUser(t, router, "invalid-email@example.com")
 
@@ -151,7 +151,7 @@ func TestUserHandler_ChangePassword_Success(t *testing.T) {
 	userHandler := app.user
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
-	router.PUT("/api/users/me/password", middleware.JWTAuth(), userHandler.ChangePassword)
+	router.PUT("/api/users/me/password", middleware.JWTAuth(app.tokens), userHandler.ChangePassword)
 
 	email := "changepwd@example.com"
 	_, token := registerUser(t, router, email)
@@ -183,7 +183,7 @@ func TestUserHandler_ChangePassword_WrongOldPassword(t *testing.T) {
 	userHandler := app.user
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
-	router.PUT("/api/users/me/password", middleware.JWTAuth(), userHandler.ChangePassword)
+	router.PUT("/api/users/me/password", middleware.JWTAuth(app.tokens), userHandler.ChangePassword)
 
 	_, token := registerUser(t, router, "wrongold@example.com")
 
@@ -202,7 +202,7 @@ func TestUserHandler_UpdateMe_NoAuth(t *testing.T) {
 	app := newTestApp(t)
 	router := setupRouter()
 	userHandler := app.user
-	router.PUT("/api/users/me", middleware.JWTAuth(), userHandler.UpdateMe)
+	router.PUT("/api/users/me", middleware.JWTAuth(app.tokens), userHandler.UpdateMe)
 
 	body := map[string]string{"username": "newname"}
 	jsonBody, _ := json.Marshal(body)
@@ -222,7 +222,7 @@ func TestUserHandler_UpdateMe_InvalidJSON(t *testing.T) {
 	userHandler := app.user
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
-	router.PUT("/api/users/me", middleware.JWTAuth(), userHandler.UpdateMe)
+	router.PUT("/api/users/me", middleware.JWTAuth(app.tokens), userHandler.UpdateMe)
 
 	_, token := registerUser(t, router, "invalidjson@example.com")
 
@@ -239,7 +239,7 @@ func TestUserHandler_ChangePassword_NoAuth(t *testing.T) {
 	app := newTestApp(t)
 	router := setupRouter()
 	userHandler := app.user
-	router.PUT("/api/users/me/password", middleware.JWTAuth(), userHandler.ChangePassword)
+	router.PUT("/api/users/me/password", middleware.JWTAuth(app.tokens), userHandler.ChangePassword)
 
 	body := map[string]string{"old_password": "old", "new_password": "new"}
 	jsonBody, _ := json.Marshal(body)
@@ -259,7 +259,7 @@ func TestUserHandler_ChangePassword_InvalidJSON(t *testing.T) {
 	userHandler := app.user
 	router.POST("/api/auth/register", authHandler.Register)
 	router.POST("/api/auth/login", authHandler.Login)
-	router.PUT("/api/users/me/password", middleware.JWTAuth(), userHandler.ChangePassword)
+	router.PUT("/api/users/me/password", middleware.JWTAuth(app.tokens), userHandler.ChangePassword)
 
 	_, token := registerUser(t, router, "invalidpwd@example.com")
 

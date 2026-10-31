@@ -1,5 +1,7 @@
 # 登录主标识不可变
 
+Status: accepted
+
 `email` 作为登录主标识在注册时确定，此后不提供任何变更流程；可变性只属于展示用名（ADR-0002）。换邮箱服务商的用户出路是注销账号后重新注册（ADR-0005），而不是变更邮箱。
 
 ## 动机
@@ -34,3 +36,5 @@ ADR-0002 把可变性明确分配给了 `username`（"非空但可重复，注�
 ## 冲突
 
 与 ADR-0001 §4 冲突。该节将 `email` 描述为"注册时必填，作为密码找回唯一通道"，并未讨论可变性，本 ADR 在其基础上补充"不可变"。ADR-0001 的响应信封与双 token 部分不受影响。
+
+锚点：`backend/service/profile.go` 的 `Update`；`backend/model/errors.go` 的 `ErrEmailImmutable`。

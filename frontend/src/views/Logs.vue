@@ -1,84 +1,133 @@
-<script setup>
+<script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { fetchLogs } from '../api.js'
+import { useAdminList } from '../useAdminList'
+import { fetchLogs, SUCCESS_CODE, type AdminLog } from '../api'
+import Pager from '../components/Pager.vue'
 
-const rows = ref([])
-const error = ref('')
-const openId = ref(null)
+const method = ref('')
+const path = ref('')
+const onlyFailed = ref(false)
+const openId = ref<number | null>(null)
 
-onMounted(async () => {
-  const resp = await fetchLogs()
-  if (resp.code === '00000') rows.value = resp.data.list
-  else error.value = resp.error || '加载失败'
-})
+const { rows, total, page, pageCount, hasPrev, hasNext, error, loading, reload, nextPage, prevPage } =
+  useAdminList<AdminLog>((p) =>
+    fetchLogs({ ...p, method: method.value, path: path.value, failed: onlyFailed.value }),
+  )
 
-function toggle(id) {
+onMounted(reload)
+
+/** 筛选条件变化后回到第 1 页 */
+function search(): void {
+  void reload()
+}
+
+/** 展开/收起一条日志的详情（同一时刻只展开一行） */
+function toggle(id: number): void {
   openId.value = openId.value === id ? null : id
+}
+
+/**
+ * 业务码徽标的样式。
+ *
+ * 空码不是成功：审计只在响应体是 JSON 时才取得到信封，空值意味着「没观察到成败」
+ * （非 JSON / 超过 4 KiB 的成功响应被截断），按成功渲染会把审计盲区说成正常。
+ */
+function codeClass(code: string): string {
+  if (!code) return 'unknown'
+  return code === SUCCESS_CODE ? 'ok' : 'err'
 }
 </script>
 
 <template>
   <div>
-    <h2>请求日志</h2>
-    <p class="sub">后台审计视图：点击行可展开详情。error_code 为 "00000" 表示成功，非 00000 即业务失败。</p>
-    <p v-if="error" class="err">{{ error }}</p>
-    <table v-else>
-      <thead>
-        <tr>
-          <th>时间</th>
-          <th>方法</th>
-          <th>路径</th>
-          <th>IP</th>
-          <th class="code-col">业务码</th>
-        </tr>
-      </thead>
-      <tbody>
-        <template v-for="l in rows" :key="l.id">
-          <tr class="row" @click="toggle(l.id)">
-            <td>{{ l.created_at }}</td>
-            <td><code>{{ l.method }}</code></td>
-            <td class="path">{{ l.path }}</td>
-            <td>{{ l.ip }}</td>
-            <td>
-              <span :class="['badge', l.error_code && l.error_code !== '00000' ? 'err' : 'ok']">
-                {{ l.error_code || '—' }}
-              </span>
-            </td>
+    <h2>操作日志</h2>
+    <p class="sub">后台审计视图：点击行可展开详情</p>
+
+    <div class="card toolbar">
+      <select v-model="method" class="method-select" @change="search">
+        <option value="">全部方法</option>
+        <option value="GET">GET</option>
+        <option value="POST">POST</option>
+        <option value="PUT">PUT</option>
+        <option value="DELETE">DELETE</option>
+      </select>
+      <input v-model="path" placeholder="路径片段" @keyup.enter="search" />
+      <label class="check">
+        <input v-model="onlyFailed" type="checkbox" @change="search" /> 只看失败
+      </label>
+      <button class="btn btn-primary" :disabled="loading" @click="search">筛选</button>
+    </div>
+
+    <p v-if="loading" class="sub">加载中…</p>
+    <p v-else-if="error" class="err">{{ error }}</p>
+    <template v-else>
+      <table>
+        <thead>
+          <tr>
+            <th>时间</th>
+            <th>方法</th>
+            <th>路径</th>
+            <th>IP</th>
+            <th>业务码</th>
           </tr>
-          <tr v-if="openId === l.id" class="detail-row">
-            <td colspan="5">
-              <dl>
-                <div><dt>ID</dt><dd>{{ l.id }}</dd></div>
-                <div><dt>用户</dt><dd>{{ l.user_id || l.username || '-' }}</dd></div>
-                <div><dt>状态</dt><dd>{{ l.response_code }}</dd></div>
-                <div><dt>业务码</dt><dd>{{ l.error_code || '—' }}</dd></div>
-                <div><dt>业务文案</dt><dd>{{ l.error_message || '—' }}</dd></div>
-                <div><dt>User-Agent</dt><dd class="wrap">{{ l.user_agent || '—' }}</dd></div>
-                <div><dt>发起时间</dt><dd>{{ l.created_at }}</dd></div>
-              </dl>
-            </td>
+        </thead>
+        <tbody>
+          <template v-for="l in rows" :key="l.id">
+            <tr class="row" @click="toggle(l.id)">
+              <td>{{ l.created_at }}</td>
+              <td><code>{{ l.method }}</code></td>
+              <td class="path">{{ l.path }}</td>
+              <td>{{ l.ip }}</td>
+              <td>
+                <span class="badge" :class="codeClass(l.error_code)">
+                  {{ l.error_code || '—' }}
+                </span>
+              </td>
+            </tr>
+            <tr v-if="openId === l.id">
+              <td colspan="5" class="detail-cell">
+                <dl class="detail-grid">
+                  <div><dt>ID</dt><dd>{{ l.id }}</dd></div>
+                  <div><dt>用户</dt><dd>{{ l.username || l.user_id || '-' }}</dd></div>
+                  <div><dt>状态码</dt><dd>{{ l.response_code }}</dd></div>
+                  <div><dt>业务码</dt><dd>{{ l.error_code || '—' }}</dd></div>
+                  <div><dt>业务文案</dt><dd>{{ l.error_message || '—' }}</dd></div>
+                  <div><dt>User-Agent</dt><dd class="wrap">{{ l.user_agent || '—' }}</dd></div>
+                </dl>
+              </td>
+            </tr>
+          </template>
+          <tr v-if="rows.length === 0">
+            <td colspan="5" class="sub">没有匹配的记录</td>
           </tr>
-        </template>
-      </tbody>
-    </table>
+        </tbody>
+      </table>
+
+      <Pager
+        :page="page"
+        :page-count="pageCount"
+        :total="total"
+        unit="条记录"
+        :has-prev="hasPrev"
+        :has-next="hasNext"
+        @prev="prevPage"
+        @next="nextPage"
+      />
+    </template>
   </div>
 </template>
 
 <style scoped>
-h2 { font-size: 20px; }
-.sub { color: #64748b; font-size: 14px; }
-table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; }
-th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; white-space: nowrap; }
-th { background: #f8fafc; color: #475569; }
-.path { max-width: 300px; overflow: hidden; text-overflow: ellipsis; }
+.toolbar { display: flex; gap: 8px; align-items: center; }
+.toolbar input:not([type="checkbox"]) { flex: 1; padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 8px; }
+.method-select { width: 120px; padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 8px; }
+.check { display: flex; align-items: center; gap: 4px; font-size: 14px; }
 .row { cursor: pointer; }
 .row:hover { background: #f8fafc; }
-.badge { padding: 1px 8px; border-radius: 9999px; font-size: 12px; font-weight: 600; }
-.badge.ok { background: #ecfdf5; color: #047857; }
-.badge.err { background: #fef2f2; color: #b91c1c; }
-.detail-row td { background: #f8fafc; white-space: normal; }
-dl { margin: 0; display: grid; grid-template-columns: 110px 1fr; gap: 6px 12px; }
-dt { color: #64748b; }
-dd { margin: 0; word-break: break-all; }
-.err { color: #dc2626; }
+.path { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.detail-cell { background: #f8fafc; }
+.detail-grid { display: grid; grid-template-columns: 110px 1fr; gap: 6px 12px; margin: 0; }
+.detail-grid dt { color: #64748b; }
+.detail-grid dd { margin: 0; }
+.wrap { word-break: break-all; }
 </style>

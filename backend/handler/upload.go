@@ -34,7 +34,7 @@ func NewUploadHandler(store *upload.Store) *UploadHandler {
 // @Success 200 {object} model.Response
 // @Router /api/uploads/avatar [post]
 func (h *UploadHandler) UploadAvatar(c *gin.Context) {
-	// 登录态由路由组 JWTAuth 保证（main.go 装配，handler 内不再重复校验）
+	// 登录态由 router.Public 的鉴权路由组保证（装配点注入解析单元），handler 内不再重复校验
 
 	// 限制请求体大小：超限时 FormFile 会返回 "request body too large"，
 	// 防止恶意超大 multipart 占用内存/磁盘（5MB 上限 + 1MB multipart 开销余量）
@@ -42,17 +42,22 @@ func (h *UploadHandler) UploadAvatar(c *gin.Context) {
 
 	file, err := c.FormFile("avatar")
 	if err != nil {
-		errcode.Error(c, errcode.BadRequest, "请选择头像文件（jpg/png/webp，≤5MB）")
+		// 走到这里还没拿到文件，成因是「没带 avatar 字段」或「请求体超过 MaxBytesReader
+		// 上限」，与图片本身合规与否无关：两者都是请求格式问题，交给统一绑定错误
+		// 处理，原始错误只进日志，不把 multipart 解析器细节回给客户端。
+		errcode.RespondBindError(c, err, "上传头像")
 		return
 	}
 
 	name, err := h.store.SaveAvatar(file)
 	if err != nil {
-		if err == upload.ErrInvalidImage {
-			errcode.Error(c, errcode.BadRequest, err.Error())
+		// 保存失败里「格式/大小不合规」已由 errcode 表映射成 A0400（pkg/errcode）；
+		// 其余（目录缺失/权限/磁盘等）是基础设施问题，记录具体错误再回兜底文案，
+		// 否则用户侧只能看到一句「头像保存失败」，运维也无从定位。
+		if code := errcode.From(err); code != errcode.ServerError {
+			errcode.Respond(c, err, "头像上传失败")
 			return
 		}
-		// 记录具体错误（目录缺失/权限/磁盘等），否则用户侧只能看到兜底文案，难以定位
 		logger.Error("保存头像失败", zap.Error(err))
 		errcode.Error(c, errcode.ServerError, "头像保存失败")
 		return

@@ -1,6 +1,7 @@
 server:
   port: 9090
   mode: debug  # debug, release, test
+  public_base_url: ""  # 头像等公开资源的绝对 URL 来源，如 https://book.example.com；留空则按请求 Host 拼接（仅限受信网络，见 docs/adr/0011）
 
 database:
   path: ebook.db  # SQLite 数据库文件路径
@@ -19,6 +20,9 @@ admin:
   expire_min: 60                 # 管理端 token 有效期（分钟）
   listen_addr: 127.0.0.1         # 后台监听地址：默认仅本机 127.0.0.1（公网不可达）；需局域网访问改为内网 IP
   listen_port: 9091              # 后台监听端口（与公开 API 的 9090 分离）
+
+upload:
+  dir: uploads               # 上传文件根目录（头像存 <dir>/avatar/，仅该子目录经 /uploads/avatar/* 公开）
 
 smtp:
   host: smtp.example.com     # SMTP 服务器（如 smtp.qq.com / smtp.163.com）

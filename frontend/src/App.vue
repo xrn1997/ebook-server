@@ -1,6 +1,6 @@
-<script setup>
+<script setup lang="ts">
 import { useRoute } from 'vue-router'
-import { token } from './api.js'
+import { token } from './api'
 
 const route = useRoute()
 const nav = [
@@ -10,6 +10,11 @@ const nav = [
   { to: '/logs', label: '请求日志' },
   { to: '/api-docs', label: 'API 文档' },
 ]
+
+function logout(): void {
+  token.set('')
+  window.location.hash = '#/login'
+}
 </script>
 
 <template>
@@ -22,7 +27,7 @@ const nav = [
       <nav>
         <router-link v-for="n in nav" :key="n.to" :to="n.to" active-class="active">{{ n.label }}</router-link>
       </nav>
-      <button class="logout" @click="token.set(''); location.hash = '#/login'">退出登录</button>
+      <button class="logout" @click="logout">退出登录</button>
     </aside>
     <main class="main">
       <router-view />

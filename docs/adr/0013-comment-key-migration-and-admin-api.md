@@ -1,11 +1,19 @@
 # 评论聚合键迁移、多键并集查询与后台管理面扩展
 
+Status: accepted
+Superseded in part by: 0014（§1、§2）
+
+> **部分作废（ADR-0014）**：本 ADR 的 §1 与 §2 建立在「`chapter_url` 是评论聚合键」之上，
+> 该前提已被 [ADR-0014](0014-comment-key-switch-to-client-derived-token.md) 换轨为客户端派生的
+> `comment_key`。迁移端点随之改名 `migrate` 并作用于 `comment_key` 列，多键并集查询改走
+> `comment_keys` 参数，`chapter_url` 降级为仅供历史行可读的废弃路径。
+> §3 的后台管理面扩展不受影响，仍然有效。
+
 为「合并书籍」这一客户端场景补齐评论域能力：用户在第三方书源改版（章节 URL 变化、
 多本书合并）后，需要把自己名下旧聚合键的评论批量迁到新键；后台管理面则需要
-搜索、详情、删除与筛选，才能在桌面应用里真正管理数据。设计文档
-`docs/superpowers/specs/2026-09-05-desktop-app-design.md` 与
-[ADR-0012](0012-desktop-admin-app-sidecar.md) 都声称「Go 后端零改动即可被桌面应用带动」，
-本 ADR 记录这句话被推翻的部分及其原因，避免后来者再把「零改动」当成硬约束。
+搜索、详情、删除与筛选，才能在后台界面里真正管理数据。[ADR-0012](0012-desktop-admin-app-sidecar.md)
+曾声称「Go 后端零改动即可被桌面应用带动」，本 ADR 记录这句话被推翻的部分及其原因，
+避免后来者再把「零改动」当成硬约束。
 
 ## 决策
 
@@ -61,16 +69,17 @@
 
 ## 下游影响
 
-* `desktop/` 的用户/评论/日志三个视图据此前提实现搜索、分页（页长固定 20）、
+* `frontend/` 的用户/评论/日志三个视图据此前提实现搜索、分页（页长固定 20）、
   详情面板、评论删除（两步确认）与日志筛选。
-* 后端启动改为真优雅关闭（`signal.Notify` + `http.Server.Shutdown` + stdin `shutdown`
-  指令），桌面端停止不再耗尽 5 秒强杀——这是 ADR-0012 §1「请求优雅退出」承诺的兑现，
-  也是「Go 零改动」主张的第二次修正。
+* 后端启动改为真优雅关闭（`signal.Notify` + `http.Server.Shutdown`）；原先服务桌面
+  sidecar 的 stdin `shutdown` 指令已随 ADR-0024 移除。
 
 ## 验收
 
 * `go test ./...` 覆盖：空键迁移、同键 A0305、用户隔离、幂等重试、并集查询、
   键数/键长上限、LIKE 转义、后台搜索/详情/删除/筛选。
 * 公开列表在键数超 50 或单键超 2048 时返回 `A0400`，其余情况正常。
-* 桌面端集成测试证明：停止耗时远小于 5 秒宽限期（真优雅退出），
-  改端口重启后健康检查拨新端口。
+* 后台三个视图的搜索、分页与两步删除由 `frontend/` 的 Vitest 用例覆盖；
+  进程级的真后端联调改为手工烟测（桌面端的集成用例已随 ADR-0024 移除）。
+
+锚点：`backend/service/comment.go` 的 `MigrateKeys`；`backend/internal/admin/handler.go`；`backend/model/comment.go`。

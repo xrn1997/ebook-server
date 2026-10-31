@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"ebook-server/middleware"
+	"ebook-server/service"
 
 	"github.com/gin-gonic/gin"
 )
@@ -24,7 +25,7 @@ func setupDeletionRouter(t *testing.T, app *testApp) *gin.Engine {
 	router.POST("/api/auth/login", authHandler.Login)
 
 	users := router.Group("/api/users")
-	users.Use(middleware.JWTAuth())
+	users.Use(middleware.JWTAuth(app.tokens))
 	{
 		users.GET("/me/data", accountHandler.ExportMyData)
 		users.POST("/me/deletion/send-code", accountHandler.SendDeletionCode)
@@ -90,10 +91,8 @@ func TestUserHandler_DeleteAccount_Success(t *testing.T) {
 	router := setupDeletionRouter(t, app)
 	_, token := registerUser(t, router, "delete-me@example.com")
 
-	// 直接注入注销验证码，绕过邮件链路（注销码 key 为 del:<email>）
-	testCodes.Set("del:delete-me@example.com", testCode)
-
-	body := map[string]string{"code": testCode}
+	// 经模块真实下发注销码（存储键格式是模块的私有细节）
+	body := map[string]string{"code": seedCode(t, service.FlowDeletion, "delete-me@example.com")}
 	jsonBody, _ := json.Marshal(body)
 	req, _ := http.NewRequest("POST", "/api/users/me/deletion", bytes.NewBuffer(jsonBody))
 	req.Header.Set("Content-Type", "application/json")
@@ -117,9 +116,7 @@ func TestUserHandler_DeleteAccount_WrongCode(t *testing.T) {
 	router := setupDeletionRouter(t, app)
 	_, token := registerUser(t, router, "wrong-h@example.com")
 
-	testCodes.Set("del:wrong-h@example.com", testCode)
-
-	body := map[string]string{"code": "000000"}
+	body := map[string]string{"code": seedCodeWrong(t, service.FlowDeletion, "wrong-h@example.com")}
 	jsonBody, _ := json.Marshal(body)
 	req, _ := http.NewRequest("POST", "/api/users/me/deletion", bytes.NewBuffer(jsonBody))
 	req.Header.Set("Content-Type", "application/json")

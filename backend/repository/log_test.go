@@ -11,15 +11,17 @@ func TestLogRepository_Create(t *testing.T) {
 
 	repo := NewLogRepository(testDB)
 	log := &model.OperationLog{
-		UserID:       1,
-		Username:     "testuser",
-		Method:       "POST",
-		Path:         "/api/test",
-		IP:           "127.0.0.1",
-		ResponseCode: 200,
+		OperationRecord: model.OperationRecord{
+			UserID:       1,
+			Username:     "testuser",
+			Method:       "POST",
+			Path:         "/api/test",
+			IP:           "127.0.0.1",
+			ResponseCode: 200,
+		},
 	}
 
-	if err := repo.Create(log); err != nil {
+	if err := repo.Create(testCtx, log); err != nil {
 		t.Fatalf("Failed to create log: %v", err)
 	}
 	if log.ID == 0 {
@@ -27,24 +29,26 @@ func TestLogRepository_Create(t *testing.T) {
 	}
 }
 
-func TestLogRepository_FindAll(t *testing.T) {
+func TestLogRepository_FindBy_NoFilter(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
 	repo := NewLogRepository(testDB)
 	for i := 0; i < 15; i++ {
-		repo.Create(&model.OperationLog{
-			UserID:       1,
-			Username:     "testuser",
-			Method:       "GET",
-			Path:         "/api/test",
-			IP:           "127.0.0.1",
-			ResponseCode: 200,
+		repo.Create(testCtx, &model.OperationLog{
+			OperationRecord: model.OperationRecord{
+				UserID:       1,
+				Username:     "testuser",
+				Method:       "GET",
+				Path:         "/api/test",
+				IP:           "127.0.0.1",
+				ResponseCode: 200,
+			},
 		})
 	}
 
 	// 第一页
-	logs, total, err := repo.FindAll(1, 10)
+	logs, total, err := repo.FindBy(testCtx, model.LogFilter{}, 1, 10)
 	if err != nil {
 		t.Fatalf("Failed to find logs: %v", err)
 	}
@@ -56,7 +60,7 @@ func TestLogRepository_FindAll(t *testing.T) {
 	}
 
 	// 第二页
-	logs2, _, _ := repo.FindAll(2, 10)
+	logs2, _, _ := repo.FindBy(testCtx, model.LogFilter{}, 2, 10)
 	if len(logs2) != 5 {
 		t.Errorf("Expected 5 logs on page 2, got %d", len(logs2))
 	}
@@ -69,29 +73,33 @@ func TestLogRepository_FindByUserID(t *testing.T) {
 	repo := NewLogRepository(testDB)
 	// 用户1的日志
 	for i := 0; i < 8; i++ {
-		repo.Create(&model.OperationLog{
-			UserID:       1,
-			Username:     "user1",
-			Method:       "GET",
-			Path:         "/api/test",
-			IP:           "127.0.0.1",
-			ResponseCode: 200,
+		repo.Create(testCtx, &model.OperationLog{
+			OperationRecord: model.OperationRecord{
+				UserID:       1,
+				Username:     "user1",
+				Method:       "GET",
+				Path:         "/api/test",
+				IP:           "127.0.0.1",
+				ResponseCode: 200,
+			},
 		})
 	}
 	// 用户2的日志
 	for i := 0; i < 3; i++ {
-		repo.Create(&model.OperationLog{
-			UserID:       2,
-			Username:     "user2",
-			Method:       "POST",
-			Path:         "/api/test",
-			IP:           "127.0.0.1",
-			ResponseCode: 200,
+		repo.Create(testCtx, &model.OperationLog{
+			OperationRecord: model.OperationRecord{
+				UserID:       2,
+				Username:     "user2",
+				Method:       "POST",
+				Path:         "/api/test",
+				IP:           "127.0.0.1",
+				ResponseCode: 200,
+			},
 		})
 	}
 
 	// 查询用户1
-	logs, total, err := repo.FindByUserID(1, 1, 10)
+	logs, total, err := repo.FindByUserID(testCtx, 1, 1, 10)
 	if err != nil {
 		t.Fatalf("Failed to find logs: %v", err)
 	}
@@ -103,7 +111,7 @@ func TestLogRepository_FindByUserID(t *testing.T) {
 	}
 
 	// 查询用户2
-	logs2, total2, _ := repo.FindByUserID(2, 1, 10)
+	logs2, total2, _ := repo.FindByUserID(testCtx, 2, 1, 10)
 	if total2 != 3 {
 		t.Errorf("Expected total 3, got %d", total2)
 	}
@@ -112,18 +120,18 @@ func TestLogRepository_FindByUserID(t *testing.T) {
 	}
 
 	// 查询不存在的用户
-	_, total3, _ := repo.FindByUserID(999, 1, 10)
+	_, total3, _ := repo.FindByUserID(testCtx, 999, 1, 10)
 	if total3 != 0 {
 		t.Errorf("Expected total 0, got %d", total3)
 	}
 }
 
-func TestLogRepository_FindAll_Empty(t *testing.T) {
+func TestLogRepository_FindBy_EmptyResult(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
 	repo := NewLogRepository(testDB)
-	logs, total, err := repo.FindAll(1, 10)
+	logs, total, err := repo.FindBy(testCtx, model.LogFilter{}, 1, 10)
 	if err != nil {
 		t.Fatalf("Failed to find logs: %v", err)
 	}
@@ -142,11 +150,11 @@ func TestLogRepository_FindBy(t *testing.T) {
 
 	uid := seedUser(t, "log@example.com", "log", "log")
 	repo := NewLogRepository(testDB)
-	repo.Create(&model.OperationLog{UserID: uid, Method: "GET", Path: "/api/comments", ErrorCode: "00000"})
-	repo.Create(&model.OperationLog{UserID: uid, Method: "POST", Path: "/api/comments", ErrorCode: "A0303"})
-	repo.Create(&model.OperationLog{UserID: uid, Method: "GET", Path: "/api/users/me", ErrorCode: "00000"})
+	repo.Create(testCtx, &model.OperationLog{OperationRecord: model.OperationRecord{UserID: uid, Method: "GET", Path: "/api/comments", ErrorCode: "00000"}})
+	repo.Create(testCtx, &model.OperationLog{OperationRecord: model.OperationRecord{UserID: uid, Method: "POST", Path: "/api/comments", ErrorCode: "A0303"}})
+	repo.Create(testCtx, &model.OperationLog{OperationRecord: model.OperationRecord{UserID: uid, Method: "GET", Path: "/api/users/me", ErrorCode: "00000"}})
 	// 非信封流量（404 等）没有业务码，「只看失败」不该把它们捞出来
-	repo.Create(&model.OperationLog{Method: "GET", Path: "/missing", ResponseCode: 404})
+	repo.Create(testCtx, &model.OperationLog{OperationRecord: model.OperationRecord{Method: "GET", Path: "/missing", ResponseCode: 404}})
 
 	cases := []struct {
 		name   string
@@ -164,7 +172,7 @@ func TestLogRepository_FindBy(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			_, total, err := repo.FindBy(c.filter, 1, 10)
+			_, total, err := repo.FindBy(testCtx, c.filter, 1, 10)
 			if err != nil {
 				t.Fatalf("FindBy failed: %v", err)
 			}

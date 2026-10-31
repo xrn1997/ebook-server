@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // API 文档：内嵌后端提供的 Swagger UI（/api-docs/index.html，由 gin-swagger 提供）。
 // 文档内容从各 handler 的 Swagger 注释经 swag init 生成，改动接口后重跑 swag init 即自动更新。
 </script>

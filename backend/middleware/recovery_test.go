@@ -38,6 +38,27 @@ func TestRecovery_PanicRecovered(t *testing.T) {
 	}
 }
 
+// TestRecovery_DoesNotAppendEnvelopeAfterPartialWrite 响应写到一半才 panic 时，
+// 不能再追加一个 C0500 信封：两段 JSON 拼在一起会让客户端解析失败，审计也提取
+// 不出业务码。此时只保留已经写出的内容与 panic 日志。
+func TestRecovery_DoesNotAppendEnvelopeAfterPartialWrite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(Recovery())
+	router.GET("/partial", func(c *gin.Context) {
+		c.String(http.StatusOK, `{"code":"00000"`)
+		panic("boom after write")
+	})
+
+	req, _ := http.NewRequest("GET", "/partial", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if got := w.Body.String(); got != `{"code":"00000"` {
+		t.Errorf("Recovery must not append a second envelope, got %q", got)
+	}
+}
+
 func TestRecovery_NoPanic(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()

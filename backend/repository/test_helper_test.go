@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"testing"
 
 	"ebook-server/model"
@@ -8,6 +9,9 @@ import (
 
 	"gorm.io/gorm"
 )
+
+// testCtx 测试直接调用 repository 时使用的请求上下文。
+var testCtx = context.Background()
 
 // testDB 当前测试的独立 :memory: 数据库。
 //
@@ -31,7 +35,7 @@ func cleanupTestDB(t *testing.T) {
 func seedUser(t *testing.T, email, username, nickname string) uint {
 	t.Helper()
 	user := &model.User{Email: email, Password: "hp", Username: username, Nickname: nickname}
-	if err := NewUserRepository(testDB).Create(user); err != nil {
+	if err := NewUserRepository(testDB).Create(testCtx, user); err != nil {
 		t.Fatalf("seed user failed: %v", err)
 	}
 	return user.UID

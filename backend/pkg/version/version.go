@@ -1,4 +1,4 @@
-// Package version 集中承载编译期注入的构建元信息（版本号/提交/构建时间）。
+// Package version 集中承载编译期注入的构建元信息（版本号/提交/源提交时间）。
 //
 // 这些值在构建时通过 ldflags -X 注入（见 Makefile 的 LDFLAGS），
 // 直接读源码跑（go run / 未注入）时回退为默认占位值，便于本地开发。
@@ -13,7 +13,8 @@ var (
 	Version = "dev"
 	// Commit 构建时的 git 短提交哈希；未注入时为 unknown。
 	Commit = "unknown"
-	// BuildTime UTC 时间的 YYYYMMDDHHMMSS；未注入时为 unknown。
+	// BuildTime 源提交时间（UTC，YYYYMMDDHHMMSS）；未注入时为 unknown。
+	// 发布构建取 HEAD 提交时间而非当前时间，保证同一 commit 可复现。
 	BuildTime = "unknown"
 )
 

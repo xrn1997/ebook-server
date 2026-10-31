@@ -1,5 +1,7 @@
 # 邮箱即主键的注册与账号模型
 
+Status: accepted
+
 将注册与账号标识从「用户名」改为「邮箱为主」，缩短注册信息，增强账号安全，
 并添加发码与登录限流。本 ADR 更迭 ADR-0001 中「账号体系」与「密码管理」两节
 的决定，ADR-0001 的「响应信封」「双 token」部分不变。
@@ -83,7 +85,8 @@ SaaS）多以「邮箱 + 验证邮件」确认账号所有权。
   命中返回 `A0241`。验证码防暴力依赖此发码闸门，而非单纯的尝试次数。
 
 * **登录限流**：同一 `email` 连续登录失败 5 次锁定 15 分钟（`login_attempts` +
-  `locked_until` 字段），锁定期间即使密码正确也拒绝并返回剩余锁定时间，到点自动解锁。
+  `locked_until` 字段），锁定期间即使密码正确也拒绝，到点自动解锁。公开登录按 ADR-0006
+  返回统一的“邮箱或密码错误”，不透露锁定状态或剩余时间。
 
 ### 5. 移除的接口
 
@@ -121,4 +124,6 @@ ADR-0001 计划的 `verify-code`、`resend-code` 不再需要——注册即激�
 3. 只有 `login` 返回 token；`register` 返回但不带 token。
 4. 同一 `email` 发码频率受限；登录失败 5 次锁定 15 分钟。
 5. `forgot-password/*` 全程用邮箱，不依赖用户名。
+
+锚点：`backend/model/user.go`；`backend/service/auth.go` 的 `Register`；`backend/handler/auth.go`。
 

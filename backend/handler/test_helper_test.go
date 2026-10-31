@@ -2,16 +2,16 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"ebook-server/config"
 	"ebook-server/middleware"
 	"ebook-server/pkg/code"
-	"ebook-server/pkg/mail"
+	"ebook-server/pkg/jwt"
 	"ebook-server/pkg/testdb"
 	"ebook-server/pkg/upload"
 	"ebook-server/repository"
@@ -21,36 +21,78 @@ import (
 	"gorm.io/gorm"
 )
 
-// testCode 测试用注册验证码
-const testCode = "123456"
+// testCtx 测试直接调用 service 时使用的请求上下文。
+var testCtx = context.Background()
 
-// testConfig 测试配置
-var testConfig = &config.Config{
-	Server: config.ServerConfig{
-		Port: 8080,
-		Mode: "test",
-	},
-	Database: config.DatabaseConfig{
-		Path: ":memory:",
-	},
-	JWT: config.JWTConfig{
-		Secret:    "test-secret-key",
-		ExpireMin: 1,
-	},
+// recordingMailer 记录每次 SendCode 调用；测试经它取回模块下发的码。
+//
+// 用例不再自备固定码：那需要知道存储键的命名空间格式（"reg:"+email 等），
+// 而那格式是验证码模块的私有细节。
+type recordingMailer struct {
+	sent []mailAttempt
+}
+
+// mailAttempt 一次 SendCode 调用的痕迹
+type mailAttempt struct {
+	to      string
+	codeVal string
+}
+
+func (m *recordingMailer) SendCode(to, codeVal string) error {
+	m.sent = append(m.sent, mailAttempt{to: to, codeVal: codeVal})
+	return nil
+}
+
+// last 最近一次发给该邮箱的码；从未发过则返回空串。
+func (m *recordingMailer) last(email string) string {
+	for i := len(m.sent) - 1; i >= 0; i-- {
+		if m.sent[i].to == email {
+			return m.sent[i].codeVal
+		}
+	}
+	return ""
+}
+
+// seedCode 经验证码模块真实下发一枚码并返回它。
+//
+// 预置码只有 Send 这一条路：pkg/code 不提供「写入指定码」的入口。
+// 用独立实例下发——它自带一对限流窗口，因此既不占用被测 handler 的发码配额
+// （「连发两次应被限流」类用例仍然成立），写进的码又与被测服务共享同一个 code.Store。
+func seedCode(t *testing.T, flow service.Flow, email string) string {
+	t.Helper()
+
+	rec := &recordingMailer{}
+	if err := service.NewVerificationCodes(testCodes, rec).Send(testCtx, flow, email); err != nil {
+		t.Fatalf("预置 %s 流程验证码失败: %v", flow, err)
+	}
+	codeVal := rec.last(email)
+	if codeVal == "" {
+		t.Fatalf("预置验证码未派发到 %s", email)
+	}
+	return codeVal
+}
+
+// seedCodeWrong 预置一枚码到指定流程，并返回必然不等于它的错码。
+func seedCodeWrong(t *testing.T, flow service.Flow, email string) string {
+	t.Helper()
+	if real := seedCode(t, flow, email); real != "000000" {
+		return "000000"
+	}
+	return "000001"
 }
 
 // testCodes 最近一次 newTestApp 创建的验证码存储。
 //
-// go test 同包默认串行执行，registerUser 等助手经它注入验证码（ADR-0007）。
+// go test 同包默认串行执行，seedCode 等助手经它注入验证码（ADR-0007）。
 var testCodes *code.Store
 
 // testApp 一套相互独立的测试应用：独立 :memory: 库、验证码存储与服务实例。
 //
-// 每个测试通过 newTestApp 获得全新环境，替代历史上「改写全局 database.DB +
-// 共享 code.Default()」的做法——那会导致测试互相污染且无法并行。
+// 每个测试通过 newTestApp 获得全新环境，且配置/token 都以值注入——没有全局可改写，
+// 用例之间不互相污染（历史上曾改写全局 database.DB 并共享 code.Default()）。
 type testApp struct {
 	db      *gorm.DB
-	codes   *code.Store
+	tokens  *jwt.TokenBox
 	auth    *AuthHandler
 	user    *UserHandler
 	account *AccountHandler
@@ -61,10 +103,9 @@ type testApp struct {
 
 // newTestApp 组装本测试专用的处理器集合。
 //
-// 所有 handler 共享同一套依赖，与 main.go 的装配方式一致。
+// 所有 handler 共享同一套依赖，与 router.Public 的装配方式一致。
 func newTestApp(t *testing.T) *testApp {
 	t.Helper()
-	config.AppConfig = testConfig
 
 	db := testdb.Open(t)
 	users := repository.NewUserRepository(db)
@@ -74,17 +115,21 @@ func newTestApp(t *testing.T) *testApp {
 	codes := code.NewStore()
 	testCodes = codes
 
-	// 测试注入写日志的 Mailer：验证码经 codes 直接注入，不走真实邮件
-	sender := service.NewVerificationCodeSender(codes, mail.NewLogMailer())
-	authSvc := service.NewAuthService(users, tokens, codes, sender)
-	accountSvc := service.NewAccountService(users, tokens, comments, codes, sender)
-	uploads := upload.New(t.TempDir())
+	access := jwt.New("test-secret-key", 60)
+
+	// 验证码模块用记录型 Mailer：用例经 seedCode 走真实下发链路预置码
+	codeModule := service.NewVerificationCodes(codes, &recordingMailer{})
+	credentials := service.NewCredentials(users, tokens)
+	authSvc := service.NewAuthService(users, tokens, codeModule, access, credentials)
+	uploads := upload.New(t.TempDir(), "")
+	profileSvc := service.NewProfileService(users, uploads)
+	accountSvc := service.NewAccountService(users, tokens, comments, codeModule, profileSvc)
 
 	return &testApp{
 		db:      db,
-		codes:   codes,
+		tokens:  access,
 		auth:    NewAuthHandler(authSvc),
-		user:    NewUserHandler(service.NewUserService(users, uploads), authSvc),
+		user:    NewUserHandler(profileSvc, authSvc),
 		account: NewAccountHandler(accountSvc),
 		comment: NewCommentHandler(service.NewCommentService(comments)),
 		log:     NewLogHandler(service.NewLogService(logs)),
@@ -130,19 +175,21 @@ func commentRoutes(t *testing.T, router *gin.Engine, app *testApp) {
 	t.Helper()
 	router.POST("/api/auth/register", app.auth.Register)
 	router.POST("/api/auth/login", app.auth.Login)
-	router.POST("/api/comments", middleware.JWTAuth(), app.comment.Create)
+	router.POST("/api/comments", middleware.JWTAuth(app.tokens), app.comment.Create)
 	router.GET("/api/comments", app.comment.GetList)
-	router.POST("/api/comments/migrate-key", middleware.JWTAuth(), app.comment.MigrateKey)
+	router.POST("/api/comments/migrate", middleware.JWTAuth(app.tokens), app.comment.MigrateKey)
 }
 
-// createComment 以 token 身份发一条归属 chapterURL 章节的评论，失败即终止用例。
+// createComment 以 token 身份发一条归属 commentKey 聚合键的评论，失败即终止用例。
 //
-// chapterURL 传空串 = 书籍级评论（ADR-0011）。刻意断言成功：造数据阶段的失败不是
-// 被测行为，留在这里失败比让后续断言报出迷惑性错误更好定位。
-func createComment(t *testing.T, router *gin.Engine, token, content, chapterURL string) {
+// 键走 M2 契约的 comment_key 字段（创建评论必填）：不带键的创建会被服务端当场拒绝。
+// 需要造 chapter_url 时代的旧行时用 seedLegacyComment——换键后那条写路径已不可达。
+// 刻意断言成功：造数据阶段的失败不是被测行为，留在这里失败比让后续断言
+// 报出迷惑性错误更好定位。
+func createComment(t *testing.T, router *gin.Engine, token, content, commentKey string) {
 	t.Helper()
 	w := doJSON(t, router, http.MethodPost, "/api/comments", map[string]string{
-		"content": content, "chapter_url": chapterURL,
+		"content": content, "comment_key": commentKey,
 	}, token)
 	assertErrorCode(t, w.Body.Bytes(), "00000")
 }
@@ -173,12 +220,10 @@ func registerUser(t *testing.T, router *gin.Engine, email string) (uint, string)
 // registerUserWith 指定密码的注册+登录助手
 func registerUserWith(t *testing.T, router *gin.Engine, email, password string) (uint, string) {
 	t.Helper()
-	// 直接注入注册码，绕过邮件链路（注册码 key 为 reg:<email>）
-	testCodes.Set("reg:"+email, testCode)
-
+	// 经模块真实下发注册码（存储键格式是它的私有细节）
 	body := map[string]string{
 		"email":    email,
-		"code":     testCode,
+		"code":     seedCode(t, service.FlowRegister, email),
 		"password": password,
 	}
 	jsonBody, _ := json.Marshal(body)

@@ -1,5 +1,11 @@
 package model
 
+// SuccessCode 统一信封的业务成功码。
+//
+// 方案上的成功判定（例如操作日志的「只看失败」筛选）在数据层也要用，而数据层
+// 不该 import HTTP 响应包；成功码因此住在最底层的 model，pkg/errcode 以别名引用。
+const SuccessCode = "00000"
+
 // Response 统一响应信封
 //
 // Code 为五位字符串业务码（"00000" 表示成功），HTTP 状态码恒为 200，

@@ -1,0 +1,31 @@
+import { createRouter, createWebHashHistory } from 'vue-router'
+import { token } from './api'
+import Login from './views/Login.vue'
+import Dashboard from './views/Dashboard.vue'
+import Users from './views/Users.vue'
+import Comments from './views/Comments.vue'
+import Logs from './views/Logs.vue'
+import ApiDocs from './views/ApiDocs.vue'
+
+const routes = [
+  { path: '/login', name: 'login', component: Login },
+  { path: '/', component: Dashboard },
+  { path: '/users', component: Users },
+  { path: '/comments', component: Comments },
+  { path: '/logs', component: Logs },
+  { path: '/api-docs', component: ApiDocs },
+  // 未知 hash 回概览页，而不是渲染一块空白主区。
+  { path: '/:pathMatch(.*)*', redirect: '/' },
+]
+
+const router = createRouter({
+  // hash 模式：只加载一次 index.html，无需后端 fallback（适配 go:embed 静态服务）。
+  history: createWebHashHistory(),
+  routes,
+})
+
+router.beforeEach((to) => {
+  if (to.name !== 'login' && !token.value) return { name: 'login' }
+})
+
+export default router

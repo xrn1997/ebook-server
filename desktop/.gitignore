@@ -1,9 +1,0 @@
-node_modules/
-dist/
-dist-app/
-release*/
-build-app/
-resources/backend/ebook-server*
-!resources/backend/.gitkeep
-test-results/
-playwright-report/

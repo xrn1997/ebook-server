@@ -1,8 +1,16 @@
 # 评论章节归属与头像文件上传
 
+Status: accepted
+Superseded in part by: 0014（§1 的聚合键归属与空键语义）
+
+> **部分作废（ADR-0014）**：本 ADR §1 与「下游影响」中「`chapter_url` 是聚合键」
+> 「`chapter_url` 为空串 = 书籍级评论」的表述已被 [ADR-0014](0014-comment-key-switch-to-client-derived-token.md)
+> 换轨——聚合键是客户端派生的 `comment_key`（服务端只存不解释），`comment_key` 为空
+> 表示换键前的历史行、**不是**书籍级评论（口径见 `CONTEXT.md` 的「书籍级评论」）。
+> §1 其余内容（三字段是冗余快照、不做格式与存在性校验）与头像部分（§4、§5）不受影响。
+
 为公开评论增加「章节归属」能力（按书源章节 URL 组织评论），并为头像引入
-multipart 文件上传 + 本地磁盘存储。两项均来自 android-ebook 客户端的需求单
-（`docs/backend-api-change-request.md`，v1.0）。
+multipart 文件上传 + 本地磁盘存储。两项均来自 android-ebook 客户端的需求单（未入库）。
 
 ## 现状
 
@@ -52,12 +60,24 @@ multipart 文件上传 + 本地磁盘存储。两项均来自 android-ebook 客�
 
 * 校验：扩展名白名单 jpg/jpeg/png/webp + ≤5MB（`MaxBytesReader` 防恶意超大）；
 * 命名：`<unix毫秒>_<16字节随机hex>.<ext>`，防碰撞与路径注入；
-* 存储：`upload.dir`（默认 `uploads`）下的 `avatar/` 子目录，经 `/uploads/*` 静态公开；
-* 返回：`{url: "<scheme>://<请求Host>/uploads/avatar/<name>"}`——自托管场景无固定
-  域名，用请求 Host 动态拼接（TLS 有无决定 scheme）；
+* 存储：`upload.dir`（默认 `uploads`）下的 `avatar/` 子目录，仅该子目录经
+  `/uploads/avatar/*` 静态公开（挂整个 `upload.dir` 会把同目录的配置文件一并放出）；
+* 返回：`{url: "<来源>/uploads/avatar/<name>"}`。来源按可信度取三档（实现见
+  `pkg/upload.Store.PublicURL`）：`server.public_base_url` 配了就只有它；没配则采信请求
+  Host（TLS 有无决定 scheme），让局域网直连零配置可用；Host 形状不可信（带路径/scheme/
+  凭证/空白或端口越界）时只回站内相对路径，不回显来源不明的 origin。
+  **残余风险**：未配置来源时，伪造一枚形状合法的 Host 就能把自己资料里的头像指向任意
+  域名（该 URL 会随评论列表分发给别人）。暴露到不受信网络时必须钉死 `public_base_url`；
 * 客户端两步提交：先上传拿 URL → 再 `PUT /api/users/me {avatar: url}`。
 
 ### 5. 更换头像删除旧文件（业务层编排）
+
+> **注意**：本节的编排方 `UserService` 已被 [ADR-0017](0017-profile-and-credentials-lifecycle.md)
+> 更迭——资料写入与头像文件生命周期现在归 `ProfileService`，`UserService.Update` 不复存在；
+> 删文件前还多了一道「是否仍有账号的头像指向同一个文件」的引用计数（按 URL 的文件名比较，
+> host 写法不同也算；头像 URL 是公开的，不查引用等于允许任何人把别人的头像路径改个 host
+> 填进自己的资料，再删掉对方的文件）。下文 `AvatarCleaner` 接口的形状与
+> 「外部 URL 或删除失败只告警不阻断」的语义不变。
 
 `UserService.Update`（service 层）更新头像成功后，若旧头像 URL 属于本服务
 `uploads/avatar/`（`url.Parse` + 前缀 + 纯文件名校验，防穿越），删除旧文件；外部
@@ -83,22 +103,31 @@ URL 或删除失败均只告警不阻断（不引入事务复杂度，孤儿文�
 
 ## 下游影响
 
-* `model.Comment` 增加 3 字段（GORM AutoMigrate 加列，存量数据 `chapter_url` 为空串）；
+* `model.Comment` 增加 3 字段（当时由 GORM AutoMigrate 加列，存量数据 `chapter_url` 为空串；ADR-0023 起 schema 变更走迁移文件）；
   `chapter_url` 是聚合键，加索引（`gorm:"type:text;index"`）防全表扫描；
 * `CommentStore` 接口新增 `FindByChapter`（chapter_url 精确 + book_name 可选二次过滤）
   与 `FindByBook`（book_name 单独过滤全书）；
   （后续变更：`FindByChapter` 已并入 `FindByChapterURLs`——单元素 `IN` 与等值匹配等价，
   两份方法的查询体只差一个 WHERE 形式；并新增聚合键迁移端点与 `A0305`。
-  见 [ADR-0013](0013-comment-key-migration-and-admin-api.md)）
+  见 [ADR-0013](0013-comment-key-migration-and-admin-api.md)。
+  再后续：`CommentStore` 上这两个方法都不存在了——键的优先级与边界都属查询语义，
+  **接口只留一个 `List(model.CommentFilter)`**（`FindByBook` 已删除：它的查询体与
+  `Search(CommentQuery{BookName: …})` 等价；其余形态留作 repository 包内的实现细节），见
+  [ADR-0014](0014-comment-key-switch-to-client-derived-token.md) 与 `model/comment.go`）
 * `service.CommentService` 的 Create/列表方法改返回 `CommentResponse` 视图；
-  `GetList` 按 `chapter_url` → `book_name` → 全局 三级降级过滤；
+  `GetList` 按 `chapter_url` → `book_name` → 全局 三级降级过滤
+  （该优先级已被 ADR-0014 的 `comment_keys` 主读路径取代，实际顺序见 `repository.CommentRepository.List`）；
 * `pkg/errcode` 新增 `A0301`–`A0304`；`ErrCommentNotFound → A0304`、
   `ErrCommentNotOwner → A0303`；
 * 新增 `pkg/upload`（存储/校验/删除/URL 拼接）与 `handler.UploadHandler`；
 * `config` 新增 `upload.dir`（默认 `uploads`）；
-* `main.go` 注册 `/api/uploads/avatar`（需登录）与 `/uploads/*` 静态路由；
+* `router.Public` 注册 `/api/uploads/avatar`（需登录）与 `/uploads/avatar` 静态挂载
+  （路由表已从 `main.go` 收进 `router/`，见 ADR-0007 的后续修正）；
 * `service.UserService` 新增 `AvatarCleaner` 依赖（consumer-defined，由 upload.Store 满足），
-  `Update` 更新后清理旧头像文件；`handler.UserHandler` 不持有上传存储，只做协议转换；
+  `Update` 更新后清理旧头像文件；`handler.UserHandler` 不持有上传存储，只做协议转换
+  （后续变更：`UserService` 已拆为 `ProfileService` + `Credentials`，`AvatarCleaner`
+  依赖随之移到 `ProfileService`，见
+  [ADR-0017](0017-profile-and-credentials-lifecycle.md)）；
 * `CONTEXT.md` 新增「章节评论」「书籍级评论」术语；本 ADR 记录决策。
 
 ## 验收
@@ -111,3 +140,5 @@ URL 或删除失败均只告警不阻断（不引入事务复杂度，孤儿文�
 5. 上传头像返回 `http://<host>/uploads/avatar/<随机名>`，直接访问 200；
 6. 更换头像后旧文件被删除（`uploads/avatar/` 仅剩新文件）；
 7. 运行时端到端验证通过（见实现记录）。
+
+锚点：`backend/model/comment.go`；`backend/pkg/upload`；`backend/service/profile.go`；`backend/handler/upload.go`。

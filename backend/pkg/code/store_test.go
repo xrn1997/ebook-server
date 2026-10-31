@@ -1,6 +1,9 @@
 package code
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestStore_Verify_Success(t *testing.T) {
 	s := NewStore()
@@ -18,6 +21,22 @@ func TestStore_Verify_NotFound(t *testing.T) {
 	s := NewStore()
 	if got := s.Verify("nobody", "123456"); got != ResultNotFound {
 		t.Fatalf("Expected ResultNotFound, got %v", got)
+	}
+}
+
+// TestStore_Verify_Expired 过期的码与「从来没有码」是同一答案：不得再被消费。
+//
+// 本包不注入时钟（TTL 直接取 time.Now），所以把 expireAt 写成过去时刻来命中这条分支，
+// 而不是 sleep 满 TTL。
+func TestStore_Verify_Expired(t *testing.T) {
+	s := NewStore()
+	s.codes["reg:user@example.com"] = &item{
+		code:     "123456",
+		expireAt: time.Now().Add(-time.Second),
+	}
+
+	if got := s.Verify("reg:user@example.com", "123456"); got != ResultNotFound {
+		t.Errorf("Expected ResultNotFound after TTL, got %v", got)
 	}
 }
 

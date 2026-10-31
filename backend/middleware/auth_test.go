@@ -2,12 +2,12 @@ package middleware
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
-	"ebook-server/config"
 	"ebook-server/pkg/jwt"
 
 	"github.com/gin-gonic/gin"
@@ -18,37 +18,54 @@ func setupTestRouter() *gin.Engine {
 	return gin.New()
 }
 
-func setupMiddlewareTestConfig() {
-	config.AppConfig = &config.Config{
-		JWT: config.JWTConfig{
-			Secret:    "test-secret",
-			ExpireMin: 1,
-		},
-	}
+// testTokens 测试用的 token 单元（密钥与有效期在构造时给定，无全局配置）。
+func testTokens(expireMin int) *jwt.TokenBox {
+	return jwt.New("test-secret", expireMin)
 }
 
-func TestJWTAuth_ValidToken(t *testing.T) {
-	setupMiddlewareTestConfig()
+// denyParser 永远拒绝的 Parser adapter。
+//
+// 它是这个 seam 上的第二个 adapter（另一个是真 TokenBox）：有了它，「未登录被挡」
+// 才真的是在测中间件挂了没挂，而不是恰好因为 token 有效而通过。
+type denyParser struct{}
 
-	router := setupTestRouter()
-	router.GET("/protected", JWTAuth(), func(c *gin.Context) {
+func (denyParser) ParseUser(string) (*jwt.Claims, error) {
+	return nil, errors.New("denied")
+}
+
+// protected 造一个只有「中间件 + 回显身份」的路由。
+func protected(tokens Parser) *gin.Engine {
+	r := setupTestRouter()
+	r.GET("/protected", JWTAuth(tokens), func(c *gin.Context) {
 		userID, _ := GetCurrentUserID(c)
 		username, _ := GetCurrentUsername(c)
 		c.JSON(http.StatusOK, gin.H{"user_id": userID, "username": username})
 	})
+	return r
+}
 
-	token, _ := jwt.GenerateToken(42, "testuser")
+// doAuth 带 Authorization 头请求 /protected；header 传空串表示匿名。
+func doAuth(r *gin.Engine, header string) map[string]interface{} {
 	req, _ := http.NewRequest("GET", "/protected", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("Expected status 200, got %d", w.Code)
+	if header != "" {
+		req.Header.Set("Authorization", header)
 	}
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
 
 	var resp map[string]interface{}
-	json.Unmarshal(w.Body.Bytes(), &resp)
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	return resp
+}
+
+func TestJWTAuth_ValidToken(t *testing.T) {
+	tokens := testTokens(1)
+	token, err := tokens.IssueUser(42, "testuser")
+	if err != nil {
+		t.Fatalf("IssueUser failed: %v", err)
+	}
+
+	resp := doAuth(protected(tokens), "Bearer "+token)
 	if resp["user_id"].(float64) != 42 {
 		t.Errorf("Expected user_id 42, got %v", resp["user_id"])
 	}
@@ -57,166 +74,82 @@ func TestJWTAuth_ValidToken(t *testing.T) {
 	}
 }
 
-func TestJWTAuth_MissingHeader(t *testing.T) {
-	setupMiddlewareTestConfig()
-
-	router := setupTestRouter()
-	router.GET("/protected", JWTAuth(), func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"ok": true})
-	})
-
-	req, _ := http.NewRequest("GET", "/protected", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	var resp map[string]interface{}
-	json.Unmarshal(w.Body.Bytes(), &resp)
-	if resp["code"] != "A0230" {
-		t.Errorf("Expected code A0230, got %v", resp["code"])
-	}
-}
-
-func TestJWTAuth_InvalidFormat(t *testing.T) {
-	setupMiddlewareTestConfig()
-
-	router := setupTestRouter()
-	router.GET("/protected", JWTAuth(), func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"ok": true})
-	})
-
-	req, _ := http.NewRequest("GET", "/protected", nil)
-	req.Header.Set("Authorization", "NotBearer token")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	var resp map[string]interface{}
-	json.Unmarshal(w.Body.Bytes(), &resp)
-	if resp["code"] != "A0230" {
-		t.Errorf("Expected code A0230, got %v", resp["code"])
-	}
-}
-
-func TestJWTAuth_InvalidToken(t *testing.T) {
-	setupMiddlewareTestConfig()
-
-	router := setupTestRouter()
-	router.GET("/protected", JWTAuth(), func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"ok": true})
-	})
-
-	req, _ := http.NewRequest("GET", "/protected", nil)
-	req.Header.Set("Authorization", "Bearer invalid-token-string")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	var resp map[string]interface{}
-	json.Unmarshal(w.Body.Bytes(), &resp)
-	if resp["code"] != "A0230" {
-		t.Errorf("Expected code A0230, got %v", resp["code"])
-	}
-}
-
-func TestJWTAuth_ExpiredToken(t *testing.T) {
-	// 使用过期时间极短的配置
-	config.AppConfig = &config.Config{
-		JWT: config.JWTConfig{
-			Secret:    "test-secret",
-			ExpireMin: 0, // 0 分钟 → 立即过期
-		},
+func TestJWTAuth_Rejects(t *testing.T) {
+	tokens := testTokens(1)
+	valid, err := tokens.IssueUser(1, "testuser")
+	if err != nil {
+		t.Fatalf("IssueUser failed: %v", err)
 	}
 
-	router := setupTestRouter()
-	router.GET("/protected", JWTAuth(), func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"ok": true})
-	})
-
-	token, _ := jwt.GenerateToken(1, "testuser")
-	// 等待一小段时间确保 token 过期
+	expiredBox := testTokens(0)
+	expired, err := expiredBox.IssueUser(1, "testuser")
+	if err != nil {
+		t.Fatalf("IssueUser failed: %v", err)
+	}
 	time.Sleep(10 * time.Millisecond)
 
-	req, _ := http.NewRequest("GET", "/protected", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	cases := []struct {
+		name   string
+		parser Parser
+		header string
+	}{
+		{"缺少认证头", tokens, ""},
+		{"认证格式错误", tokens, "NotBearer token"},
+		{"token 无法解析", tokens, "Bearer invalid-token-string"},
+		{"token 已过期", expiredBox, "Bearer " + expired},
+		// 同一份声明、另一把密钥：后台 token 打不进公开 API（ADR-0001/0010）
+		{"密钥不匹配", jwt.New("another-secret", 1), "Bearer " + valid},
+	}
 
-	var resp map[string]interface{}
-	json.Unmarshal(w.Body.Bytes(), &resp)
-	if resp["code"] != "A0230" {
-		t.Errorf("Expected code A0230 for expired token, got %v", resp["code"])
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if resp := doAuth(protected(tc.parser), tc.header); resp["code"] != "A0230" {
+				t.Errorf("Expected code A0230, got %v", resp["code"])
+			}
+		})
 	}
 }
 
-func TestJWTAuth_WrongSecret(t *testing.T) {
-	// 用一个密钥生成 token
-	config.AppConfig = &config.Config{
-		JWT: config.JWTConfig{Secret: "secret-a", ExpireMin: 60},
-	}
-	token, _ := jwt.GenerateToken(1, "testuser")
-
-	// 用另一个密钥验证
-	config.AppConfig.JWT.Secret = "secret-b"
-
-	router := setupTestRouter()
-	router.GET("/protected", JWTAuth(), func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"ok": true})
-	})
-
-	req, _ := http.NewRequest("GET", "/protected", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	var resp map[string]interface{}
-	json.Unmarshal(w.Body.Bytes(), &resp)
-	if resp["code"] != "A0230" {
-		t.Errorf("Expected code A0230, got %v", resp["code"])
+// TestJWTAuth_RunsParser 中间件确实把 token 交给解析器并据其结果放行/拦截。
+func TestJWTAuth_RunsParser(t *testing.T) {
+	if resp := doAuth(protected(denyParser{}), "Bearer anything"); resp["code"] != "A0230" {
+		t.Errorf("Expected A0230 when the parser denies everything, got %v", resp["code"])
 	}
 }
 
-func TestGetCurrentUserID_NotSet(t *testing.T) {
+func TestGetCurrentUserID_Accessors(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 
-	_, exists := GetCurrentUserID(c)
-	if exists {
+	if _, exists := GetCurrentUserID(c); exists {
 		t.Error("Expected GetCurrentUserID to return false when not set")
 	}
-}
-
-func TestGetCurrentUsername_NotSet(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-
-	_, exists := GetCurrentUsername(c)
-	if exists {
+	if _, exists := GetCurrentUsername(c); exists {
 		t.Error("Expected GetCurrentUsername to return false when not set")
 	}
-}
 
-func TestGetCurrentUserID_Set(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Set("user_id", uint(42))
-
-	id, exists := GetCurrentUserID(c)
-	if !exists {
-		t.Error("Expected GetCurrentUserID to return true")
+	c.Set("username", "testuser")
+	if id, exists := GetCurrentUserID(c); !exists || id != 42 {
+		t.Errorf("Expected user_id 42, got %d (exists=%v)", id, exists)
 	}
-	if id != 42 {
-		t.Errorf("Expected user_id 42, got %d", id)
+	if name, exists := GetCurrentUsername(c); !exists || name != "testuser" {
+		t.Errorf("Expected username 'testuser', got %q (exists=%v)", name, exists)
 	}
 }
 
-func TestGetCurrentUsername_Set(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	c.Set("username", "testuser")
-
-	name, exists := GetCurrentUsername(c)
-	if !exists {
-		t.Error("Expected GetCurrentUsername to return true")
+// TestJWTAuth_RejectsTokenNamingNoAccount 不指名账号的 token 不算已认证。
+//
+// uid 0 在数据层是「不限用户」的形态；中间件放它过去，下游一切「只动本人行」的
+// 操作都会变成跨用户读写。这里当场挡掉，让 handler.CurrentUser 的契约成立。
+func TestJWTAuth_RejectsTokenNamingNoAccount(t *testing.T) {
+	box := jwt.New("test-secret", 30)
+	token, err := box.IssueUser(0, "ghost")
+	if err != nil {
+		t.Fatalf("IssueUser failed: %v", err)
 	}
-	if name != "testuser" {
-		t.Errorf("Expected username 'testuser', got '%s'", name)
+
+	if got := doAuth(protected(box), "Bearer "+token)["code"]; got != "A0230" {
+		t.Errorf("code = %v, want A0230", got)
 	}
 }

@@ -1,13 +1,13 @@
-<script setup>
+<script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { fetchStats } from '../api.js'
+import { fetchStats, SUCCESS_CODE, type Stats } from '../api'
 
-const stats = ref(null)
+const stats = ref<Stats | null>(null)
 const error = ref('')
 
 onMounted(async () => {
   const resp = await fetchStats()
-  if (resp.code === '00000') stats.value = resp.data
+  if (resp.code === SUCCESS_CODE) stats.value = resp.data ?? null
   else error.value = resp.error || '加载失败'
 })
 </script>

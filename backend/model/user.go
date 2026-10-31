@@ -100,6 +100,16 @@ type DeleteAccountRequest struct {
 	Code string `json:"code" binding:"required,len=6"`
 }
 
+// ProfileUpdate 资料列的部分更新；nil 表示本次不修改该列。
+//
+// 用「只写本次提交的列」而不是「读整行再写回三列」：两个设备同时改昵称与头像时，
+// 后者不会把前者刚写入的字段覆盖回旧值。空串仍表示不修改（与请求语义一致）。
+type ProfileUpdate struct {
+	Username *string
+	Nickname *string
+	Avatar   *string
+}
+
 // UserInfo 导出中的用户资料，不含任何凭据
 type UserInfo struct {
 	UID       uint      `json:"uid"`
@@ -112,16 +122,23 @@ type UserInfo struct {
 
 // ExportedComment 导出中的评论条目。使用独立结构而非 Comment，
 // 避免序列化出空的关联用户对象（encoding/json 对结构体不支持 omitempty）。
+//
+// 带上聚合键与展示快照：注销响应是用户拿到的唯一副本，只留 content 会让评论
+// 无法再对应到哪本书/哪一章。
 type ExportedComment struct {
-	ID        uint      `json:"id"`
-	Content   string    `json:"content"`
-	CreatedAt time.Time `json:"created_at"`
+	ID          uint      `json:"id"`
+	Content     string    `json:"content"`
+	CommentKey  string    `json:"comment_key"`
+	ChapterURL  string    `json:"chapter_url"`
+	ChapterName string    `json:"chapter_name"`
+	BookName    string    `json:"book_name"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // UserDataExport 用户自有数据的完整副本（ADR-0005）。
 //
 // 用于注销时当场交付，也用于 GET /api/users/me/data。
-// 刻意不含：密码哈希、操作日志（其 RequestBody 可能记录明文密码）、任何内部凭据。
+// 刻意不含：密码哈希、操作日志（服务端审计记录，不属于用户自有内容）、任何内部凭据。
 type UserDataExport struct {
 	ExportedAt time.Time         `json:"exported_at"`
 	User       UserInfo          `json:"user"`

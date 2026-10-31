@@ -9,8 +9,17 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// JWTAuth JWT 认证中间件
-func JWTAuth() gin.HandlerFunc {
+// Parser 解析用户 access token 的能力（consumer-defined：本中间件只需要解析，
+// 不需要签发）。声明成接口而不是收 *jwt.TokenBox，是为了让路由表的用例注入
+// 「永远拒绝」与「永远放行」两种 adapter，从而分别断言鉴权挂在路上。
+type Parser interface {
+	ParseUser(tokenString string) (*jwt.Claims, error)
+}
+
+// JWTAuth 用户 access token 认证中间件。
+//
+// token 解析由装配点注入的 Parser 完成（不再有「配置已加载」这条隐式前提）。
+func JWTAuth(tokens Parser) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// 从 Header 获取 Token
 		authHeader := c.GetHeader("Authorization")
@@ -29,8 +38,16 @@ func JWTAuth() gin.HandlerFunc {
 		}
 
 		// 解析 Token
-		claims, err := jwt.ParseToken(parts[1])
+		claims, err := tokens.ParseUser(parts[1])
 		if err != nil {
+			errcode.Error(c, errcode.LoginExpired, "无效或过期的认证令牌")
+			c.Abort()
+			return
+		}
+		if claims.UserID == 0 {
+			// 不指名账号的 token 不算已认证：uid 是主键，0 不可能是任何账号。
+			// 数据层不再拿 0 当「不限用户」的哨兵（评论读路径改用显式 ByUserID），
+			// 但下游仍处处假定「当前账号」非 0；这一条让那个假定在入口处成立。
 			errcode.Error(c, errcode.LoginExpired, "无效或过期的认证令牌")
 			c.Abort()
 			return

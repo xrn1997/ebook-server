@@ -1,35 +1,32 @@
 package main
 
 import (
-	"bufio"
 	"context"
+	"fmt"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"strconv"
+	"sync"
+	"syscall"
+	"time"
+
 	"ebook-server/config"
 	"ebook-server/handler"
 	"ebook-server/internal/admin"
-	"ebook-server/middleware"
 	"ebook-server/model"
 	"ebook-server/pkg/code"
 	"ebook-server/pkg/database"
-	"ebook-server/pkg/errcode"
+	"ebook-server/pkg/jwt"
 	"ebook-server/pkg/logger"
 	"ebook-server/pkg/mail"
 	"ebook-server/pkg/upload"
 	"ebook-server/pkg/version"
 	"ebook-server/repository"
+	"ebook-server/router"
 	"ebook-server/service"
-	"fmt"
-	"log"
-	"net/http"
-	"os"
-	"os/signal"
-	"strings"
-	"syscall"
-	"time"
-
-	// 引入 swag 生成的文档（swag init 产物），供 gin-swagger 提供 OpenAPI 3.0 spec。
-	_ "ebook-server/docs"
-	swaggerFiles "github.com/swaggo/files"
-	ginSwagger "github.com/swaggo/gin-swagger"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -47,14 +44,19 @@ import (
 // @in header
 // @name Authorization
 
+// main 只做两件事：装配依赖，然后开两个监听并等退出。
+//
+// 路由表不在这里——它住在 router 包，有 interface 因而可被测试。AGENTS.md 说 main.go
+// 是唯一装配点，指的是「把依赖递给谁」，不是「把三十行路由语句写在这里」。
 func main() {
-	// 加载配置
-	if err := config.LoadConfig("config.yaml"); err != nil {
+	// ── 装配依赖（ADR-0007）──────────────────────────────────────────────────
+	// 配置作为一个值往下传：不再有包级全局，也没有「谁必须先加载」这条隐式前提。
+	cfg, err := config.Load("config.yaml")
+	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	// 初始化日志
-	if err := logger.Init(config.AppConfig.Server.Mode); err != nil {
+	if err := logger.Init(cfg.Server.Mode); err != nil {
 		log.Fatalf("Failed to init logger: %v", err)
 	}
 	defer logger.Info("Server exiting")
@@ -62,254 +64,152 @@ func main() {
 	// 打印构建版本信息（by ldflags 注入），便于运维核对发版产物
 	fmt.Printf("ebook-server %s\n", version.String())
 
-	// 初始化数据库
-	if err := database.Init(); err != nil {
-		log.Fatalf("Failed to init database: %v", err)
+	db, err := database.Open(cfg.Database.Path)
+	if err != nil {
+		log.Fatalf("Failed to open database: %v", err)
 	}
 
-	// 自动迁移数据库表
-	db := database.GetDB()
-	db.AutoMigrate(&model.User{}, &model.Comment{}, &model.OperationLog{}, &model.RefreshToken{})
+	// 版本化迁移（ADR-0023）：新库执行 SQL 基线；AutoMigrate 时代的旧库先收养再标记基线。
+	if err := database.Migrate(db, &model.User{}, &model.Comment{}, &model.OperationLog{}, &model.RefreshToken{}); err != nil {
+		log.Fatalf("Failed to migrate schema: %v", err)
+	}
 
-	// 设置 Gin 模式
-	gin.SetMode(config.AppConfig.Server.Mode)
+	gin.SetMode(cfg.Server.Mode)
 
-	// ── 装配依赖（ADR-0007：main.go 是唯一装配点）───────────────────────────
 	// 数据访问：gorm adapter，共享同一连接
 	userRepo := repository.NewUserRepository(db)
 	tokenRepo := repository.NewRefreshTokenRepository(db)
 	commentRepo := repository.NewCommentRepository(db)
 	logRepo := repository.NewLogRepository(db)
 
-	// 验证码存储全局唯一（注册/找回/注销共用）；邮件按配置选择 adapter
-	codeStore := code.NewStore()
-	mailer := newMailer(config.AppConfig)
+	// token 单元：用户端与后台端各持一把密钥，共用同一份签发/验签实现（ADR-0001/0010）
+	access := jwt.New(cfg.JWT.Secret, cfg.JWT.ExpireMin)
+	session := admin.NewSession(cfg.Admin)
 
-	// 验证码发送模块全局唯一，注入认证/账号两模块（ADR-0008）
-	sender := service.NewVerificationCodeSender(codeStore, mailer)
+	// 验证码存储与模块各全局唯一：注册/找回/注销共用同一个存储，
+	// 而下发与校验必须同源（ADR-0008）。
+	codeModule := service.NewVerificationCodes(code.NewStore(), newMailer(cfg))
 
 	// 文件上传存储（ADR-0011）：供头像上传 handler 与用户资料更新（旧头像清理）共用
-	uploadStore := upload.New(config.AppConfig.Upload.Dir)
+	uploadStore := upload.New(cfg.Upload.Dir, cfg.Server.PublicBaseURL)
 
 	// 业务服务
-	authService := service.NewAuthService(userRepo, tokenRepo, codeStore, sender)
-	userService := service.NewUserService(userRepo, uploadStore)
-	accountService := service.NewAccountService(userRepo, tokenRepo, commentRepo, codeStore, sender)
+	credentials := service.NewCredentials(userRepo, tokenRepo)
+	authService := service.NewAuthService(userRepo, tokenRepo, codeModule, access, credentials)
+	profileService := service.NewProfileService(userRepo, uploadStore)
+	accountService := service.NewAccountService(userRepo, tokenRepo, commentRepo, codeModule, profileService)
 	commentService := service.NewCommentService(commentRepo)
 	logService := service.NewLogService(logRepo)
 
-	// 创建 Gin 引擎
-	r := gin.New()
-
-	// 注册中间件
-	r.Use(middleware.Recovery())
-	r.Use(middleware.Logger())
-	// 操作审计：把每次请求写入 operation_logs（供后台查看，排除 RequestBody 明文密码）
-	r.Use(middleware.OperationLog(logRepo))
-	r.Use(middleware.CORS())
-
-	// 健康检查
-	r.GET("/health", func(c *gin.Context) {
-		errcode.Success(c, gin.H{"status": "ok"})
+	// 公开 API（监听 0.0.0.0:<server.port>）
+	engine := router.Public(router.Deps{
+		Handlers: router.Handlers{
+			Auth:    handler.NewAuthHandler(authService),
+			User:    handler.NewUserHandler(profileService, authService),
+			Account: handler.NewAccountHandler(accountService),
+			Comment: handler.NewCommentHandler(commentService),
+			Log:     handler.NewLogHandler(logService),
+			Upload:  handler.NewUploadHandler(uploadStore),
+		},
+		Access:    access,
+		Logs:      logService,
+		AvatarDir: uploadStore.AvatarDir(),
+		APIDocs:   cfg.APIDocs.Enabled,
 	})
 
-	// API 文档（Swagger UI + OpenAPI spec）：公开端口默认不提供（api_docs.enabled=false，
-	// 防接口清单泄露，见 config.APIDocsConfig）。联调/内网开放时改配置为 true。
-	if config.AppConfig.APIDocs.Enabled {
-		registerSwagger(r)
+	// 后台管理系统：独立 Gin 引擎 + 独立监听地址（ADR-0009 表面分离、ADR-0010 网络隔离）。
+	// 默认仅监听 127.0.0.1，公网物理上无法连接；远程管理走 SSH 隧道/VPN。
+	admEngine := router.AdminConsole(router.AdminDeps{
+		Session: session,
+		Handler: admin.NewHandler(userRepo, commentService, logRepo, session),
+	})
+
+	// 刻意不用 r.Run()：它内部自建 http.Server 且不暴露出去，于是收不到停止信号时
+	// 只能被直接终止——在途请求丢失、SQLite 只能靠自身日志文件兜底恢复。
+	// 要与后台一样能被 Shutdown，就必须自己持有 Server。
+	// 两个 Server 都设 ReadHeaderTimeout：公开监听绑的是 0.0.0.0:<port>，直接把
+	// `:port` 挂到公网时，慢开发送请求头（Slowloris）能让连接池里的槽位无限期悬着。
+	// 这里自建 Server 就是为了不把超时交给 r.Run() 的默认值。
+	publicSrv := &http.Server{
+		Addr:              fmt.Sprintf(":%d", cfg.Server.Port),
+		Handler:           engine,
+		ReadHeaderTimeout: readHeaderTimeout,
+	}
+	adminSrv := &http.Server{
+		Addr:              net.JoinHostPort(cfg.Admin.ListenAddr, strconv.Itoa(cfg.Admin.ListenPort)),
+		Handler:           admEngine,
+		ReadHeaderTimeout: readHeaderTimeout,
 	}
 
-	// 文件上传（ADR-0011）：uploads/ 目录经 /uploads/* 公开访问（仅头像等公开资源）
-	r.Static("/uploads", config.AppConfig.Upload.Dir)
+	// 监听失败通过这条缓冲通道回报：容量 2 = 两个监听各一次，永远不会阻塞发送方。
+	listenErr := make(chan error, 2)
+	go serve(publicSrv, "Server", listenErr)
+	go serve(adminSrv, "Admin server", listenErr)
 
-	// API 路由
-	api := r.Group("/api")
-	{
-		// 认证相关（不需要登录）
-		auth := api.Group("/auth")
-		{
-			authHandler := handler.NewAuthHandler(authService)
-			auth.POST("/send-code", authHandler.SendCode)
-			auth.POST("/register", authHandler.Register)
-			auth.POST("/login", authHandler.Login)
-			auth.POST("/refresh", authHandler.Refresh)
-			auth.POST("/forgot-password/send-code", authHandler.ForgotPasswordSendCode)
-			auth.POST("/forgot-password/reset", authHandler.ForgotPasswordReset)
-			auth.POST("/logout", middleware.JWTAuth(), authHandler.Logout)
-		}
-
-		// 用户相关（需要登录）
-		users := api.Group("/users")
-		users.Use(middleware.JWTAuth())
-		{
-			userHandler := handler.NewUserHandler(userService, authService)
-			users.GET("/me", userHandler.GetMe)
-			users.PUT("/me", userHandler.UpdateMe)
-			users.PUT("/me/password", userHandler.ChangePassword)
-
-			accountHandler := handler.NewAccountHandler(accountService)
-			users.GET("/me/data", accountHandler.ExportMyData)
-			users.POST("/me/deletion/send-code", accountHandler.SendDeletionCode)
-			users.POST("/me/deletion", accountHandler.DeleteAccount)
-		}
-
-		// 文件上传（ADR-0011）：头像两步提交的第一步「传文件拿 URL」
-		uploadHandler := handler.NewUploadHandler(uploadStore)
-		api.POST("/uploads/avatar", middleware.JWTAuth(), uploadHandler.UploadAvatar)
-
-		// 评论相关
-		comments := api.Group("/comments")
-		{
-			commentHandler := handler.NewCommentHandler(commentService)
-			comments.GET("", commentHandler.GetList)                                       // 公开
-			comments.POST("", middleware.JWTAuth(), commentHandler.Create)                 // 需要登录
-			comments.POST("/migrate-key", middleware.JWTAuth(), commentHandler.MigrateKey) // 需要登录
-			comments.GET("/my", middleware.JWTAuth(), commentHandler.GetMyComments)        // 需要登录
-			comments.DELETE("/:id", middleware.JWTAuth(), commentHandler.Delete)           // 需要登录
-		}
-
-		// 日志相关（需要登录）
-		logs := api.Group("/logs")
-		logs.Use(middleware.JWTAuth())
-		{
-			logHandler := handler.NewLogHandler(logService)
-			logs.GET("", logHandler.GetList)
-			logs.GET("/my", logHandler.GetMyLogs)
-		}
-	}
-
-	// ── 后台管理系统（ADR-0009：独立表面，独立鉴权）───────────────────────
-	// 后台与公开 API 拆成两个 Gin 引擎、两个监听地址，实现网络层隔离：
-	// 公开 API 监听 0.0.0.0:<server.port>，后台默认仅监听 127.0.0.1:<admin.listen_port>，
-	// 公网物理上无法连接后台。远程管理请走 SSH 隧道/VPN，不要直接开放后台端口。
-	adminHandler := admin.NewHandler(userRepo, commentRepo, logRepo)
-
-	admEngine := gin.New()
-	// 后台引擎：只挂 Recovery + Logger。不挂 CORS（前端与后台同源嵌入，无需跨域）；
-	// 不挂 OperationLog（后台自身流量刻意不入审计库，见 middleware/operationlog.go）。
-	admEngine.Use(middleware.Recovery())
-	admEngine.Use(middleware.Logger())
-
-	adm := admEngine.Group("/admin")
-	{
-		// 后台 API
-		adm.POST("/api/login", adminHandler.Login)
-
-		api := adm.Group("/api")
-		api.Use(admin.AuthMiddleware())
-		{
-			api.GET("/stats", adminHandler.Stats)
-			api.GET("/users", adminHandler.ListUsers)
-			api.GET("/users/:uid", adminHandler.GetUser)
-			api.GET("/comments", adminHandler.ListComments)
-			api.DELETE("/comments/:id", adminHandler.DeleteComment)
-			api.GET("/logs", adminHandler.ListLogs)
-		}
-
-		// 内嵌前端（SPA 首页 + 静态资产 /admin/assets/*）
-		adm.GET("", admin.ServeFrontend)
-		adm.GET("/", admin.ServeFrontend)
-		adm.GET("/assets/*filepath", admin.ServeAssets)
-	}
-
-	// 后台引擎始终挂 Swagger 文档：默认仅监听 127.0.0.1（本机），无公开风险；
-	// 前端「API 文档」页以 iframe 内嵌 /api-docs/index.html，需同端口可访问。
-	// 公开端口的文档由 api_docs.enabled 控制（默认关闭），两个表面互不影响。
-	registerSwagger(admEngine)
-
-	// 启动后台服务器（独立监听地址；goroutine 内运行，主协程继续启动公开 API）
-	adminAddr := fmt.Sprintf("%s:%d", config.AppConfig.Admin.ListenAddr, config.AppConfig.Admin.ListenPort)
-	adminSrv := &http.Server{Addr: adminAddr, Handler: admEngine}
-	go serve(adminSrv, "Admin server")
-
-	// 启动公开 API 服务器。刻意不用 r.Run()：它内部自建 http.Server 且不暴露出去，
-	// 于是收不到停止信号时只能被直接终止——在途请求丢失、SQLite 只能靠自身日志文件
-	// 兜底恢复。要与后台一样能被 Shutdown，就必须自己持有 Server。
-	publicSrv := &http.Server{Addr: fmt.Sprintf(":%d", config.AppConfig.Server.Port), Handler: r}
-	go serve(publicSrv, "Server")
-
-	waitForShutdown()
-	shutdown(publicSrv, adminSrv)
-}
-
-// shutdownGracePeriod 停止接受新连接后留给在途请求完成的时间。
-const shutdownGracePeriod = 10 * time.Second
-
-// shutdownCommand 标准输入里的退出指令，由托管本进程的父进程（桌面应用）写入。
-const shutdownCommand = "shutdown"
-
-// serve 启动一个 HTTP 监听；正常退出（Shutdown）不算错误。
-func serve(srv *http.Server, label string) {
-	fmt.Printf("%s starting on %s...\n", label, srv.Addr)
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("Failed to start %s: %v", label, err)
-	}
-}
-
-// waitForShutdown 阻塞直到收到退出指令，两条通道任一命中即返回：
-//
-//   - SIGINT / SIGTERM：终端 Ctrl-C 与 POSIX 侧 kill 的常规通道；
-//   - 标准输入收到一行 "shutdown"：被父进程托管时的通道。Windows 上无窗口的控制台
-//     子进程收不到 SIGTERM（taskkill 不带 /F 对这类进程直接无效），父子双方都拿得到
-//     的只有 stdin。
-//
-// stdin 的 EOF 刻意**不**算退出指令：nohup、systemd 与 `... < /dev/null` 都会立刻
-// 给一个 EOF，那样会把正常启动的服务当场带走。
-func waitForShutdown() {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 
-	shutdownLine := make(chan struct{})
-	go func() {
-		defer close(shutdownLine)
-		scanner := bufio.NewScanner(os.Stdin)
-		for scanner.Scan() {
-			if strings.TrimSpace(scanner.Text()) == shutdownCommand {
-				return
-			}
-		}
-	}()
-
+	// 任一监听起不来（端口被占、地址不可绑）都要收场：另一个还在 Accept，
+	// 但那是一半服务——后台活着、公开 API 没起来，客户端只会看到莫名其妙的失败。
+	// 这里刻意不走 log.Fatalf：那会当场终止进程，在途请求丢失、数据库句柄没关
+	// （Windows 上句柄不释放连 WAL 文件都删不掉），两种退出必须走同一条关闭路径。
+	var startErr error
 	select {
 	case sig := <-stop:
 		logger.Info("收到退出信号，开始优雅关闭", zap.String("signal", sig.String()))
-	case <-shutdownLine:
-		logger.Info("收到 stdin 退出指令，开始优雅关闭")
+	case startErr = <-listenErr:
+		// stderr 无缓冲：os.Exit 之前 zap 的日志文件（带缓冲）可能来不及落盘，
+		// 而这条正是运维唯一需要看到的失败原因。
+		log.Printf("监听启动失败，关闭另一侧后退出: %v", startErr)
+	}
+
+	shutdown(publicSrv, adminSrv)
+	if err := database.Close(db); err != nil {
+		logger.Error("关闭数据库连接失败", zap.Error(err))
+	}
+	if startErr != nil {
+		os.Exit(1)
 	}
 }
 
-// shutdown 优雅停掉每个监听（停止接受新连接 + 等在途请求跑完），再关数据库。
+// shutdownGracePeriod 停止接受新连接后留给在途请求完成的时间。
+// 4 秒给超时日志与关库留出余量；超过后放弃等待，避免进程无限期挂着。
+const shutdownGracePeriod = 4 * time.Second
+
+// readHeaderTimeout 读完请求头的上限。两个监听共用一份：公开监听面向网络，
+// 慢请求头（Slowloris）会占住连接池；后台监听虽然默认只在回环，同一条规则
+// 不必也不该分成两处写法——一处配了超时、另一处漏掉，是这类问题最常见的诞生方式。
+const readHeaderTimeout = 10 * time.Second
+
+// serve 启动一个 HTTP 监听；正常退出（Shutdown）不算错误，真实失败回报给 errs，
+// 由 main 走优雅关闭后退出——它自己不做任何终止进程的动作。
+func serve(srv *http.Server, label string, errs chan<- error) {
+	fmt.Printf("%s starting on %s...\n", label, srv.Addr)
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		errs <- err
+	}
+}
+
+// shutdown 优雅停掉每个监听（停止接受新连接 + 等在途请求跑完）。
 //
-// 超过 shutdownGracePeriod 就放弃等待：继续挂着只会让父进程把整个进程强杀，
-// 那时连这条日志都来不及落盘。
+// 两个监听并行关闭并共享同一个预算：串行时第一个可能吃掉全部时间，第二个连
+// Shutdown 都来不及调用。超过 shutdownGracePeriod 就放弃等待：继续挂着只会让进程管理器
+// 直接终止进程，那时连这条日志都来不及落盘。数据库连接由调用方在此之后关闭。
 func shutdown(servers ...*http.Server) {
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownGracePeriod)
 	defer cancel()
 
+	var wg sync.WaitGroup
 	for _, srv := range servers {
-		if err := srv.Shutdown(ctx); err != nil {
-			logger.Error("优雅关闭监听失败，可能有请求未跑完", zap.String("addr", srv.Addr), zap.Error(err))
-		}
+		wg.Add(1)
+		go func(srv *http.Server) {
+			defer wg.Done()
+			if err := srv.Shutdown(ctx); err != nil {
+				logger.Error("优雅关闭监听失败，可能有请求未跑完", zap.String("addr", srv.Addr), zap.Error(err))
+			}
+		}(srv)
 	}
-	if err := database.Close(); err != nil {
-		logger.Error("关闭数据库连接失败", zap.Error(err))
-	}
-}
-
-// registerSwagger 在指定引擎上注册 API 文档路由（Swagger UI + OpenAPI spec）。
-//
-// 主引擎（公开 API）与后台引擎各挂一份：gin-swagger 对根路径（/api-docs、/api-docs/）
-// 返回 404 是其固有行为，这里统一 301 到 index.html，保证浏览器直接打开 /api-docs
-// 即可看到文档；后台前端「API 文档」页以 iframe 内嵌 /api-docs/index.html，同端口
-// 注册才能加载（ADR-0009 端口分离后的适配）。
-func registerSwagger(e *gin.Engine) {
-	e.GET("/api-docs/*any", func(c *gin.Context) {
-		if p := c.Param("any"); p == "" || p == "/" {
-			c.Redirect(http.StatusMovedPermanently, "/api-docs/index.html")
-			return
-		}
-		ginSwagger.WrapHandler(swaggerFiles.Handler)(c)
-	})
+	wg.Wait()
 }
 
 // newMailer 按配置装配验证码邮件 adapter（ADR-0007：装配知识集中在 main.go）。
@@ -318,13 +218,8 @@ func registerSwagger(e *gin.Engine) {
 // release 下未配置 SMTP → 仍装配 SMTP adapter，发送时显式报错，
 // 避免在正规环境把验证码悄悄漏进日志。
 func newMailer(cfg *config.Config) service.Mailer {
-	if (cfg.SMTP.Host != "" && cfg.SMTP.Port != 0) || cfg.Server.Mode == "release" {
+	if (cfg.SMTP.Host != "" && cfg.SMTP.Port != 0) || cfg.Server.Mode == config.ModeRelease {
 		return mail.NewSMTPMailer(cfg.SMTP)
 	}
 	return mail.NewLogMailer()
-}
-
-func init() {
-	// 确保 logs 目录存在
-	os.MkdirAll("logs", 0755)
 }
