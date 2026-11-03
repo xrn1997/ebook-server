@@ -64,6 +64,30 @@ func TestSkipsWorkspaceOnlyProcessDocs(t *testing.T) {
 	}
 }
 
+// TestSkipsInstalledFrontendDeps frontend/node_modules/ 整目录不入库，文档按 Makefile
+// 的戳文件规则点名 `frontend/node_modules/.package-lock.json` 时，全新克隆里它不存在。
+// 跳过判据必须按路径段匹配到任意深度：只匹配仓库根那一段，门禁会在开发机上绿
+// （装过依赖）、在干净检出上红——CI 就是这样红过一次。
+func TestSkipsInstalledFrontendDeps(t *testing.T) {
+	root := t.TempDir()
+	for _, f := range requiredDocs {
+		p := filepath.Join(root, f)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("# ok\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	readme := "# ok\n\n三条前端门共用的前置，戳文件是 `frontend/node_modules/.package-lock.json`。\n"
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte(readme), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if issues := Check(root); len(issues) > 0 {
+		t.Fatalf("已安装依赖目录不该参与存在性检查:\n%s", formatIssues(issues))
+	}
+}
+
 // TestBareFilenamesResolveAnywhereInRepo 裸写的文件名只要在仓库任意目录里存在就不算失效。
 //
 // 文档习惯以文件名为锚（`migrate.go`、`0001_init.sql`），它们都不在仓库根。存在性检查

@@ -117,6 +117,9 @@ var skipPathPrefixes = []string{
 	"backend/rsrc_windows_",
 	"coverage.out",
 	"ebook.db",
+	// 前端依赖整目录不入库，文档会按 Makefile 的戳文件规则点名它下面的路径；
+	// skipPathDirs 里的 node_modules 按仓库根匹配，够不着 frontend/ 前缀下的这一段。
+	"frontend/node_modules/",
 	// 过程工件只住工作区、整目录不入库（docs/AGENTS.md §4）。文档会按规则点名这个
 	// 目录，但全新克隆里它并不存在——不跳过的话，docscheck 在开发者机器上绿、
 	// 在干净检出上红。
