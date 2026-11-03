@@ -24,7 +24,7 @@
 | 0018 | 操作审计的接入边界与有界捕获 | accepted | 审计只挂 /api，有界捕获响应信封 |
 | 0019 | sidecar 的停止/重启以 Promise 表达 | superseded by 0024 | sidecar 停止/重启以 Promise 表达，新增 restarting |
 | 0020 | Agent 文档分层与根 AGENTS 预算 | accepted | 根 AGENTS 只留会话规则，事实按层分家 |
-| 0021 | 文档与分层门禁随 go test 运行 | accepted | docscheck 与 archtest 随 go test 运行 |
+| 0021 | 文档与分层门禁随 go test 运行 | accepted | 文档、依赖方向与锁文件来源的门随 go test 运行 |
 | 0022 | context 贯穿 service 与 repository | accepted | service/repository 请求作用域方法贯穿 ctx |
 | 0023 | 版本化迁移采用嵌入 SQL + 基线收养 | accepted；测试库建表路径被 0025 取代 | 嵌入 SQL 的版本化迁移与基线收养 |
 | 0024 | 后台收敛为内嵌 web 唯一表面 | accepted | 删除桌面端与 sidecar，web 后台补位数据管理 |

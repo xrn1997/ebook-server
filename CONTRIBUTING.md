@@ -130,7 +130,7 @@ BREAKING CHANGE: config.yaml 必须包含 jwt.expire_min 字段
 make gates      # 任何一红即红；由哪些目标组成见 docs/development.md 的表与 Makefile
 ```
 
-`go test -race` 已带上 `docscheck` 与 `archtest`（文档与依赖方向的门随 `go test` 跑）。
+`go test -race` 已带上 `docscheck`、`archtest` 与 `depscheck`（文档、依赖方向与锁文件来源的门随 `go test` 跑）。
 `gates` 不含 `gofmt`、`go mod tidy` 与 `make docs` 这三件事，仍要手动：
 
 ```bash

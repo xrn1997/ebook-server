@@ -45,6 +45,8 @@ npm test               # vitest run
 npm run build          # 产物落 frontend/dist，由 make all/build 镜像进 embed 目录
 ```
 
+加依赖要走公网源：npm 按**当时生效的 registry** 把 `resolved` 写进 `package-lock.json`，开发机 `~/.npmrc` 里指的内网镜像（腾讯云 VPC 才解析得到）会随 commit 一起进库，CI 与全新克隆上 `npm ci` 直接 ENOTFOUND。装依赖时显式指定源：`npm i -D <pkg> --registry=https://registry.npmjs.org`。锁文件里每条下载地址都必须在公网源清单内，由 `backend/internal/depscheck` 检查——它随 `go test ./...` 跑，排在第一次 `npm ci` 之前，红在装依赖之前。
+
 `make all` 会先构建前端、把 `frontend/dist` 镜像进 `backend/internal/admin/web`，再编译 Go 二进制；`make build` 复用已有产物。前端三件事：`make frontend-test`（typecheck + vitest）、`make frontend-lint`（类型感知 ESLint）与 `make frontend-build`（vite 打包）；连后端一起的总入口是 `make gates`。
 
 ## Makefile 快捷命令
@@ -98,7 +100,7 @@ go test -v -run 'TestAuthService_Login' ./service/...
 go test -v ./service/...        # 指定包
 ```
 
-文档与分层门禁已包含在 `go test ./...`：`backend/internal/docscheck` 检查根 AGENTS 预算、路径/链接/ADR 元数据；`backend/internal/archtest` 检查 Go 包依赖方向。
+文档与分层门禁已包含在 `go test ./...`：`backend/internal/docscheck` 检查根 AGENTS 预算、路径/链接/ADR 元数据；`backend/internal/archtest` 检查 Go 包依赖方向；`backend/internal/depscheck` 检查前端锁文件的下载源是否公网可达。
 
 提交前额外跑：
 

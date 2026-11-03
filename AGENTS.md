@@ -36,7 +36,7 @@ Go 后端 + 内嵌 web 后台；公开 API 与后台 API 是两个独立监听�
 ## 必过门
 
 - 一条命令：`make gates`。CI 与本地跑同一条，不另抄步骤清单；它由哪些目标组成见 `docs/development.md` 的表与 `Makefile`。
-- 改 Go：`cd backend && go test ./...`（已包含 `docscheck` 与 `archtest`）
+- 改 Go：`cd backend && go test ./...`（已包含 `docscheck`、`archtest` 与 `depscheck`）
 - 改 frontend：`make frontend-test && make frontend-lint && make frontend-build`（`vue-tsc` + `vitest` + 类型感知 ESLint + vite 打包）
 - 改 Swagger 注解：`make docs`
 - 提交前：`git status --short` 检查改动只包含预期文件，且 **`??` 必须为空**——`git diff` 看不见未跟踪文件，新加的源文件漏 `git add` 会提交出一棵编译不过的树。不提交 `.env`、`*.db`、构建产物（想单独跑某一扇，用 `make lint` / `make test-race` / `make frontend-test` / `make frontend-lint` / `make frontend-build`）

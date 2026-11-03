@@ -63,7 +63,7 @@ go test -v -run TestTokenBox ./pkg/jwt/...
 go test -v -run TestAuth ./...
 ```
 
-文档与分层门禁随 `go test ./...` 运行：`backend/internal/docscheck` 检查常驻文档的路径/链接/ADR 元数据/AGENTS 预算；`backend/internal/archtest` 检查 Go 包的依赖方向。
+文档与分层门禁随 `go test ./...` 运行：`backend/internal/docscheck` 检查常驻文档的路径/链接/ADR 元数据/AGENTS 预算；`backend/internal/archtest` 检查 Go 包的依赖方向；`backend/internal/depscheck` 检查前端锁文件的下载源是否公网可达（CI 装不上内网镜像）。
 
 ## 测试类型说明
 
