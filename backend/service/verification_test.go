@@ -120,6 +120,37 @@ func TestVerificationCodes_Send_RateLimit_IsolatedPerFlow(t *testing.T) {
 	}
 }
 
+// TestVerificationCodes_Send_RejectionRecordsNoWindow 多窗口原子记账：
+// 被 hour 窗口拒绝的发码不记任何窗口，minute 余量保留。
+//
+// 旧实现短路求值 `!minute.Allow() || !hour.Allow()`：hour 拒绝时 minute 已被记上，
+// 一次超限尝试白白消耗掉下一分钟的配额（ADR-0002 §4 的双窗口本意是两道独立闸门）。
+// 统一形态（ratelimit.AllowAll）先查全、全过才记，行为微变由本用例钉住。
+func TestVerificationCodes_Send_RejectionRecordsNoWindow(t *testing.T) {
+	module, _ := newIsolatedModule()
+	email := "atomic@example.com"
+	key := FlowRegister.prefix() + email
+
+	// 把 hour 窗口记满（5/小时）；此时 minute 窗口仍是空的。
+	for i := 0; i < 5; i++ {
+		if !module.hour.Allow(key) {
+			t.Fatalf("hour window should accept hit %d", i+1)
+		}
+	}
+
+	if err := module.Send(testCtx, FlowRegister, email); err != model.ErrAttemptTooMany {
+		t.Fatalf("Send should be rejected by the hour window, got %v", err)
+	}
+
+	// 被拒的尝试不得记录任何窗口：minute 仍是空的（未锁定），hour 保持记满。
+	if module.minute.Peek(key) {
+		t.Error("hour-rejected send must not consume the minute window")
+	}
+	if !module.hour.Peek(key) {
+		t.Error("hour window should stay exhausted after the rejected send")
+	}
+}
+
 // TestVerificationCodes_Confirm_TranslatesResults 校验结果到领域错误的翻译只在这一处
 func TestVerificationCodes_Confirm_TranslatesResults(t *testing.T) {
 	t.Run("通过的码消费后不可复用", func(t *testing.T) {

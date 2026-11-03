@@ -1,50 +1,19 @@
-package handler
+package handler_test
 
 import (
-	"bytes"
-	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
-	"ebook-server/middleware"
 	"ebook-server/service"
-
-	"github.com/gin-gonic/gin"
 )
-
-// setupDeletionRouter 注册注销与导出所需的路由
-func setupDeletionRouter(t *testing.T, app *testApp) *gin.Engine {
-	t.Helper()
-
-	router := setupRouter()
-	authHandler := app.auth
-	accountHandler := app.account
-
-	router.POST("/api/auth/register", authHandler.Register)
-	router.POST("/api/auth/login", authHandler.Login)
-
-	users := router.Group("/api/users")
-	users.Use(middleware.JWTAuth(app.tokens))
-	{
-		users.GET("/me/data", accountHandler.ExportMyData)
-		users.POST("/me/deletion/send-code", accountHandler.SendDeletionCode)
-		users.POST("/me/deletion", accountHandler.DeleteAccount)
-	}
-	return router
-}
 
 func TestUserHandler_ExportMyData_Success(t *testing.T) {
 	app := newTestApp(t)
+	router := app.engine
 
-	router := setupDeletionRouter(t, app)
 	_, token := registerUser(t, router, "mydata-h@example.com")
 
-	req, _ := http.NewRequest("GET", "/api/users/me/data", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	w := doJSON(t, router, http.MethodGet, "/api/users/me/data", nil, token)
 	data := decodeData(t, w.Body.Bytes())
 	user, ok := data["user"].(map[string]interface{})
 	if !ok {
@@ -60,46 +29,31 @@ func TestUserHandler_ExportMyData_Success(t *testing.T) {
 
 func TestUserHandler_ExportMyData_NoAuth(t *testing.T) {
 	app := newTestApp(t)
+	router := app.engine
 
-	router := setupDeletionRouter(t, app)
-
-	req, _ := http.NewRequest("GET", "/api/users/me/data", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	w := doJSON(t, router, http.MethodGet, "/api/users/me/data", nil, "")
 	assertErrorCode(t, w.Body.Bytes(), "A0230")
 }
 
 func TestUserHandler_SendDeletionCode_Success(t *testing.T) {
 	app := newTestApp(t)
+	router := app.engine
 
-	router := setupDeletionRouter(t, app)
 	_, token := registerUser(t, router, "senddel@example.com")
 
-	req, _ := http.NewRequest("POST", "/api/users/me/deletion/send-code", bytes.NewBufferString("{}"))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	w := doJSON(t, router, http.MethodPost, "/api/users/me/deletion/send-code", map[string]string{}, token)
 	assertErrorCode(t, w.Body.Bytes(), "00000")
 }
 
 func TestUserHandler_DeleteAccount_Success(t *testing.T) {
 	app := newTestApp(t)
+	router := app.engine
 
-	router := setupDeletionRouter(t, app)
 	_, token := registerUser(t, router, "delete-me@example.com")
 
 	// 经模块真实下发注销码（存储键格式是模块的私有细节）
 	body := map[string]string{"code": seedCode(t, service.FlowDeletion, "delete-me@example.com")}
-	jsonBody, _ := json.Marshal(body)
-	req, _ := http.NewRequest("POST", "/api/users/me/deletion", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	w := doJSON(t, router, http.MethodPost, "/api/users/me/deletion", body, token)
 	data := decodeData(t, w.Body.Bytes())
 	user, ok := data["user"].(map[string]interface{})
 	if !ok {
@@ -112,17 +66,11 @@ func TestUserHandler_DeleteAccount_Success(t *testing.T) {
 
 func TestUserHandler_DeleteAccount_WrongCode(t *testing.T) {
 	app := newTestApp(t)
+	router := app.engine
 
-	router := setupDeletionRouter(t, app)
 	_, token := registerUser(t, router, "wrong-h@example.com")
 
 	body := map[string]string{"code": seedCodeWrong(t, service.FlowDeletion, "wrong-h@example.com")}
-	jsonBody, _ := json.Marshal(body)
-	req, _ := http.NewRequest("POST", "/api/users/me/deletion", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	w := doJSON(t, router, http.MethodPost, "/api/users/me/deletion", body, token)
 	assertErrorCode(t, w.Body.Bytes(), "A0132")
 }

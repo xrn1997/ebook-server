@@ -1,4 +1,9 @@
-package handler
+// auth 用例绝大多数经 newTestApp 的真路由引擎（app.engine）发请求。
+//
+// 仅 TestAuthHandler_Login_ServerFailureIsNotCredentialError 保留 gin.New 夹具：
+// 它要注入一个「查询账号即失败」的自建 service，无法并进真表的统一装配。
+// 这类纯单端点协议用例的夹具不含中间件语义——路由表的唯一真相在 router 包。
+package handler_test
 
 import (
 	"bytes"
@@ -10,49 +15,30 @@ import (
 	"strings"
 	"testing"
 
-	"ebook-server/middleware"
+	"ebook-server/handler"
 	"ebook-server/model"
+	"ebook-server/pkg/code"
 	"ebook-server/pkg/jwt"
 	"ebook-server/service"
 
 	"github.com/gin-gonic/gin"
 )
 
-func setupRouter() *gin.Engine {
-	gin.SetMode(gin.TestMode)
-	return gin.New()
-}
-
-// setupHandlerTestDB / cleanupHandlerTestDB 已由 test_helper_test.go 的 newTestApp 取代
-
 func TestAuthHandler_Register_Success(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	authHandler := app.auth
-	router.POST("/api/auth/register", authHandler.Register)
-	router.POST("/api/auth/login", authHandler.Login)
+	router := app.engine
 
 	email := "reg-success@example.com"
 	codeVal := seedCode(t, service.FlowRegister, email)
 
-	body := map[string]string{"email": email, "code": codeVal, "password": "password123"}
-	jsonBody, _ := json.Marshal(body)
-	req, _ := http.NewRequest("POST", "/api/auth/register", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	w := doJSON(t, router, http.MethodPost, "/api/auth/register",
+		map[string]string{"email": email, "code": codeVal, "password": "password123"}, "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("Expected status 200, got %d", w.Code)
 	}
 	assertErrorCode(t, w.Body.Bytes(), "00000")
-
-	// 注册（激活）后应立即可登录
-	_, token := registerUser(t, router, "reg-success2@example.com") // 确保 login 路由可用
-	if token == "" {
-		t.Error("login token should not be empty")
-	}
+	// 「注册之后能用同一口令登录」不在这条用例里重复一遍：它由
+	// TestAuthHandler_Login_Success 钉（registerRegister + /api/auth/login）。
 }
 
 // TestAuthHandler_Register_TooLongPassword 多字节密码的字节上限回 A0120 而不是 C0500。
@@ -61,47 +47,29 @@ func TestAuthHandler_Register_Success(t *testing.T) {
 // 这条约束由凭据模块判定，响应必须是「密码不合规」这个业务码。
 func TestAuthHandler_Register_TooLongPassword(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	authHandler := app.auth
-	router.POST("/api/auth/register", authHandler.Register)
+	router := app.engine
 
 	email := "reg-long-password@example.com"
-	body := map[string]string{
+	w := doJSON(t, router, http.MethodPost, "/api/auth/register", map[string]string{
 		"email":    email,
 		"code":     seedCode(t, service.FlowRegister, email),
 		"password": strings.Repeat("密", 25), // 75 字节
-	}
-	jsonBody, _ := json.Marshal(body)
-	req, _ := http.NewRequest("POST", "/api/auth/register", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	}, "")
 
 	assertErrorCode(t, w.Body.Bytes(), "A0120")
 }
 
 func TestAuthHandler_Register_InvalidBody(t *testing.T) {
 	app := newTestApp(t)
+	router := app.engine
 
-	router := setupRouter()
-	authHandler := app.auth
-	router.POST("/api/auth/register", authHandler.Register)
-
-	req, _ := http.NewRequest("POST", "/api/auth/register", bytes.NewBuffer([]byte("{}")))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	w := doJSON(t, router, http.MethodPost, "/api/auth/register", map[string]string{}, "")
 	assertErrorCode(t, w.Body.Bytes(), "A0400")
 }
 
 func TestAuthHandler_Register_InvalidJSON(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	authHandler := app.auth
-	router.POST("/api/auth/register", authHandler.Register)
+	router := app.engine
 
 	req, _ := http.NewRequest("POST", "/api/auth/register", bytes.NewBuffer([]byte("invalid json")))
 	req.Header.Set("Content-Type", "application/json")
@@ -113,62 +81,38 @@ func TestAuthHandler_Register_InvalidJSON(t *testing.T) {
 
 func TestAuthHandler_Register_WrongCode(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	authHandler := app.auth
-	router.POST("/api/auth/register", authHandler.Register)
+	router := app.engine
 
 	email := "reg-wrongcode@example.com"
 	wrong := seedCodeWrong(t, service.FlowRegister, email)
 
-	body := map[string]string{"email": email, "code": wrong, "password": "password123"}
-	jsonBody, _ := json.Marshal(body)
-	req, _ := http.NewRequest("POST", "/api/auth/register", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	w := doJSON(t, router, http.MethodPost, "/api/auth/register",
+		map[string]string{"email": email, "code": wrong, "password": "password123"}, "")
 	assertErrorCode(t, w.Body.Bytes(), "A0132")
 }
 
 func TestAuthHandler_Register_DuplicateEmail(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	authHandler := app.auth
-	router.POST("/api/auth/register", authHandler.Register)
+	router := app.engine
 
 	email := "reg-dup@example.com"
 	registerRegister(t, router, email)
 
 	// 再次注册同邮箱
-	body := map[string]string{"email": email, "code": seedCode(t, service.FlowRegister, email), "password": "password123"}
-	jsonBody, _ := json.Marshal(body)
-	req, _ := http.NewRequest("POST", "/api/auth/register", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	w := doJSON(t, router, http.MethodPost, "/api/auth/register",
+		map[string]string{"email": email, "code": seedCode(t, service.FlowRegister, email), "password": "password123"}, "")
 	assertErrorCode(t, w.Body.Bytes(), "A0112")
 }
 
 func TestAuthHandler_Login_Success(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	authHandler := app.auth
-	router.POST("/api/auth/register", authHandler.Register)
-	router.POST("/api/auth/login", authHandler.Login)
+	router := app.engine
 
 	email := "login-success@example.com"
 	registerRegister(t, router, email)
 
-	body := map[string]string{"email": email, "password": "password123"}
-	jsonBody, _ := json.Marshal(body)
-	req, _ := http.NewRequest("POST", "/api/auth/login", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	w := doJSON(t, router, http.MethodPost, "/api/auth/login",
+		map[string]string{"email": email, "password": "password123"}, "")
 
 	data := decodeData(t, w.Body.Bytes())
 	if _, ok := data["token"]; !ok {
@@ -181,56 +125,31 @@ func TestAuthHandler_Login_Success(t *testing.T) {
 
 func TestAuthHandler_Login_WrongPassword(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	authHandler := app.auth
-	router.POST("/api/auth/register", authHandler.Register)
-	router.POST("/api/auth/login", authHandler.Login)
+	router := app.engine
 
 	email := "login-wrong@example.com"
 	registerRegister(t, router, email)
 
-	body := map[string]string{"email": email, "password": "wrongpass"}
-	jsonBody, _ := json.Marshal(body)
-	req, _ := http.NewRequest("POST", "/api/auth/login", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	w := doJSON(t, router, http.MethodPost, "/api/auth/login",
+		map[string]string{"email": email, "password": "wrongpass"}, "")
 	assertErrorCode(t, w.Body.Bytes(), "A0210")
 }
 
 func TestAuthHandler_Login_Nonexistent(t *testing.T) {
 	app := newTestApp(t)
+	router := app.engine
 
-	router := setupRouter()
-	authHandler := app.auth
-	router.POST("/api/auth/login", authHandler.Login)
-
-	body := map[string]string{"email": "ghost@example.com", "password": "password123"}
-	jsonBody, _ := json.Marshal(body)
-	req, _ := http.NewRequest("POST", "/api/auth/login", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	w := doJSON(t, router, http.MethodPost, "/api/auth/login",
+		map[string]string{"email": "ghost@example.com", "password": "password123"}, "")
 	assertErrorCode(t, w.Body.Bytes(), "A0210")
 }
 
 func TestAuthHandler_Login_MissingFields(t *testing.T) {
 	app := newTestApp(t)
+	router := app.engine
 
-	router := setupRouter()
-	authHandler := app.auth
-	router.POST("/api/auth/login", authHandler.Login)
-
-	body := map[string]string{"password": "password123"}
-	jsonBody, _ := json.Marshal(body)
-	req, _ := http.NewRequest("POST", "/api/auth/login", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	w := doJSON(t, router, http.MethodPost, "/api/auth/login",
+		map[string]string{"password": "password123"}, "")
 	assertErrorCode(t, w.Body.Bytes(), "A0400")
 }
 
@@ -257,7 +176,7 @@ func (s *failingUserStore) ExistsByEmail(ctx context.Context, email string) (boo
 // 的原因是服务不可用；运维也会被错误的方向带走。
 func TestAuthHandler_Login_ServerFailureIsNotCredentialError(t *testing.T) {
 	access := jwt.New("test-secret-key", 60)
-	// 登录在取到账号之前就失败了，credentials 与 token store 都不会被用到。
+	// 登录在取到账号之前就失败了，credentials 与会话模块都不会被用到。
 	credentials := service.NewCredentials(nil, nil)
 	authSvc := service.NewAuthService(
 		&failingUserStore{err: errors.New("database is down")},
@@ -267,15 +186,12 @@ func TestAuthHandler_Login_ServerFailureIsNotCredentialError(t *testing.T) {
 		credentials,
 	)
 
-	router := setupRouter()
-	router.POST("/api/auth/login", NewAuthHandler(authSvc).Login)
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/api/auth/login", handler.NewAuthHandler(authSvc).Login)
 
-	body := map[string]string{"email": "someone@example.com", "password": "password123"}
-	jsonBody, _ := json.Marshal(body)
-	req, _ := http.NewRequest("POST", "/api/auth/login", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	w := doJSON(t, router, http.MethodPost, "/api/auth/login",
+		map[string]string{"email": "someone@example.com", "password": "password123"}, "")
 
 	assertErrorCode(t, w.Body.Bytes(), "C0500")
 	assertErrorMessage(t, w.Body.Bytes(), "登录失败")
@@ -283,19 +199,11 @@ func TestAuthHandler_Login_ServerFailureIsNotCredentialError(t *testing.T) {
 
 func TestAuthHandler_SendCode_RateLimited(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	authHandler := app.auth
-	router.POST("/api/auth/send-code", authHandler.SendCode)
+	router := app.engine
 
 	email := "rate@example.com"
 	for i := 0; i < 6; i++ {
-		body := map[string]string{"email": email}
-		jsonBody, _ := json.Marshal(body)
-		req, _ := http.NewRequest("POST", "/api/auth/send-code", bytes.NewBuffer(jsonBody))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
+		w := doJSON(t, router, http.MethodPost, "/api/auth/send-code", map[string]string{"email": email}, "")
 		// 并发限流为 1/分钟，第二次起即被拒
 		if i == 0 {
 			assertErrorCode(t, w.Body.Bytes(), "00000")
@@ -307,98 +215,55 @@ func TestAuthHandler_SendCode_RateLimited(t *testing.T) {
 
 func TestAuthHandler_Refresh_InvalidToken(t *testing.T) {
 	app := newTestApp(t)
+	router := app.engine
 
-	router := setupRouter()
-	authHandler := app.auth
-	router.POST("/api/auth/refresh", authHandler.Refresh)
-
-	body := map[string]string{"refresh_token": "bogus-token"}
-	jsonBody, _ := json.Marshal(body)
-	req, _ := http.NewRequest("POST", "/api/auth/refresh", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	w := doJSON(t, router, http.MethodPost, "/api/auth/refresh",
+		map[string]string{"refresh_token": "bogus-token"}, "")
 	assertErrorCode(t, w.Body.Bytes(), "A0230")
 }
 
 // registerRegister 仅执行注册（不登录），用于注册场景测试
 func registerRegister(t *testing.T, router *gin.Engine, email string) {
 	t.Helper()
-	body := map[string]string{"email": email, "code": seedCode(t, service.FlowRegister, email), "password": "password123"}
-	jsonBody, _ := json.Marshal(body)
-	req, _ := http.NewRequest("POST", "/api/auth/register", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	w := doJSON(t, router, http.MethodPost, "/api/auth/register",
+		map[string]string{"email": email, "code": seedCode(t, service.FlowRegister, email), "password": "password123"}, "")
 	assertErrorCode(t, w.Body.Bytes(), "00000")
 }
 
 func TestAuthHandler_Logout_Success(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	authHandler := app.auth
-	router.POST("/api/auth/register", authHandler.Register)
-	router.POST("/api/auth/login", authHandler.Login)
-	router.POST("/api/auth/logout", middleware.JWTAuth(app.tokens), authHandler.Logout)
+	router := app.engine
 
 	uid, token := registerUser(t, router, "logout@example.com")
 	_ = uid
 
-	req, _ := http.NewRequest("POST", "/api/auth/logout", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	w := doJSON(t, router, http.MethodPost, "/api/auth/logout", nil, token)
 	assertErrorCode(t, w.Body.Bytes(), "00000")
 }
 
 func TestAuthHandler_Logout_NoAuth(t *testing.T) {
 	app := newTestApp(t)
+	router := app.engine
 
-	router := setupRouter()
-	authHandler := app.auth
-	router.POST("/api/auth/logout", authHandler.Logout)
-
-	req, _ := http.NewRequest("POST", "/api/auth/logout", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	w := doJSON(t, router, http.MethodPost, "/api/auth/logout", nil, "")
 	assertErrorCode(t, w.Body.Bytes(), "A0230")
 }
 
 func TestAuthHandler_Refresh_Success(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	authHandler := app.auth
-	router.POST("/api/auth/register", authHandler.Register)
-	router.POST("/api/auth/login", authHandler.Login)
-	router.POST("/api/auth/refresh", authHandler.Refresh)
+	router := app.engine
 
 	email := "refresh-success@example.com"
 	registerUser(t, router, email)
 
 	// 登录取 refresh token
-	loginBody := map[string]string{"email": email, "password": "password123"}
-	jsonBody, _ := json.Marshal(loginBody)
-	req, _ := http.NewRequest("POST", "/api/auth/login", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-	loginData := decodeData(t, w.Body.Bytes())
+	loginData := decodeData(t, doJSON(t, router, http.MethodPost, "/api/auth/login",
+		map[string]string{"email": email, "password": "password123"}, "").Body.Bytes())
 	refreshToken := loginData["refresh_token"].(string)
 
 	// 刷新
-	refreshBody := map[string]string{"refresh_token": refreshToken}
-	jsonBody, _ = json.Marshal(refreshBody)
-	req, _ = http.NewRequest("POST", "/api/auth/refresh", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	w = httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	data := decodeData(t, w.Body.Bytes())
+	data := decodeData(t, doJSON(t, router, http.MethodPost, "/api/auth/refresh",
+		map[string]string{"refresh_token": refreshToken}, "").Body.Bytes())
 	if _, ok := data["token"]; !ok {
 		t.Error("Expected token in refresh response")
 	}
@@ -407,66 +272,64 @@ func TestAuthHandler_Refresh_Success(t *testing.T) {
 	}
 }
 
+// TestAuthHandler_Refresh_OldTokenRejectedAfterRotation 刷新轮换后旧 refresh token 立即失效。
+//
+// 轮换的语义是「一枚旧 token 只能换一次」：换到新 token 的同时旧 token 就地作废
+// （service.AuthService.Refresh 的 Sessions.Consume → Rotate，打在旧哈希上的条件更新）。被盗的 refresh token 若能在换发后
+// 被重放，等于把一次性的凭证变成了可无限续期的后门——这里钉住重放旧 token 必回 A0230。
+func TestAuthHandler_Refresh_OldTokenRejectedAfterRotation(t *testing.T) {
+	app := newTestApp(t)
+	router := app.engine
+
+	email := "refresh-rotate@example.com"
+	registerUser(t, router, email)
+
+	loginData := decodeData(t, doJSON(t, router, http.MethodPost, "/api/auth/login",
+		map[string]string{"email": email, "password": "password123"}, "").Body.Bytes())
+	refreshToken := loginData["refresh_token"].(string)
+
+	// 首次刷新成功，完成轮换
+	decodeData(t, doJSON(t, router, http.MethodPost, "/api/auth/refresh",
+		map[string]string{"refresh_token": refreshToken}, "").Body.Bytes())
+
+	// 用同一枚（现已作废的）旧 token 再换 → A0230
+	w := doJSON(t, router, http.MethodPost, "/api/auth/refresh",
+		map[string]string{"refresh_token": refreshToken}, "")
+	assertErrorCode(t, w.Body.Bytes(), "A0230")
+}
+
 func TestAuthHandler_ForgotPasswordSendCode_Success(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	authHandler := app.auth
-	router.POST("/api/auth/register", authHandler.Register)
-	router.POST("/api/auth/login", authHandler.Login)
-	router.POST("/api/auth/forgot-password/send-code", authHandler.ForgotPasswordSendCode)
+	router := app.engine
 
 	email := "forgot-send@example.com"
 	registerUser(t, router, email)
 
-	body := map[string]string{"email": email}
-	jsonBody, _ := json.Marshal(body)
-	req, _ := http.NewRequest("POST", "/api/auth/forgot-password/send-code", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	w := doJSON(t, router, http.MethodPost, "/api/auth/forgot-password/send-code",
+		map[string]string{"email": email}, "")
 	assertErrorCode(t, w.Body.Bytes(), "00000")
 }
 
 func TestAuthHandler_ForgotPasswordSendCode_RateLimited(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	authHandler := app.auth
-	router.POST("/api/auth/register", authHandler.Register)
-	router.POST("/api/auth/login", authHandler.Login)
-	router.POST("/api/auth/forgot-password/send-code", authHandler.ForgotPasswordSendCode)
+	router := app.engine
 
 	email := "forgot-rate@example.com"
 	registerUser(t, router, email)
 
-	// 第一次成功
 	body := map[string]string{"email": email}
-	jsonBody, _ := json.Marshal(body)
-	req, _ := http.NewRequest("POST", "/api/auth/forgot-password/send-code", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	// 第一次成功
+	w := doJSON(t, router, http.MethodPost, "/api/auth/forgot-password/send-code", body, "")
 	assertErrorCode(t, w.Body.Bytes(), "00000")
 
 	// 第二次限流
-	jsonBody, _ = json.Marshal(body)
-	req, _ = http.NewRequest("POST", "/api/auth/forgot-password/send-code", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	w = httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	w = doJSON(t, router, http.MethodPost, "/api/auth/forgot-password/send-code", body, "")
 	assertErrorCode(t, w.Body.Bytes(), "A0241")
 }
 
 func TestAuthHandler_ForgotPasswordReset_Success(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	authHandler := app.auth
-	router.POST("/api/auth/register", authHandler.Register)
-	router.POST("/api/auth/login", authHandler.Login)
-	router.POST("/api/auth/forgot-password/reset", authHandler.ForgotPasswordReset)
+	router := app.engine
 
 	email := "forgot-reset@example.com"
 	registerUser(t, router, email)
@@ -474,61 +337,36 @@ func TestAuthHandler_ForgotPasswordReset_Success(t *testing.T) {
 	// 经模块下发找回密码验证码
 	codeVal := seedCode(t, service.FlowForgot, email)
 
-	body := map[string]string{
+	w := doJSON(t, router, http.MethodPost, "/api/auth/forgot-password/reset", map[string]string{
 		"email":        email,
 		"code":         codeVal,
 		"new_password": "newpass456",
-	}
-	jsonBody, _ := json.Marshal(body)
-	req, _ := http.NewRequest("POST", "/api/auth/forgot-password/reset", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	}, "")
 	assertErrorCode(t, w.Body.Bytes(), "00000")
 
 	// 验证新密码可以登录
-	loginBody := map[string]string{"email": email, "password": "newpass456"}
-	jsonBody, _ = json.Marshal(loginBody)
-	req, _ = http.NewRequest("POST", "/api/auth/login", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	w = httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-	decodeData(t, w.Body.Bytes())
+	decodeData(t, doJSON(t, router, http.MethodPost, "/api/auth/login",
+		map[string]string{"email": email, "password": "newpass456"}, "").Body.Bytes())
 }
 
 func TestAuthHandler_ForgotPasswordReset_WrongCode(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	authHandler := app.auth
-	router.POST("/api/auth/register", authHandler.Register)
-	router.POST("/api/auth/login", authHandler.Login)
-	router.POST("/api/auth/forgot-password/reset", authHandler.ForgotPasswordReset)
+	router := app.engine
 
 	email := "forgot-wrong@example.com"
 	registerUser(t, router, email)
 
-	body := map[string]string{
+	w := doJSON(t, router, http.MethodPost, "/api/auth/forgot-password/reset", map[string]string{
 		"email":        email,
 		"code":         seedCodeWrong(t, service.FlowForgot, email),
 		"new_password": "newpass456",
-	}
-	jsonBody, _ := json.Marshal(body)
-	req, _ := http.NewRequest("POST", "/api/auth/forgot-password/reset", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	}, "")
 	assertErrorCode(t, w.Body.Bytes(), "A0132")
 }
 
 func TestAuthHandler_ForgotPasswordReset_InvalidJSON(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	authHandler := app.auth
-	router.POST("/api/auth/forgot-password/reset", authHandler.ForgotPasswordReset)
+	router := app.engine
 
 	req, _ := http.NewRequest("POST", "/api/auth/forgot-password/reset", bytes.NewBuffer([]byte("invalid")))
 	req.Header.Set("Content-Type", "application/json")
@@ -540,23 +378,15 @@ func TestAuthHandler_ForgotPasswordReset_InvalidJSON(t *testing.T) {
 
 func TestAuthHandler_ForgotPasswordReset_AccountNotFound(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	authHandler := app.auth
-	router.POST("/api/auth/forgot-password/reset", authHandler.ForgotPasswordReset)
+	router := app.engine
 
 	email := "ghost-forgot@example.com"
 
-	body := map[string]string{
+	w := doJSON(t, router, http.MethodPost, "/api/auth/forgot-password/reset", map[string]string{
 		"email":        email,
 		"code":         seedCode(t, service.FlowForgot, email),
 		"new_password": "newpass456",
-	}
-	jsonBody, _ := json.Marshal(body)
-	req, _ := http.NewRequest("POST", "/api/auth/forgot-password/reset", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	}, "")
 
 	// 未认证端点不得返回 A0201（ADR-0006：该码仅用于已认证上下文）。
 	// "验证码通过但账号不存在"属异常态，对外统一按服务器错误处理。
@@ -569,10 +399,7 @@ func TestAuthHandler_ForgotPasswordReset_AccountNotFound(t *testing.T) {
 
 func TestAuthHandler_ForgotPasswordSendCode_InvalidJSON(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	authHandler := app.auth
-	router.POST("/api/auth/forgot-password/send-code", authHandler.ForgotPasswordSendCode)
+	router := app.engine
 
 	req, _ := http.NewRequest("POST", "/api/auth/forgot-password/send-code", bytes.NewBuffer([]byte("invalid")))
 	req.Header.Set("Content-Type", "application/json")
@@ -584,10 +411,7 @@ func TestAuthHandler_ForgotPasswordSendCode_InvalidJSON(t *testing.T) {
 
 func TestAuthHandler_SendCode_InvalidJSON(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	authHandler := app.auth
-	router.POST("/api/auth/send-code", authHandler.SendCode)
+	router := app.engine
 
 	req, _ := http.NewRequest("POST", "/api/auth/send-code", bytes.NewBuffer([]byte("invalid")))
 	req.Header.Set("Content-Type", "application/json")
@@ -597,6 +421,31 @@ func TestAuthHandler_SendCode_InvalidJSON(t *testing.T) {
 	assertErrorCode(t, w.Body.Bytes(), "A0400")
 }
 
+// TestAuthHandler_Register_TooManyAttemptsAtHTTP 注册验证码错到上限在 HTTP 面回 A0241。
+//
+// 校验点历史上写成 `!= ResultOK`，把「尝试超限」与「码不对/无码」一起折成 A0132，
+// 于是 A0241 在 /api/auth/register 上不可达。这里在真表上把第 MaxAttempts 次错码
+// 的信封钉成 A0241（service 层 TestAuthService_Register_TooManyAttempts 同源触发）。
+func TestAuthHandler_Register_TooManyAttemptsAtHTTP(t *testing.T) {
+	app := newTestApp(t)
+	router := app.engine
+
+	email := "reg-toomany@example.com"
+	wrong := seedCodeWrong(t, service.FlowRegister, email)
+
+	for i := 1; i <= code.MaxAttempts; i++ {
+		w := doJSON(t, router, http.MethodPost, "/api/auth/register",
+			map[string]string{"email": email, "code": wrong, "password": "password123"}, "")
+		if i < code.MaxAttempts {
+			// 未到上限：码不对（A0132）
+			assertErrorCode(t, w.Body.Bytes(), "A0132")
+		} else {
+			// 恰好触顶：尝试超限（A0241）
+			assertErrorCode(t, w.Body.Bytes(), "A0241")
+		}
+	}
+}
+
 // TestAuthHandler_Login_LockoutDoesNotRevealAccountExistence 锁定与尝试超限必须与
 // 「账号不存在/密码错误」返回同一信封（ADR-0006）。
 //
@@ -604,9 +453,7 @@ func TestAuthHandler_SendCode_InvalidJSON(t *testing.T) {
 // 判断某个邮箱是否已注册，枚举保护形同虚设。
 func TestAuthHandler_Login_LockoutDoesNotRevealAccountExistence(t *testing.T) {
 	app := newTestApp(t)
-	router := setupRouter()
-	router.POST("/api/auth/register", app.auth.Register)
-	router.POST("/api/auth/login", app.auth.Login)
+	router := app.engine
 
 	known := "lockout-known@example.com"
 	unknown := "lockout-unknown@example.com"
@@ -646,8 +493,7 @@ func TestAuthHandler_Login_LockoutDoesNotRevealAccountExistence(t *testing.T) {
 // 验证码的人才会看到 A0112。
 func TestAuthHandler_Register_ExistingEmailNeedsCodeFirst(t *testing.T) {
 	app := newTestApp(t)
-	router := setupRouter()
-	router.POST("/api/auth/register", app.auth.Register)
+	router := app.engine
 
 	known := "register-oracle-known@example.com"
 	registerRegister(t, router, known)
@@ -660,4 +506,31 @@ func TestAuthHandler_Register_ExistingEmailNeedsCodeFirst(t *testing.T) {
 		}, "")
 		assertErrorCode(t, w.Body.Bytes(), "A0132")
 	}
+}
+
+// TestAuthHandler_ChangePassword_OldPasswordRejectedAfterChange 改密成功后旧口令立即不可登录。
+//
+// 评审原文是「注销后旧口令」，但注销只撤 token 不改哈希——账号是匿名化而非删除
+// （ADR-0005），旧口令仍可登录是正确语义。这里按现状语义取「改密后旧口令被拒」。
+func TestAuthHandler_ChangePassword_OldPasswordRejectedAfterChange(t *testing.T) {
+	app := newTestApp(t)
+	router := app.engine
+
+	email := "changepwd-old@example.com"
+	_, token := registerUser(t, router, email)
+
+	// 改密成功
+	w := doJSON(t, router, http.MethodPut, "/api/users/me/password",
+		map[string]string{"old_password": "password123", "new_password": "newpass456"}, token)
+	assertErrorCode(t, w.Body.Bytes(), "00000")
+
+	// 旧口令登录必须被拒（A0210），且与「账号不存在」同码同文案（ADR-0006）
+	w = doJSON(t, router, http.MethodPost, "/api/auth/login",
+		map[string]string{"email": email, "password": "password123"}, "")
+	assertErrorCode(t, w.Body.Bytes(), "A0210")
+	assertErrorMessage(t, w.Body.Bytes(), "邮箱或密码错误")
+
+	// 新口令可登录
+	decodeData(t, doJSON(t, router, http.MethodPost, "/api/auth/login",
+		map[string]string{"email": email, "password": "newpass456"}, "").Body.Bytes())
 }

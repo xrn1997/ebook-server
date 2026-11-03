@@ -1,8 +1,6 @@
 package handler
 
 import (
-	"strings"
-
 	"ebook-server/model"
 	"ebook-server/pkg/errcode"
 	"ebook-server/pkg/httpx"
@@ -75,10 +73,11 @@ func (h *CommentHandler) Create(c *gin.Context) {
 func (h *CommentHandler) GetList(c *gin.Context) {
 	page, pageSize := httpx.Page(c)
 
-	// handler 只做协议转换：把查询参数拆成键列表。哪个键赢、上限多少，属查询语义。
+	// handler 只做协议转换：把查询参数拆成键列表。切分语义（逗号/重复参数/丢空串）
+	// 与上限判定都属查询语义，入口在 model（ParseCommentKeyFilters/Normalize）。
 	filter := model.CommentFilter{
-		CommentKeys: parseCommentKeyFilters(c),
-		LegacyKeys:  parseLegacyKeyFilters(c),
+		CommentKeys: model.ParseCommentKeyFilters(c.QueryArray("comment_keys")),
+		LegacyKeys:  model.ParseLegacyKeyFilters(c.QueryArray("chapter_url")),
 		BookName:    c.Query("book_name"),
 		Page:        page,
 		PageSize:    pageSize,
@@ -91,44 +90,6 @@ func (h *CommentHandler) GetList(c *gin.Context) {
 	}
 
 	errcode.Success(c, result)
-}
-
-// parseCommentKeyFilters 拆出 comment_keys 过滤参数（M2 主读路径）。
-//
-// 客户端用 Retrofit 的单个 @Query 把多个键拼成逗号分隔的一个值，所以这里既按逗号切分，
-// 也容忍 `?comment_keys=a&comment_keys=b` 的重复参数形态。键本身永不含逗号
-// （`ck1:` + 十六进制摘要 + 可选 `#章序号`），按逗号切分没有歧义。
-// 空串按「未提供该键」丢弃（`?comment_keys=` 不带值是常见形态，此时落全局最新列表）。
-// 长度与个数上限不在这里判定，见 model.CommentFilter.Normalize。
-func parseCommentKeyFilters(c *gin.Context) []string {
-	return splitKeyFilters(c.QueryArray("comment_keys"), true)
-}
-
-// parseLegacyKeyFilters 拆出 chapter_url（已废弃的旧聚合键）过滤参数。
-//
-// chapter_url 可以含逗号（它是 URL），因此不按逗号切分，只丢弃空值。
-func parseLegacyKeyFilters(c *gin.Context) []string {
-	return splitKeyFilters(c.QueryArray("chapter_url"), false)
-}
-
-// splitKeyFilters 丢弃空值、按需按逗号切分，得到过滤用的键列表。
-func splitKeyFilters(raw []string, splitOnComma bool) []string {
-	keys := make([]string, 0, len(raw))
-	for _, item := range raw {
-		if item == "" {
-			continue
-		}
-		if splitOnComma {
-			for _, key := range strings.Split(item, ",") {
-				if key != "" {
-					keys = append(keys, key)
-				}
-			}
-			continue
-		}
-		keys = append(keys, item)
-	}
-	return keys
 }
 
 // GetMyComments 获取我的评论列表
@@ -189,7 +150,7 @@ func (h *CommentHandler) Delete(c *gin.Context) {
 		return
 	}
 
-	errcode.SuccessMsg(c, "删除成功", nil)
+	errcode.Success(c, nil)
 }
 
 // MigrateKey 迁移评论聚合键

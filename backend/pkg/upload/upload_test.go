@@ -98,6 +98,38 @@ func TestSaveAvatar_RejectsOversize(t *testing.T) {
 	}
 }
 
+// TestSaveAvatar_RejectsEmpty 空文件按非法图片拒绝，而不是写出一枚 0 字节头像。
+func TestSaveAvatar_RejectsEmpty(t *testing.T) {
+	store := New(t.TempDir(), "")
+	if _, err := store.SaveAvatar(newAvatarHeader(t, "empty.png", "")); !errors.Is(err, model.ErrInvalidImage) {
+		t.Errorf("expected ErrInvalidImage for empty file, got %v", err)
+	}
+}
+
+// TestSaveAvatar_OpenError 上传头无法打开时返回包装错误，不落半成品文件。
+func TestSaveAvatar_OpenError(t *testing.T) {
+	store := New(t.TempDir(), "")
+	header := &multipart.FileHeader{Filename: "broken.png", Size: 10}
+	if _, err := store.SaveAvatar(header); err == nil || errors.Is(err, model.ErrInvalidImage) {
+		t.Fatalf("SaveAvatar with unreadable content = %v, want wrapped open error", err)
+	}
+}
+
+// TestSaveAvatar_MkdirError 头像目录位置被普通文件占住时保存失败（MkdirAll 兜底错误上抛）。
+func TestSaveAvatar_MkdirError(t *testing.T) {
+	store := New(t.TempDir(), "")
+	if err := os.RemoveAll(store.AvatarDir()); err != nil {
+		t.Fatalf("remove avatar dir: %v", err)
+	}
+	if err := os.WriteFile(store.AvatarDir(), []byte("blocker"), 0o600); err != nil {
+		t.Fatalf("create blocker: %v", err)
+	}
+
+	if _, err := store.SaveAvatar(newAvatarHeader(t, "me.png", "x")); err == nil {
+		t.Fatal("SaveAvatar with avatar dir blocked by file should fail")
+	}
+}
+
 // TestDeleteAvatar_OwnURL 本服务 URL 的文件被删除。
 func TestDeleteAvatar_OwnURL(t *testing.T) {
 	store := New(t.TempDir(), "")
@@ -170,6 +202,32 @@ func TestDeleteAvatar_RejectsWindowsNameVariants(t *testing.T) {
 	}
 }
 
+// TestDeleteAvatar_MalformedURL 解析不了的 URL 视为外部地址，no-op。
+func TestDeleteAvatar_MalformedURL(t *testing.T) {
+	store := New(t.TempDir(), "")
+	if err := store.DeleteAvatar("http://h/uploads/avatar/%zz"); err != nil {
+		t.Errorf("malformed URL delete should be no-op, got %v", err)
+	}
+}
+
+// TestDeleteAvatar_RemoveFailure 文件删不掉时错误上抛，由调用方记日志。
+func TestDeleteAvatar_RemoveFailure(t *testing.T) {
+	store := New(t.TempDir(), "")
+	name := "blocked.png"
+	// 用非空目录占住目标文件名：os.Remove 会因目录非空失败，稳定的删除错误。
+	blocked := filepath.Join(store.AvatarDir(), name)
+	if err := os.Mkdir(blocked, 0o755); err != nil {
+		t.Fatalf("seed blocked dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(blocked, "x"), []byte("x"), 0o600); err != nil {
+		t.Fatalf("seed blocked content: %v", err)
+	}
+
+	if err := store.DeleteAvatar("http://h/uploads/avatar/" + name); err == nil {
+		t.Fatal("DeleteAvatar should surface remove failure")
+	}
+}
+
 // TestDeleteAvatar_TraversalURL 目录穿越形 URL 拒绝删除（防删到 uploads 外文件）。
 func TestDeleteAvatar_TraversalURL(t *testing.T) {
 	dir := t.TempDir()
@@ -219,7 +277,36 @@ func TestPublicURL_PrefersConfiguredBase(t *testing.T) {
 // 带 scheme、带空白、端口越界）时不回显对方选定的 origin，退回站内路径。
 func TestPublicURL_FallsBackToPathWhenHostUntrustworthy(t *testing.T) {
 	store := New(t.TempDir(), "")
-	for _, host := range []string{"evil.test/x", "http://evil.test", "a b", "evil.test:99999", "user@evil.test", ""} {
+	for _, host := range []string{
+		"evil.test/x", "http://evil.test", "a b", "evil.test:99999",
+		"evil.test:abc", "evil.test:", "user@evil.test", "",
+	} {
+		want := "/uploads/avatar/a.png"
+		if got := store.PublicURL("http", host, "a.png"); got != want {
+			t.Errorf("host = %q 时 PublicURL = %q, want %q", host, got, want)
+		}
+	}
+}
+
+// TestPublicURL_DNSLikeHosts 点分主机名与带尾点的 FQDN 按请求 Host 拼绝对 URL。
+func TestPublicURL_DNSLikeHosts(t *testing.T) {
+	store := New(t.TempDir(), "")
+	for _, host := range []string{"localhost", "book.example.com", "192.168.0.156.nip.io", "example.com."} {
+		want := "http://" + host + "/uploads/avatar/a.png"
+		if got := store.PublicURL("http", host, "a.png"); got != want {
+			t.Errorf("host = %q 时 PublicURL = %q, want %q", host, got, want)
+		}
+	}
+}
+
+// TestPublicURL_RejectsMalformedDNSHosts 非法 DNS 字形的 Host 退回站内路径：
+// 空标签、首尾连字符、超长标签/主机名、下划线都不参与 origin 拼接。
+func TestPublicURL_RejectsMalformedDNSHosts(t *testing.T) {
+	store := New(t.TempDir(), "")
+	for _, host := range []string{
+		"-bad.example", "bad-.example", "a..b", "bad_host",
+		strings.Repeat("a", 64) + ".com", strings.Repeat("a", 254),
+	} {
 		want := "/uploads/avatar/a.png"
 		if got := store.PublicURL("http", host, "a.png"); got != want {
 			t.Errorf("host = %q 时 PublicURL = %q, want %q", host, got, want)

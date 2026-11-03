@@ -113,7 +113,7 @@ ADR-0001 计划的 `verify-code`、`resend-code` 不再需要——注册即激�
 
 * `main.go`：注册 `send-code`，移除 `verify-code`/`resend-code`。
 
-* `sql/init.sql`：`users.email` 唯一、`users.username` 去唯一索引、加限流字段。
+* `sql/init.sql`（已删）：`users.email` 唯一、`users.username` 去唯一索引、加限流字段。
 
 * 测试与文档同步更新。
 

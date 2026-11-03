@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"time"
@@ -12,18 +11,16 @@ import (
 	"ebook-server/pkg/jwt"
 )
 
-// RefreshTokenTTL refresh token 有效期（30 天）
-const RefreshTokenTTL = 30 * 24 * time.Hour
-
 // AuthService 认证业务服务：注册、登录、token 签发与轮换、密码管理。
 //
 // 数据访问依赖以 Store 接口注入（ADR-0007）；验证码的下发与校验都走
 // VerificationCodes（ADR-0008），本模块不自建键、不解释校验结果的枚举。
 // access token 的签发与解析由注入的 jwt.TokenBox 负责（密钥与有效期是构造时给的，
-// 不是去读包级配置）。账号注销与数据导出见 AccountService。
+// 不是去读包级配置）。refresh token 的规则（签发/轮换/撤销）全部住在 Sessions，
+// 本模块只做编排。账号注销与数据导出见 AccountService。
 type AuthService struct {
 	users       UserStore
-	tokens      TokenStore
+	sessions    *Sessions
 	codes       *VerificationCodes
 	access      *jwt.TokenBox
 	credentials *Credentials
@@ -31,10 +28,10 @@ type AuthService struct {
 
 // NewAuthService 创建认证服务实例。access 是用户侧 token 单元；
 // 密码哈希、失败计数与会话撤销由注入的 Credentials 承担。
-func NewAuthService(users UserStore, tokens TokenStore, codes *VerificationCodes, access *jwt.TokenBox, credentials *Credentials) *AuthService {
+func NewAuthService(users UserStore, sessions *Sessions, codes *VerificationCodes, access *jwt.TokenBox, credentials *Credentials) *AuthService {
 	return &AuthService{
 		users:       users,
-		tokens:      tokens,
+		sessions:    sessions,
 		codes:       codes,
 		access:      access,
 		credentials: credentials,
@@ -132,57 +129,36 @@ func (s *AuthService) recordLoginSuccess(ctx context.Context, user *model.User) 
 	return s.issueTokens(ctx, user)
 }
 
-// Refresh 刷新 token（ADR-0003）：校验旧 refresh token 后作废，仅下发纯凭证（不含用户资料）
+// Refresh 刷新 token（ADR-0003）：就地轮换 refresh token，仅下发纯凭证（不含用户资料）
+//
+// 会话语义（验明、匿名化检查、单次消费与就地轮换）全在 Sessions.Consume；这里只签
+// access token 并组凭证。持有者账号取自 Consume 的同一次读取——在这里再查一遍不只
+// 多一条 SELECT，还读到轮换之后的行，与 Consume 判过的状态不是同一份。
+//
+// 顺序是「先轮换、后签 access」，因为要签的 uid 来自 Consume 的那次读取，倒不过来。
+// 残留：access 签发失败时轮换已经落库，新原文从未出网，库里留下一行只有服务端知道、
+// 客户端再也拿不到的令牌——它活到自身过期，或由下一次登出/改密被 Revoke 整批收掉，
+// 客户端此时只能重新登录。HMAC 签名不会失败，所以不为这一格加清理路径。
 func (s *AuthService) Refresh(ctx context.Context, refreshToken string) (*model.TokenPayload, error) {
-	record, err := s.tokens.FindByHash(ctx, sha256Hex(refreshToken))
+	user, rotated, err := s.sessions.Consume(ctx, refreshToken)
 	if err != nil {
-		return nil, err // 令牌不存在或已过期，repository 一并给 model.ErrLoginExpired
+		return nil, err // 令牌不可用（未找到/过期/败者或撤销在先→ErrLoginExpired；匿名化→ErrAccountNotFound）
 	}
-
-	user, err := s.users.FindByUID(ctx, record.UserID)
-	if err != nil {
-		return nil, err // 令牌指向的账号已被硬删（注销只匿名化，见 ADR-0005）→ A0201
-	}
-	// 匿名化注销的账号一律拒绝续期（→ A0201）：注销与并发刷新的竞态可能让轮换
-	// 写入的令牌漏过 DeleteByUserID，续期前的这道状态检查保证它最多存活到自身
-	// 过期、绝不轮换——否则一条会话能在账号注销后无限续期（isAnonymized）。
-	if isAnonymized(user) {
-		return nil, model.ErrAccountNotFound
-	}
-
-	// Rotation：条件作废旧 token，只有真正删到行的一方才签发新令牌。
-	// 并发刷新同一枚令牌时，后来者在这里被当作「令牌已失效」拒绝。
-	consumed, err := s.tokens.DeleteByID(ctx, record.ID)
-	if err != nil {
-		return nil, err
-	}
-	if !consumed {
-		return nil, model.ErrLoginExpired
-	}
-	return s.issueTokenPayload(ctx, user.UID, user.Username)
+	return s.tokenPayload(user.UID, user.Username, rotated)
 }
 
 // Logout 登出：作废该用户的全部 refresh token。
 //
 // access token 是无状态的，这里撤不掉它，它活到自身过期（ADR-0003 的取舍）。
 func (s *AuthService) Logout(ctx context.Context, uid uint) error {
-	return s.tokens.DeleteByUserID(ctx, uid)
+	return s.sessions.Revoke(ctx, uid)
 }
 
-// ChangePassword 已登录修改密码；成功后撤销该用户的全部 refresh token
-// （access 仍会活到自身过期，同上——别把这句读成「立即断掉所有会话」）。
+// ChangePassword 已登录修改密码；验旧口令、撤销会话、写新哈希的编排在凭据模块
+// （credentials.Change）。成功后撤销该用户的全部 refresh token（access 仍会活到
+// 自身过期——别把这句读成「立即断掉所有会话」）。
 func (s *AuthService) ChangePassword(ctx context.Context, uid uint, oldPassword, newPassword string) error {
-	user, err := s.users.FindByUID(ctx, uid)
-	if err != nil {
-		return err
-	}
-
-	if !s.credentials.CheckPassword(user.Password, oldPassword) {
-		return model.ErrPasswordWrong
-	}
-
-	// SetPassword 内部先撤销 refresh token、再写新哈希（fail-closed）。
-	return s.credentials.SetPassword(ctx, uid, newPassword)
+	return s.credentials.Change(ctx, uid, oldPassword, newPassword)
 }
 
 // SendForgotCode 忘记密码发送验证码（仅账号存在时真实发送，避免枚举）
@@ -198,7 +174,8 @@ func (s *AuthService) SendForgotCode(ctx context.Context, email string) error {
 	return s.codes.Send(ctx, FlowForgot, email)
 }
 
-// ResetPassword 验证码重置密码（纯邮箱）
+// ResetPassword 验证码重置密码（纯邮箱）；撤销会话与写新哈希的编排在凭据模块
+// （credentials.Reset），这里只负责验证码与账号定位。
 func (s *AuthService) ResetPassword(ctx context.Context, email, codeVal, newPassword string) error {
 	if err := s.codes.Confirm(ctx, FlowForgot, email, codeVal); err != nil {
 		return err
@@ -209,7 +186,7 @@ func (s *AuthService) ResetPassword(ctx context.Context, email, codeVal, newPass
 		return err
 	}
 
-	return s.credentials.SetPassword(ctx, user.UID, newPassword)
+	return s.credentials.Reset(ctx, user.UID, newPassword)
 }
 
 // generateUsername 生成随机用户名占位（可后改）
@@ -221,18 +198,21 @@ func (s *AuthService) generateUsername() string {
 	return "user_" + hex.EncodeToString(buf)
 }
 
-// issueTokenPayload 签发双 token（纯凭证，不含用户资料）——登录复用其凭证部分、刷新直接使用
+// issueTokenPayload 签发一枚新会话并组成凭证对（纯凭证，不含用户资料）——登录路径用。
 func (s *AuthService) issueTokenPayload(ctx context.Context, uid uint, username string) (*model.TokenPayload, error) {
+	refreshToken, err := s.sessions.Issue(ctx, uid)
+	if err != nil {
+		return nil, err
+	}
+	return s.tokenPayload(uid, username, refreshToken)
+}
+
+// tokenPayload 把已落库的 refresh token 原文与新签的 access token 组成凭证对。
+func (s *AuthService) tokenPayload(uid uint, username, refreshToken string) (*model.TokenPayload, error) {
 	accessToken, err := s.access.IssueUser(uid, username)
 	if err != nil {
 		return nil, err
 	}
-
-	refreshToken, err := s.newRefreshToken(ctx, uid)
-	if err != nil {
-		return nil, err
-	}
-
 	return &model.TokenPayload{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
@@ -251,29 +231,4 @@ func (s *AuthService) issueTokens(ctx context.Context, user *model.User) (*model
 		RefreshToken: payload.RefreshToken,
 		User:         *user,
 	}, nil
-}
-
-// newRefreshToken 生成 32 字节 hex 随机串并落库其 SHA-256 哈希
-func (s *AuthService) newRefreshToken(ctx context.Context, uid uint) (string, error) {
-	buf := make([]byte, 32)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	raw := hex.EncodeToString(buf)
-
-	record := &model.RefreshToken{
-		TokenHash: sha256Hex(raw),
-		UserID:    uid,
-		ExpiresAt: time.Now().Add(RefreshTokenTTL),
-	}
-	if err := s.tokens.Create(ctx, record); err != nil {
-		return "", err
-	}
-	return raw, nil
-}
-
-// sha256Hex 计算字符串的 SHA-256 十六进制摘要
-func sha256Hex(s string) string {
-	h := sha256.Sum256([]byte(s))
-	return hex.EncodeToString(h[:])
 }

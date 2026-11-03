@@ -3,11 +3,10 @@ package admin
 import (
 	"crypto/sha256"
 	"crypto/subtle"
-	"strings"
 	"time"
 
-	"ebook-server/config"
 	"ebook-server/pkg/errcode"
+	"ebook-server/pkg/httpx"
 	pubjwt "ebook-server/pkg/jwt"
 
 	"github.com/gin-gonic/gin"
@@ -44,8 +43,19 @@ type Session struct {
 	tokens   *pubjwt.TokenBox
 }
 
-// NewSession 按后台配置装配会话。有效期原样取自配置（默认值由 config 层给出）。
-func NewSession(cfg config.AdminConfig) *Session {
+// SessionConfig 是 NewSession 的构造输入：会话只需要凭据与有效期四项。
+//
+// 刻意不复用 config.AdminConfig：admin 包不该知道配置里还有什么——监听地址之类
+// 属于装配层（main.go）的知识，配置 → 这四项的转换留在那个装配点。
+type SessionConfig struct {
+	Username  string
+	Password  string
+	JWTSecret string
+	ExpireMin int
+}
+
+// NewSession 按会话配置装配。有效期原样取自调用方（默认值由 config 层给出）。
+func NewSession(cfg SessionConfig) *Session {
 	return &Session{
 		username: cfg.Username,
 		password: cfg.Password,
@@ -91,17 +101,17 @@ func (s *Session) validate(tokenString string) error {
 
 // AuthMiddleware 管理端 API 认证中间件。
 //
-// Bearer 头的解析形状与用户侧中间件一致，但两把密钥永不互认（ADR-0010）。
+// Bearer 头的形状判定与用户侧共用 httpx.BearerToken，但两把密钥永不互认（ADR-0010）：
+// 形状错了与没带 token 在这里回同一句话（A0403），失败码也不同于公开侧的 A0230。
 func (s *Session) AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		authHeader := c.GetHeader("Authorization")
-		parts := strings.SplitN(authHeader, " ", 2)
-		if !(len(parts) == 2 && parts[0] == "Bearer") {
+		token, err := httpx.BearerToken(c.GetHeader("Authorization"))
+		if err != nil {
 			errcode.Error(c, adminAuthFailureCode, "缺少管理端认证令牌")
 			c.Abort()
 			return
 		}
-		if err := s.validate(parts[1]); err != nil {
+		if err := s.validate(token); err != nil {
 			errcode.Error(c, adminAuthFailureCode, ErrTokenInvalid.Error())
 			c.Abort()
 			return

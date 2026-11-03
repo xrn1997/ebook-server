@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -77,11 +78,47 @@ type MigrateCommentKeyResponse struct {
 // MaxCommentKeyLength 聚合键的字节上限，是 comment_key 这一列的唯一运行时约束来源。
 //
 // 改键、按键过滤两处都要靠它挡脏数据与「一条语句打满 SQLite 绑定变量」，
-// 历史上同一个 200 抄了四份、其中后台那份没有测试钉住。绑定 tag 只能写字面量，
-// 所以 tag 里的 max=200 由 handler 与 internal/admin 各自的反射用例钉住一致性
-// （TestCommentKeyLengthLimitMatchesModelBinding、
-// TestRehashRequestBindingMatchesColumnLimit）。
+// 历史上同一个 200 抄了四份、其中后台那份没有测试钉住。绑定 tag 只能写字面量、
+// 无法引用常量，所以 tag 里的 max=200 由反射钉盯住：本包的
+// TestCommentKeyBindingTagsMatchMaxCommentKeyLength 管 Create.CommentKey 与
+// MigrateCommentKeyRequest 的两个键；后台 rehashRequest 在本包之外，这里的反射扫不到
+// 它，由 internal/admin 同包的那枚 TestRehashRequestBindingMatchesMaxCommentKeyLength
+// 钉住。两枚钉读同一个常量、各钉各自包里的 struct，不是同一份知识抄两遍——
+// 只留一枚的话，常量抬到 300 而后台 tag 仍是 200，合法的键会在后台边界被 A0400 拒掉。
 const MaxCommentKeyLength = 200
+
+// ParseCommentKeyFilters 拆出 comment_keys 过滤参数（M2 主读路径）。
+//
+// 客户端用 Retrofit 的单个 @Query 把多个键拼成逗号分隔的一个值，所以这里既按逗号切分，
+// 也容忍 `?comment_keys=a&comment_keys=b` 的重复参数形态（逐个入参处理，不去重）。
+// 键本身永不含逗号（`ck1:` + 十六进制摘要 + 可选 `#章序号`），按逗号切分没有歧义。
+// 空串按「未提供该键」丢弃（`?comment_keys=` 不带值是常见形态，此时落全局最新列表）。
+// 长度与个数上限不在这里判定，见 CommentFilter.Normalize。
+func ParseCommentKeyFilters(raw []string) []string {
+	keys := make([]string, 0, len(raw))
+	for _, item := range raw {
+		keys = append(keys, strings.Split(item, ",")...)
+	}
+	return dropEmpty(keys)
+}
+
+// ParseLegacyKeyFilters 拆出 chapter_url（已废弃的旧聚合键）过滤参数。
+//
+// chapter_url 可以含逗号（它是 URL），因此不按逗号切分，只丢弃空值。
+func ParseLegacyKeyFilters(raw []string) []string {
+	return dropEmpty(raw)
+}
+
+// dropEmpty 丢弃空项：两个过滤入口共用同一份「空串不算键」的语义。
+func dropEmpty(items []string) []string {
+	keys := make([]string, 0, len(items))
+	for _, item := range items {
+		if item != "" {
+			keys = append(keys, item)
+		}
+	}
+	return keys
+}
 
 // CommentKeyScope 一次改键作用的归属范围。
 //
@@ -136,6 +173,39 @@ func (s CommentScope) UserID() (uint, bool) { return s.userID, !s.admin }
 
 // IsAdmin 报告本次是否为治理删。
 func (s CommentScope) IsAdmin() bool { return s.admin }
+
+// DeleteOutcome 一次条件删除的结果归因。
+//
+// 条件 DELETE 只回答「删到行没有」；没删到时把原因判出来是存储实现的职责
+// （ADR-0015 §2）——归因的解释权在那里，service 只把这个值映射成错误码。
+// 判据本身不变：RowsAffected 仍是「是否真的删了一行」的唯一依据。
+type DeleteOutcome int
+
+const (
+	// DeleteOutcomeUnknown 零值，刻意不代表任何归因：漏赋值（含未来新增的早返回）
+	// 会被 service 映射成 A0304 而不是谎报成功。成功必须是显式返回的。
+	DeleteOutcomeUnknown DeleteOutcome = iota
+	// DeleteDeleted 删到了行。
+	DeleteDeleted
+	// DeleteNotFound 行不存在，或已不可见（并发删除留下的软删行对调用方同样不在）。
+	DeleteNotFound
+	// DeleteNotOwner 行存在且可见，但作者不是 scope 指定的用户。
+	DeleteNotOwner
+)
+
+// String 让断言的失败信息自解释：读到的是归因名，而不是要回头数 iota 的 `outcome = 0`。
+func (o DeleteOutcome) String() string {
+	switch o {
+	case DeleteDeleted:
+		return "DeleteDeleted"
+	case DeleteNotFound:
+		return "DeleteNotFound"
+	case DeleteNotOwner:
+		return "DeleteNotOwner"
+	default:
+		return "DeleteOutcomeUnknown"
+	}
+}
 
 // MaxChapterURLLength 单个 chapter_url（已废弃的旧聚合键）的字节上限。
 //

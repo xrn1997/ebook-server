@@ -500,6 +500,32 @@ func TestCommentService_Delete_AdminScopeBypassesOwnership(t *testing.T) {
 	}
 }
 
+// TestDeleteOutcomeError 删除归因→错误码是纯映射，不再回落查询。
+//
+// 三值语义与存储错误由 repository 层的真表用例钉住；这里逐值断言映射：
+// DeleteDeleted→成功，DeleteNotFound（不存在或并发删）→A0304，
+// DeleteNotOwner→A0303，零值与表外归因按 A0304 失败安全（不谎报成功）。
+func TestDeleteOutcomeError(t *testing.T) {
+	cases := []struct {
+		name    string
+		outcome model.DeleteOutcome
+		wantErr error
+	}{
+		{"删到行→成功", model.DeleteDeleted, nil},
+		{"不存在/并发删→A0304", model.DeleteNotFound, model.ErrCommentNotFound},
+		{"非本人→A0303", model.DeleteNotOwner, model.ErrCommentNotOwner},
+		{"零值（漏赋值）→A0304 失败安全", model.DeleteOutcomeUnknown, model.ErrCommentNotFound},
+		{"表外归因→A0304 失败安全", model.DeleteOutcome(99), model.ErrCommentNotFound},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := deleteOutcomeError(tc.outcome); err != tc.wantErr {
+				t.Fatalf("deleteOutcomeError(%v) = %v, want %v", tc.outcome, err, tc.wantErr)
+			}
+		})
+	}
+}
+
 // TestCommentService_ListForAdmin_FixedView 后台列表使用固定视图：含 content 与 created_at，
 // user 只含展示字段。
 func TestCommentService_ListForAdmin_FixedView(t *testing.T) {

@@ -67,7 +67,7 @@ func TestNewMailer_SelectsAdapter(t *testing.T) {
 	}{
 		{"SMTP 已配置", &config.Config{SMTP: config.SMTPConfig{Host: "smtp.example.com", Port: 465}}, (*mail.SMTPMailer)(nil)},
 		{"release 未配置 SMTP", &config.Config{Server: config.ServerConfig{Mode: config.ModeRelease}}, (*mail.SMTPMailer)(nil)},
-		{"debug 未配置 SMTP", &config.Config{Server: config.ServerConfig{Mode: "debug"}}, (*mail.LogMailer)(nil)},
+		{"debug 未配置 SMTP", &config.Config{Server: config.ServerConfig{Mode: config.ModeDebug}}, (*mail.LogMailer)(nil)},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

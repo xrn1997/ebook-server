@@ -5,7 +5,8 @@
 ## 环境要求
 
 - Go 1.23 或更高版本（`backend/go.mod` 的 `go` 指令即最低版本）。
-- Node.js 与 npm（构建/测试 `frontend/` 时需要）。
+- Node.js `^20.19.0 || ^22.13.0 || >=24` 与 npm（构建/测试 `frontend/` 时需要）。下限来自 ESLint 10；
+  没开 `engine-strict`，所以低版本上 `npm ci` 只警告，真正起不来的是 `make frontend-lint`（取舍见 `ADR-0026`）。
 - GNU make（仓库不自带；Windows 上装 MinGW 的 `mingw32-make` 也可，但命令名需自行对应）。
 - Windows 上使用 Git Bash 运行 Makefile 与本文命令。
 - Windows 构建单 exe 需要 MinGW-w64 的 `windres`（WinLibs 自带；不在 PATH 时用 `WINDRES=/path/to/windres` 覆盖）。
@@ -44,7 +45,7 @@ npm test               # vitest run
 npm run build          # 产物落 frontend/dist，由 make all/build 镜像进 embed 目录
 ```
 
-`make all` 会先构建前端、把 `frontend/dist` 镜像进 `backend/internal/admin/web`，再编译 Go 二进制；`make build` 复用已有产物。`make frontend-test` 是 typecheck + vitest 的门禁。
+`make all` 会先构建前端、把 `frontend/dist` 镜像进 `backend/internal/admin/web`，再编译 Go 二进制；`make build` 复用已有产物。前端三件事：`make frontend-test`（typecheck + vitest）、`make frontend-lint`（类型感知 ESLint）与 `make frontend-build`（vite 打包）；连后端一起的总入口是 `make gates`。
 
 ## Makefile 快捷命令
 
@@ -55,6 +56,10 @@ npm run build          # 产物落 frontend/dist，由 make all/build 镜像进 
 | `make run` | `backend/` 构建到 `build/`，再从仓库根启动 |
 | `make docs` | 重新生成 Swagger 文档（`backend/docs/`） |
 | `make frontend-test` | 前端门禁：`vue-tsc` + `vitest run` |
+| `make frontend-lint` | 前端门禁：类型感知 ESLint（`any` 扩散、悬浮 Promise、非空断言） |
+| `make frontend-build` | `vite build`，产物落 `frontend/dist`（`vue-tsc` 才做类型检查，vite 不做） |
+| `make frontend-deps` | 按 `package-lock.json` 安装前端依赖（`npm ci`）。三条前端门共用的前置，戳文件是 `frontend/node_modules/.package-lock.json`，`make -j` 下也只装一次 |
+| `make gates` | 提交门总入口：`lint` + `test-race` + `frontend-test` + `frontend-lint` + `frontend-build`，任何一红即红；CI 跑的是同一条（ADR-0026） |
 | `make test` | `cd backend && go test ./...` |
 | `make test-verbose` | `go test -v ./...` |
 | `make test-coverage` | `go test -coverprofile=coverage.out ./... && go tool cover -html=...` |
@@ -70,9 +75,9 @@ npm run build          # 产物落 frontend/dist，由 make all/build 镜像进 
 
 ## 发版
 
-发版在本机完成，不依赖 CI：
+发版在本机完成，不要求先有一次绿的 CI 运行——CI 与发版跑的是同一条门：
 
-1. 跑测试：`make test`、`make frontend-test`。
+1. 跑全部门：`make gates`（构成见上面的表；与 `.github/workflows/ci.yml` 里那条是同一条命令，见 ADR-0026）。
 2. 构建带版本号的产物：`VERSION=vX.Y.Z make all`（产物 `build/ebook-server`，Windows 为 `build/ebook-server.exe`）；
    需要交叉编译时先 `make frontend-build`，再 `make linux` 或 `make windows`（两者复用
    `frontend/dist` 并内嵌进二进制）。
@@ -114,10 +119,19 @@ go test -race ./...
 ```bash
 make frontend-test
 # 或 cd frontend && npm run typecheck && npm test
+make frontend-lint
+make frontend-build
+make gates        # 提交门总入口；由哪些目标组成见上面的表；CI 与本地跑同一条
 ```
 
 `frontend/` 用 TypeScript + Vitest；视图测试在文件首行标 `// @vitest-environment happy-dom`，
-其余跑 node 环境。改 `frontend/` 时 typecheck 与 vitest 都要过。详细测试约定见 `TESTING.md`。
+其余跑 node 环境。改 `frontend/` 时 typecheck / vitest / lint / build 都要过。详细测试约定见 `TESTING.md`。
+
+**编译器档位与 lint 归属**：`frontend/tsconfig.json` 在 `strict` 之上还开着一批高摩擦档位——
+清单只住那一份配置，取舍、弃选项与「哪几条今天真的咬到代码」住 `ADR-0026`。两条纪律：夹具取位走
+`frontend/src/fixture.ts` 的 `must` / `pick`（越界即抛，不改成 `?.`；生产文件 import 它被
+`no-restricted-imports` 拦下）；lint 用官方 `withVueTs` + `strictTypeChecked`，`any` 归 ESLint 管
+——`vue-tsc` 不拒绝显式 `any`。
 
 ### 手工烟测（真实后端）
 
@@ -144,10 +158,11 @@ make docs           # 改 Swagger 注解后重新生成 backend/docs/
 ## 数据库迁移
 
 - 新库：启动时 `backend/pkg/database` 的 `Migrate` 按文件名执行 `backend/migrations/*.sql`，基线是 `0001_init.sql`。
-- 旧库（已有业务表、但 `schema_migrations` 为空）：先对当前 models 跑一次 AutoMigrate 收养，再把**当前二进制内嵌的全部版本**标记为已应用。AutoMigrate 已把库带到最新 schema，若只标记 `0001_init`，未来迁移会在下一次启动时重放并因列已存在而失败。
+- 旧库（已有业务表、但 `schema_migrations` 为空）：先对 `Migrate` 内置的模型清单（调用方不传）跑一次 AutoMigrate 收养，再把**当前二进制内嵌的全部版本**标记为已应用。AutoMigrate 已把库带到最新 schema，若只标记 `0001_init`，未来迁移会在下一次启动时重放并因列已存在而失败。
 - 收养不会为存量库重放当前版本中的数据迁移；新增数据迁移前必须重新设计收养路径（ADR-0023）。
-- 新增 schema 变更：在 `backend/migrations/` 加 `NNNN_slug.sql`（按 SQLite 方言书写，见 ADR-0023），不要只改 model。`backend/pkg/database/migrate_test.go` 会把迁移库与 AutoMigrate 库的列（含默认值）与索引（名称、唯一性、列顺序）对照，漂移即失败。
-- 测试库仍由 `pkg/testdb` 的 AutoMigrate 建表；它只服务测试，不是生产迁移路径。
+- 新增 schema 变更：在 `backend/migrations/` 加 `NNNN_slug.sql`（按 SQLite 方言书写，见 ADR-0023），不要只改 model。
+- 测试库（`pkg/testdb` 的 `Open`）与生产同走 `database.Migrate`，获得相同的迁移语义（ADR-0025）；漏写的迁移会在测试中以缺列暴露。
+- 本机制只承诺 SQLite；将来若迁 MySQL/PostgreSQL，照当前迁移结构手写方言即可，不维护参考脚本。
 
 ## 部署
 
@@ -171,14 +186,23 @@ make all
 ## 当前已知问题
 
 - **验证码存储是内存 map**：单进程可用；多实例部署需迁移到 Redis 或共享存储。
-- **refresh token 过期记录没有定时清理**：登出/改密会作废该账号全部 refresh token，过期记录交给数据库，暂不设清理任务。
+- **refresh token 过期记录没有定时清理**：登出/改密/注销经 `Sessions.Revoke` 作废该账号全部 refresh token，过期记录交给数据库，暂不设清理任务。`FindByHash` 只认未过期的行，这些记录因此对行为惰性、只占磁盘；`backend/repository/refresh_token.go` 的 `DeleteExpired` 是为清理任务预埋的原语，当前无调用方、也不进 `Sessions` 的 `refreshTokenStore` 接口——任务真落地时再扩接口。
 - **SQLite 写入串行化**：连接使用 WAL + `busy_timeout(5000)` + `foreign_keys(1)`；高并发场景仍需评估迁移到 MySQL/PostgreSQL。
-- **数据库迁移**：新库执行 `backend/migrations` 的 SQL；旧库启动时先 AutoMigrate 收养，并把当前二进制内嵌的全部版本标记为已应用。新增列/索引必须加迁移文件；schema 对照测试会挡下迁移与 model 的漂移。
+- **数据库迁移**：新库执行 `backend/migrations` 的 SQL；旧库启动时先 AutoMigrate 收养，并把当前二进制内嵌的全部版本标记为已应用。新增列/索引必须加迁移文件；测试库同走迁移路径，漏写的迁移会在测试中以缺列暴露。
 - **access token 无法主动作废**：改密/重置/注销只删除 refresh token；无状态 access token 在剩余有效期内仍可调通 API。彻底解决需要 token 黑名单。
 - **账号注销不包事务**：依次清头像、匿名化账号、删 refresh token；中途失败可重新登录重试（最后一步失败留下的令牌也续不了期，只会自行过期），不会锁死或丢数据。这是有意的取舍，不是遗漏。
-- **改密与并发刷新有竞态窗口**：改密先删 refresh token、再写新哈希；`Refresh` 若在删令牌前读到旧记录、在改库后写入新令牌，这枚新令牌会存活。取舍是 fail-closed（宁可要求重新登录，也不留下「新密码生效、旧令牌仍可用」的常态）；彻底解决需要 token 版本号或改密时间戳。注销的同型竞态不在此列：漏网令牌在续期前会被匿名化状态检查拒绝（`service.AuthService.Refresh`），「注销后无限续期的会话」不成立。
+- **改密与并发登录有竞态窗口**：改密先撤销会话、再写新哈希（fail-closed，顺序与理由见 ADR-0017）。落在这两步之间的登录仍能用**旧口令**换到一枚新的 refresh token，它不会被这次撤销扫到。彻底解决需要 token 版本号或改密时间戳。`Refresh` 的同型窗口不存在：轮换是打在旧哈希上的条件更新，撤销在先必得 0 行、失败关闭（ADR-0003），不会留下「撤销之后才落库的新令牌」；注销漏网的令牌同样在 `service.Sessions.Consume` 的匿名化检查前被拒，「注销后无限续期的会话」不成立。
 - **头像文件清理的并发窗口**：换头像/注销先写库、再按引用计数删旧文件；两笔并发更新把旧 URL 写回时，仍可能让账号指向已删除文件。彻底解决需要文件级引用计数或延迟回收；当前按单机单进程、低概率取舍，不引入跨存储事务。
 - **debug/test 模式仍使用内置默认密钥/口令**：`release` 模式会拒绝三份内置默认值；上线前核对 `server.mode`。
+
+## 已知不做的事
+
+以下几点是当前刻意保留的边界（不是缺陷）。有 ADR 的只留指针，避免同一事实两处生长。
+
+- **`backend/pkg/httpx/params.go` 保持浅**：分页与数字 ID 的取值边界都是一次读取 + 一次钳制，再深挖只会把简单事情摊成多层；浅但便宜，保留。
+- **`backend/repository/query.go` 的 `paginateQuery` 保持深模块**：评论、账号与日志的分页共用同一处「先数总数、再取一页」；一处改动即同时影响这几条列表路径，这是有意的。
+- **单适配器 Store 不立测试接缝**：见 [ADR-0007](adr/0007-consumer-defined-repository-interfaces.md) §6；测试用 `testdb.Open(t)` 的真实 SQLite，不需要 mock 接缝。
+- **`frontend/src/views/Logs.vue` 的业务码徽标缓做**：`codeClass` 直接读业务码，是 `frontend/src/api.ts` 所称的已知例外，因此也登记在 `frontend/eslint.config.js` 那条 `no-restricted-imports` 的 `ignores` 里；方向见 [ADR-0015](adr/0015-comment-scope-and-admin-view.md) §3，需先给日志列表定义固定视图再谈归类，暂不提前抽象。归类做完就删掉那条 ignores，例外不该留着。
 
 ## 添加新接口的标准流程
 

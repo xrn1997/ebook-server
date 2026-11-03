@@ -7,7 +7,7 @@
 ### 测试目标
 
 - **代码覆盖率**: 按**逐包**计（`go test -count=1 -cover ./...` 每个包各一行），不把一棵子树合并成一个数字
-- **关键模块覆盖率**: model > 90%, `pkg/` 下每个**有测试文件的**包 > 85%, service > 80%, handler > 75%
+- **关键模块覆盖率**: model > 90%, `pkg/` 下每个**有测试文件的**包 > 85%, service > 80%, handler > 75%（读数以下方「覆盖率目标」表点名的为准，含已知缺口）
 - **测试类型**: 单元测试、集成测试
 
 ### 测试框架
@@ -27,17 +27,19 @@
 | `config` | 配置缺省值、`.env` 覆盖敏感项、无包级全局；**拒绝不安全配置启动**（空密钥任何模式、内置默认值 `release` 下）；**校验规则拒绝非法值**（`schema_test.go`） |
 | `model` | 分页钳制、评论键边界与归属范围（`CommentKeyScope`）、删除范围（`CommentScope`）与后台固定视图 |
 | `pkg/code` | 验证码存储：TTL、尝试次数、无 `Set` 后门 |
-| `pkg/errcode` | 哨兵 → 业务码沿包装链查表、端点级 `Map` 覆盖；绑定/校验错误经 `RespondBindError` 翻成中文，并断言 validator 的英文原文不出现在响应里 |
+| `pkg/database` | 迁移的应用与收养（登记内嵌全集、重开不重放）、内嵌迁移产物的约束性质（主键/唯一/NOT NULL/外键）、DSN pragma 与内存库单连接（ADR-0023/0025） |
+| `pkg/errcode` | 哨兵 → 业务码沿包装链查表、端点级 `Map` 覆盖；绑定/校验错误经 `RespondBindError` 翻成中文，并断言 validator 的英文原文不出现在响应里；信封键集合只有 `model.Response` 一种形状 |
 | `pkg/httpx` | 请求取值：分页钳制与数字 ID 边界（详见下节） |
 | `pkg/jwt` | `TokenBox` 签发/解析、算法固定、双 adapter 互不可用 |
-| `pkg/ratelimit` | 固定窗口配额与窗口滚动 |
+| `pkg/ratelimit` | 固定窗口配额与窗口滚动；多窗口记账的「要么都记、要么都不记」 |
+| `pkg/testdb` | 测试库经与生产同一条 `database.Migrate` 建表、外键约束在测试库里真的生效（ADR-0025） |
 | `pkg/upload` | 头像校验/命名/删除/路径穿越 |
 | `middleware` | 鉴权、CORS、panic 恢复、操作审计中间件只转发事实（路径过滤在 service 层）、有界 JSON 捕获 |
-| `repository` | 真 SQL 语义（`:memory:`）+ 「查不到」在边界翻成领域哨兵 + 条件 DELETE 以 `RowsAffected` 判成功 + 凭据/资料的列级写各只碰自己的列 |
+| `repository` | 真 SQL 语义（`:memory:`）+ 「查不到」在边界翻成领域哨兵 + 条件 DELETE 以 `RowsAffected` 判成功、0 行时在本层判出「不存在 / 非本人」归因 + 凭据/资料的列级写各只碰自己的列 |
 | `service` | 认证/账号/评论/验证码业务规则；资料与头像文件生命周期、密码/锁定/会话撤销 |
-| `handler` | HTTP 协议转换与响应信封（经 `newTestApp` 装配整条链） |
+| `handler` | HTTP 协议转换与响应信封（`newTestApp` 经 `router.Public` 真表装配整条链） |
 | `router` | 路由表：登记清单与 `engine.Routes()` 双向比对 + 「永远拒绝」/「永远放行」两个 parser adapter 各跑一遍（详见下节）；审计只挂 `/api` |
-| `internal/admin` | 后台鉴权、治理端点、与公开表面共用同一模块、评论固定视图 |
+| `internal/admin` | 后台鉴权、治理端点、与公开表面共用同一模块、评论固定视图、后台改键 tag 与 `model.MaxCommentKeyLength` 同源（`setup` 经 `router.AdminConsole` 真表；HTTP 用例是外部包 `admin_test`，token 断言走 `pkg/jwt` 公开面，钉 tag 与钉 `mimeType` 的两条留在包内） |
 
 公共夹具：`pkg/testdb.Open`（每用例独立 `:memory:` 实例）、
 `handler/test_helper_test.go` 的 `newTestApp`、`service/test_helper_test.go` 的依赖装配、
@@ -66,9 +68,9 @@ go test -v -run TestAuth ./...
 ## 测试类型说明
 
 本项目不在数据库上打桩：`repository` 与 `service` 用例通过 `testdb.Open(t)` 跑真实
-SQLite `:memory:`；`handler` 用例用 `newTestApp(t)` 装配整条依赖链，再经 `httptest`
-断言统一信封（HTTP 恒为 200，成败看 `code`）。这比手写 fake 更能挡住「fake 与 GORM
-行为漂移，测试绿着但生产错」的问题（ADR-0007）。
+SQLite `:memory:`；`handler` 用例经 `router.Public` 真表装配（`newTestApp` 把整条依赖链
+挂上真路由引擎），再经 `httptest` 断言统一信封（HTTP 恒为 200，成败看 `code`）。
+这比手写 fake 更能挡住「fake 与 GORM 行为漂移，测试绿着但生产错」的问题（ADR-0007）。
 
 前端是独立的 Vitest 工具链，测试约定见下文「前端测试」一节。
 
@@ -79,7 +81,7 @@ SQLite `:memory:`；`handler` 用例用 `newTestApp(t)` 装配整条依赖链，
 | 模块 | 目标覆盖率 | 说明 |
 |------|-----------|------|
 | model | > 90% | 数据模型和验证 |
-| pkg | 每个**有测试文件的**包 > 85% | 公共组件；`logger`/`mail`/`testdb`/`version` 无测试文件，`./pkg/...` 合并口径必然低于门槛。`database` 的迁移与 pragma 测试见 `pkg/database/*_test.go` |
+| pkg | 每个**有测试文件的**包 > 85%（`pkg/testdb` 例外） | 公共组件；`logger`/`mail`/`version` 无测试文件，`./pkg/...` 合并口径必然低于门槛。`database` 的迁移与 pragma 测试见 `pkg/database/*_test.go`。已知缺口：`testdb.Open` 只剩数据库打开/迁移失败时的 `t.Fatalf` 分支，注入它们要给测试夹具加生产接缝，因此本包按例外记录、不靠加抽象凑覆盖率；当前读数看 `go test -cover ./pkg/testdb/` |
 | service | > 80% | 业务逻辑 |
 | handler | > 75% | API 接口 |
 
@@ -101,7 +103,9 @@ start coverage.html # Windows
 
 Repository 与 service 测试**不写 mock**（见 ADR-0007）。每个测试调用 `testdb.Open(t)`
 拿一个独立的 SQLite `:memory:` 实例，注入 repo/service；测试结束自动关闭。这样跑的是真 SQL
-语义（含 `Preload`、分页、软删过滤），且测试互不污染业务状态。
+语义（含 `Preload`、分页、软删过滤），且测试互不污染业务状态。建表走与生产同一条
+`database.Migrate`，连接与按连接生效的 pragma（含 `foreign_keys`）由 `database.OpenMemory`
+给出——测试库不会比生产宽松（见 ADR-0025）。
 
 > 「互不污染」不等于「可并行」：`service` 与 `handler` 两套夹具本身是包级变量
 > （`testDB`、`testCodes`…），靠 go test 同包默认串行才安全。给这两包的用例加
@@ -115,15 +119,17 @@ db := testdb.Open(t) // *gorm.DB，仅本测试可见
 ### handler 装配：`newTestApp(t)`
 
 handler 测试用一个 `newTestApp(t)` 把一整条依赖链（repo 实例 + service + `code.Store`
-实例 + 记录型 `Mailer` + `jwt.TokenBox`）一次性装配好，返回 `*testApp`，其上挂着 `auth`、`user`、`account`、`comment`、
-`log`、`uploads` 六个 handler 与 `tokens`、`db` 两个测试句柄（验证码存储不给句柄：用例一律经
-`seedCode` 走真实下发链路，见下节）：
+实例 + 记录型 `Mailer` + `jwt.TokenBox`）经 `router.Public` 真表装配好。返回的 `*testApp`
+只留用例真正碰得到的三样：发请求的引擎、直接播种的库、断言文件生命周期的头像目录
+（字段名以 `backend/handler/test_helper_test.go` 的 `testApp` 定义为准，此处不抄会腐的清单）。
+handler 实例是喂 `router.Deps` 的一次性装配料，不挂在结构体上；验证码存储同样不给句柄：
+用例一律经 `seedCode` 走真实下发链路，见下节：
 
 ```go
 func TestXxx(t *testing.T) {
     app := newTestApp(t)
-    // app.auth / app.user / app.comment / app.log 是已装配的 handler
-    // app.tokens 是本测试专用 token 单元；app.db 是底层 *gorm.DB
+    // app.engine 挂着真路由表：用例经它发 HTTP，不取 handler 实例
+    // app.db 是本轮测试专用的 *gorm.DB（直接播种用）
 }
 ```
 
@@ -156,7 +162,9 @@ func TestXxx(t *testing.T) {
 
 另有两条 ADR-0010 的隔离断言：公开引擎上不得出现 `/admin*`，后台引擎上也不得出现公开 `/api/*`。
 
-`handler` 包内的测试仍各自挂自己需要的几路（那是用例夹具，不是一张平行路由表）。
+`handler` 用例经 `router.Public` 真表装配（`newTestApp`），路由表的唯一真相在 `router` 包；
+单端点的协议用例（如只断言一处信封翻译）可用 `gin.New` 夹具自挂一路，那是用例夹具，
+不构成一张平行路由表。
 
 ### 请求取值：`pkg/httpx`
 
@@ -191,8 +199,8 @@ func TestXxx(t *testing.T) {
 
 `service/comment_test.go` 的 `TestCommentService_Delete_*` 与
 `TestCommentService_Delete_AdminScopeBypassesOwnership` 跑的是同一个 `Delete(id, scope)`：
-仓储用条件 DELETE 并以 `RowsAffected` 判成功，没删到行时 service 再区分「不存在」与
-「不是本人」。`TestCommentService_ListForAdmin_FixedView` 钉住后台固定视图（不含 email，
+仓储用条件 DELETE 并以 `RowsAffected` 判成功；没删到行时的「不存在」与「不是本人」
+由仓储在本层回落判出，service 只把归因映射成错误码。`TestCommentService_ListForAdmin_FixedView` 钉住后台固定视图（不含 email，
 不序列化实体），`model/comment_test.go` 钉住两个 scope 的归属判定（ADR-0015）。
 
 ### 资料与凭据：文件与哈希的失败语义
@@ -201,8 +209,9 @@ func TestXxx(t *testing.T) {
   同一文件仍被其他账号引用时保留（引用按 URL 的文件名判定，host 写法不同也算；头像 URL
   公开，不能靠客户端给的 URL 删别人文件——外部 host 伪造同一路径的用例专门钉住这条）；
   资料更新走列级 UPDATE，不整行 `Save`（否则登录失败计数会被一起覆盖）；
-* `service/credentials_test.go`：`SetPassword` **先撤销 refresh token 再写新哈希**；
-  撤销失败时保留旧哈希（不回退到「密码已改、会话未撤」）；失败计数只碰凭据列（ADR-0017）。
+* `service/credentials_test.go`：`Reset` **先撤销 refresh token 再写新哈希**（内部走
+  未导出的 `setPassword`）；撤销失败时保留旧哈希（不回退到「密码已改、会话未撤」）；
+  失败计数只碰凭据列（ADR-0017）。
 
 ## 测试最佳实践
 
@@ -253,28 +262,31 @@ Go 测试不依赖外部数据库，没有需要跳过的集成测试，也不�
 ```go
 func TestAPIEndpoint(t *testing.T) {
     app := newTestApp(t)
-    router := setupRouter()
-    router.POST("/api/auth/register", app.auth.Register)
 
-    w := doJSON(t, router, http.MethodPost, "/api/auth/register", map[string]string{}, "")
+    // app.engine 上挂的是 router.Public 的真路由表：用例不另搭一路
+    w := doJSON(t, app.engine, http.MethodPost, "/api/auth/register", map[string]string{}, "")
     if w.Code != http.StatusOK {
         t.Errorf("HTTP = %d, want 200（业务成败看信封 code）", w.Code)
     }
-    assertErrorCode(t, w.Body.Bytes(), "A0400")
+    assertErrorCode(t, w.Body.Bytes(), "A0400") // 空请求体 → 绑定错误
 }
 ```
 
 ## 前端测试（`frontend/`）
 
 前端用 TypeScript + Vitest，与 Go 测试互不包含——**两边都要绿才算通过全量测试**。
+连后端一起的总入口是一条 `make gates`（构成见 `docs/development.md` 的表）。
 
 ```bash
-make frontend-test   # 门禁：vue-tsc + vitest
+make frontend-test   # vue-tsc 类型检查 + vitest（类型形状与可赋值性在这里跑）
+make frontend-lint   # 类型感知 ESLint（any 扩散、悬浮 Promise、非空断言）
+make frontend-build  # vite build：bundler 侧的解析与资源，vue-tsc 查不到
 # 或手动：
 cd frontend
-npm ci               # 已有 node_modules 时可跳过
+npm ci               # 已有 node_modules 时可跳过（make frontend-* 靠戳文件判定）
 npm run typecheck    # vue-tsc --noEmit
 npm test             # vitest run
+npm run lint         # eslint .
 npm run build        # vite build（vite 不做类型检查，别拿它当校验）
 ```
 
@@ -291,13 +303,21 @@ npm run build        # vite build（vite 不做类型检查，别拿它当校验
 * `src/api.test.ts` 只 stub 全局 `fetch`：查询串拼装、信封判断、鉴权失败清 token 并跳转
   都是真代码；
 * `src/views/AdminViews.test.ts` 用响应队列驱动三张列表：搜索、详情、分页、两步删除、
-  日志筛选都走真实视图与 API 层；
-* `src/useAdminList.test.ts` 覆盖成功/业务失败/空 data/网络异常/分页钳制。
+  日志筛选都走真实视图与 API 层，含「连续点开两个详情」这条视图接线级竞态；
+* `src/authFlow.test.ts` 从真实 router 与真实存储替身走一遍登录—守卫—退出—概览；
+* `src/useAdminList.test.ts` 覆盖成功/业务失败/空 data/网络异常/分页钳制；
+* `src/useAdminDetail.test.ts` 与 `src/requestGuard.test.ts` 覆盖详情状态机的乱序落地与
+  在途作废：序号守卫住在 `src/requestGuard.ts`，两个消费者共用它，所以既单独测它也从
+  消费者那一侧测接线；
+* 夹具数组用 `src/fixture.ts` 的 `pick` / `must` 取位：越界即抛「缺哪一项、共几项」，
+  不许退化成 `?.` 或非空断言——被折叠过去的断言下一行会蒙对。
 
 ### 覆盖点
 
 后台 token 失效清退、snake_case 查询串与空值省略、列表分页与越界钳制、
-用户搜索与详情、评论两步删除与失败保留行、日志方法与失败筛选、详情展开。
+用户搜索与详情、评论两步删除与失败保留行、日志方法与失败筛选、详情展开、
+详情竞态与筛选变更后的在途作废、**成功信封缺 `data` 时的契约漂移要报出来而不是渲染成空白面板或
+永远停在「加载中」**（`Login.vue` / `Dashboard.vue` / `useAdminDetail` 三处各有用例）。
 
 ### 后端配置的 env 覆盖契约
 
@@ -325,18 +345,36 @@ A:
 
 ### Q: 如何测试私有函数?
 
-A: 测试文件可以访问同一包内的私有函数:
+A: 同包测试可以直接引用未导出符号（`embed_test.go` 与 `embed.go` 同包，直调 `mimeType`）；
+但**跨模块语义用例一律经公开接口装配**——HTTP 路径经 `router` 真表
+（`newTestApp` 与后台的 `setup`），业务规则经 service 的公开方法，而不是改写未导出字段来构造时序。
+后台用例因此住在外部包 `admin_test`：`router` import 了 `internal/admin`，包内测试引它会成环，
+代价是碰不到 `adminClaims`、`Session.tokens` 这些未导出符号——token 的签发与验签于是都经
+`pkg/jwt` 的 `TokenBox` 公开面重建，后台登录配额也按规格（README/ADR-0010 的 5 次/分钟）
+取字面值，而不是引生产常量。
+同包直调用于钉住包内的局部规则（`internal/admin` 的 `mimeType` 与本包 struct 的 binding tag
+就是这样测的）；跨模块的行为契约必须走真实装配，否则用例与装配各说各话，
+测试绿着也证明不了生产链路。
+
+**已知例外**：`TestAuthService_Login_UnknownEmailComparesAgainstPlaceholder` 与
+`TestAuthService_Login_LockedAccountStillCompares` 会改写 `Credentials.compare`，因为
+「未知邮箱也恰好走一次占位摘要比对」与「锁定分支不提前跳过那次比对」都是时序等价的核心，
+而公开面无法在不掐表的情况下确定性观测——折叠用例只证明两者回同一个信封，证明不了两者
+花掉的代价相同。这道缝只服务这两条断言；其他跨模块用例仍走公开接口。
 
 ```go
-// util.go
-func privateFunc() string { return "private" }
-
-// util_test.go
-func TestPrivateFunc(t *testing.T) {
-    result := privateFunc()
-    if result != "private" {
-        t.Errorf("Expected 'private', got '%s'", result)
+// 同包：局部规则可直接测私有符号
+func TestMimeType(t *testing.T) {
+    if got := mimeType("assets/index-abc.js", nil); got != "text/javascript; charset=utf-8" {
+        t.Errorf("mimeType = %q, want ES module MIME", got)
     }
+}
+
+// 跨模块语义：经公开接口装配（router 真表 / service 公开方法），
+// 不改写未导出字段造时序
+func TestXxx(t *testing.T) {
+    app := newTestApp(t) // 整条链经 router.Public 真表装配
+    w := doJSON(t, app.engine, http.MethodPost, "/api/...", map[string]string{}, token)
 }
 ```
 

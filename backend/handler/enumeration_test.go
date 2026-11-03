@@ -1,10 +1,7 @@
-package handler
+package handler_test
 
 import (
-	"bytes"
-	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -13,28 +10,23 @@ import (
 // loginAs 以给定邮箱密码调登录接口，返回原始响应体
 func loginAs(t *testing.T, router *gin.Engine, email, password string) []byte {
 	t.Helper()
-	body := map[string]string{"email": email, "password": password}
-	jsonBody, _ := json.Marshal(body)
-	req, _ := http.NewRequest("POST", "/api/auth/login", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	w := doJSON(t, router, http.MethodPost, "/api/auth/login",
+		map[string]string{"email": email, "password": password}, "")
 	return w.Body.Bytes()
 }
 
 // TestAuthHandler_Login_UnknownEmail 未注册邮箱登录应与密码错误同码，不暴露账号是否存在（ADR-0006）
 func TestAuthHandler_Login_UnknownEmail(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	authHandler := app.auth
-	router.POST("/api/auth/login", authHandler.Login)
+	router := app.engine
 
 	resp := loginAs(t, router, "nobody@example.com", "password123")
 
-	// 必须是 A0210（密码错误），不得是 A0201（账户不存在）
+	// 必须是 A0210（密码错误），不得是 A0201（账户不存在）。
+	// 文案写死为 ADR-0006 的防枚举统一文案（handler 里的 loginFailedMessage 常量值）：
+	// 与下面「完全一致」那条一起，钉住「账号不存在」与「密码错误」响应无差别。
 	assertErrorCode(t, resp, "A0210")
-	assertErrorMessage(t, resp, loginFailedMessage)
+	assertErrorMessage(t, resp, "邮箱或密码错误")
 }
 
 // TestAuthHandler_Login_UnknownEmailIdenticalToWrongPassword 未注册邮箱与密码错误的响应必须完全一致（ADR-0006）
@@ -43,11 +35,7 @@ func TestAuthHandler_Login_UnknownEmail(t *testing.T) {
 // 因此直接比对两次登录的完整响应体。
 func TestAuthHandler_Login_UnknownEmailIdenticalToWrongPassword(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	authHandler := app.auth
-	router.POST("/api/auth/register", authHandler.Register)
-	router.POST("/api/auth/login", authHandler.Login)
+	router := app.engine
 
 	// 注册一个真实账号，之后用错误密码登录
 	registerUser(t, router, "known@example.com")
@@ -64,17 +52,9 @@ func TestAuthHandler_Login_UnknownEmailIdenticalToWrongPassword(t *testing.T) {
 // TestAuthHandler_ForgotPasswordSendCode_UnknownEmail 未注册邮箱请求发码应静默成功（ADR-0006）
 func TestAuthHandler_ForgotPasswordSendCode_UnknownEmail(t *testing.T) {
 	app := newTestApp(t)
+	router := app.engine
 
-	router := setupRouter()
-	authHandler := app.auth
-	router.POST("/api/auth/forgot-password/send-code", authHandler.ForgotPasswordSendCode)
-
-	body := map[string]string{"email": "nobody@example.com"}
-	jsonBody, _ := json.Marshal(body)
-	req, _ := http.NewRequest("POST", "/api/auth/forgot-password/send-code", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	w := doJSON(t, router, http.MethodPost, "/api/auth/forgot-password/send-code",
+		map[string]string{"email": "nobody@example.com"}, "")
 	assertErrorCode(t, w.Body.Bytes(), "00000")
 }

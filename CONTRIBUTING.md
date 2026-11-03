@@ -124,20 +124,28 @@ BREAKING CHANGE: config.yaml 必须包含 jwt.expire_min 字段
 
 ## 提交前验证
 
+门禁总入口是一条命令，CI 与本地跑同一条（ADR-0026）：
+
+```bash
+make gates      # 任何一红即红；由哪些目标组成见 docs/development.md 的表与 Makefile
+```
+
+`go test -race` 已带上 `docscheck` 与 `archtest`（文档与依赖方向的门随 `go test` 跑）。
+`gates` 不含 `gofmt`、`go mod tidy` 与 `make docs` 这三件事，仍要手动：
+
 ```bash
 cd backend
 gofmt -l <本次改过的 Go 文件>   # 期望无输出
-go vet ./...
-go test ./...
-go test -race ./...
 go mod tidy
 cd ..
 
-make frontend-test         # 涉及 frontend/ 时；vue-tsc + vitest
 make docs                  # 涉及 Swagger 注解时
 ```
 
 只对本次编辑过的 Go 文件执行 `gofmt -w <files>`，不要做目录级格式化。
+
+提交前 `git status --short` 的 `??` 必须为空：未跟踪文件不在 `git commit -a` 的范围内，
+新加的源文件漏 `git add` 会提交出一棵编译不过的树（判据见 `AGENTS.md` 的必过门）。
 
 ## 构建与代码约定
 

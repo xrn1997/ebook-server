@@ -33,7 +33,7 @@ handler → service → repository → model
 ```
 
 - `handler` 只做 HTTP 协议转换；校验失败走 `errcode.RespondBindError`。
-- `service` 编排业务规则与事务顺序；通过 `service/ports.go` 的 consumer-defined Store 访问数据。
+- `service` 编排业务规则与事务顺序；通过 `service/ports.go` 的 consumer-defined Store 访问数据。模块自持的私有能力（如 `backend/service/sessions.go` 的 `refreshTokenStore`）不进 ports.go——那是模块的内部边界，不是给别的模块的接缝。
 - `repository` 只做数据存取；gorm 类型不出 repository；查不到在 adapter 边界换成领域哨兵。
 - `model` 是基础层，不依赖上层；`pkg/` 不反向依赖 handler/service/repository/router。
 - `router` 只装配路由与中间件；`main.go` 只装配依赖、开监听、等退出。
@@ -48,15 +48,18 @@ handler → service → repository → model
 | 配置字段、默认值、环境变量覆盖、校验规则 | `backend/config/config.go` 的 `mapstructure` 标签 + `backend/config/schema.go` + ADR-0016 | 运行时环境探测 |
 | 请求作用域取消与超时 | `backend/service/ports.go` 的 ctx 签名 + `backend/repository` 的 `WithContext` + ADR-0022 | 外部没有取消路径的 helper（SMTP/文件删除） |
 | SQLite 连接参数（WAL/busy_timeout/foreign_keys） | `backend/pkg/database` 的 `dsnOf` + `database_test.go` | 业务查询 |
-| schema 版本与迁移 | `backend/migrations` + `backend/pkg/database` 的 `Migrate` + ADR-0023 | 测试库的 AutoMigrate |
+| schema 版本与迁移 | `backend/migrations` + `backend/pkg/database` 的 `Migrate` + ADR-0023/0025 | 字段的业务语义 |
 | 请求关联 id | `backend/middleware/requestid.go` + Logger | 业务身份 |
+| 请求取值：分页/数字 ID 边界与 Authorization Bearer 头形状 | `backend/pkg/httpx` 的 `Page`/`PathUint`/`QueryUint`/`BearerToken` | 两个表面各自的失败码（A0230 / A0403）与业务判据 |
 | 登录主标识、账号根标识 | `backend/model/user.go` + ADR-0002/0004 | 展示用名 |
 | 账号资料与头像生命周期 | `backend/service/profile.go` + `backend/pkg/upload` + ADR-0011/0017 | 前端裁剪/展示 |
-| 凭据、失败计数、锁定、改密撤销会话 | `backend/service/credentials.go` + ADR-0017 | 登录页文案 |
+| 凭据、失败计数、锁定、改密/重置编排、登录拒绝的响应折叠 | `backend/service/credentials.go` 的 `Change`/`Reset` 与 `IsLoginDenied` + ADR-0017 | 登录页文案 |
+| 会话生命周期（refresh token 签发、轮换消费、按用户撤销） | `backend/service/sessions.go` + ADR-0003 | access token 的无状态取舍 |
 | 评论聚合键、章节/书籍级评论 | `backend/model/comment.go` + `backend/service/comment.go` + ADR-0013/0014 | 客户端如何派生键 |
-| 评论删除范围 | `backend/model/comment.go` 的 `CommentScope` + `backend/service/comment.go` + ADR-0015 | 权限等级 |
+| 评论删除范围与结果归因 | `backend/model/comment.go` 的 `CommentScope`/`DeleteOutcome` + `backend/repository/comment.go` 的 `DeleteScoped` + ADR-0015 | 权限等级 |
 | 操作审计的接入边界与记录规则 | `backend/router/router.go`（挂载）+ `backend/service/log.go`（记录规则）+ ADR-0018 | 日志投递目的地 |
-| 后台页面与后台 API 调用 | `frontend/src/api.ts` + `frontend/src/useAdminList.ts` | 业务判据 |
+| 后台页面与后台 API 调用 | `frontend/src/api.ts`（信封与 `unwrap`）+ `frontend/src/useAdminList.ts` + `frontend/src/useAdminDetail.ts` | 业务判据 |
+| 「只认最新一次请求」的序号守卫 | `frontend/src/requestGuard.ts`（两个 composable 共用） | 各自的展示状态与文案 |
 
 ## 4. 不变量
 
@@ -67,7 +70,7 @@ handler → service → repository → model
 - 后台使用独立 JWT；管理员凭据只来自部署配置，页面仅持有短期管理 token。
 - 配置的显式空值优先于默认值；`config.Load` 拒绝空密钥、非法端口、非法运行模式/有效期与通配后台监听。
 - service/repository 的请求作用域方法第一参数是 `context.Context`；handler 传 `c.Request.Context()`，repository 使用 `WithContext`。
-- 生产建表与结构变更走 `backend/migrations`；新增 schema 变更必须加迁移文件，测试库的 AutoMigrate 不是生产路径。
+- 建表与结构变更走 `backend/migrations` 的版本化迁移；新增 schema 变更必须加迁移文件——生产与测试库同一条路径。
 - Logger 中间件不读取 request body；请求关联 id 由 `RequestID` 中间件写入响应头与上下文。
 - 评论 `comment_key` 服务端只存不解释；空键不代表书籍级评论，而是换键前的历史行。
 - 头像列与文件同生命周期：换头像删旧文件前按文件名确认没有其他账号引用；注销时尽力删除。

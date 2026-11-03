@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"ebook-server/model"
@@ -38,23 +39,28 @@ func checkPasswordLength(plain string) error {
 
 // Credentials 密码与登录失败策略的唯一实现。
 //
-// SetPassword 先撤销 refresh token、再写新哈希：撤销失败则密码不变；
+// 改密（Change）与重置（Reset）的编排入口在这里：验旧口令（仅改密）、撤销会话、
+// 写新哈希。共用的 setPassword 先撤销会话（refresh token）、再写新哈希：撤销失败则密码不变；
 // 写哈希失败则用户被登出但旧密码仍可用。两种失败都不会留下
 // 「新密码生效、旧 refresh token 仍活着」的状态（fail-closed）。
 type Credentials struct {
-	users  CredentialStore
-	tokens TokenStore
-	// compare 是口令摘要比对单元，默认 bcrypt。留出这道缝不是为了换算法，
-	// 而是让「不存在账号也走一次等代价比对」能被确定性地断言，而不是靠掐表测时。
+	users CredentialStore
+	// sessions 是会话撤销的唯一入口（Sessions.Revoke）：改密撤销与登出、
+	// 注销走同一条路径，规则不各自复制一份。
+	sessions *Sessions
+	// compare 是口令摘要比对单元，构造时固定为 bcrypt.CompareHashAndPassword。
+	// 生产路径不覆写它；覆写方只有 auth_test 的两条时序等价用例（未知邮箱比对占位
+	// 摘要、锁定期内仍比对），它们从这道缝上数比对的次数与入参，而不是靠掐表测时。
+	// 它不是换算法的接缝：换算法走 NewCredentials 这个装配点。
 	compare func(hashed, plain []byte) error
 }
 
 // NewCredentials 创建凭据服务实例。
-func NewCredentials(users CredentialStore, tokens TokenStore) *Credentials {
+func NewCredentials(users CredentialStore, sessions *Sessions) *Credentials {
 	return &Credentials{
-		users:   users,
-		tokens:  tokens,
-		compare: bcrypt.CompareHashAndPassword,
+		users:    users,
+		sessions: sessions,
+		compare:  bcrypt.CompareHashAndPassword,
 	}
 }
 
@@ -71,8 +77,9 @@ func (c *Credentials) CreateWithPassword(ctx context.Context, user *model.User, 
 	return c.users.Create(ctx, user)
 }
 
-// CheckPassword 校验明文密码；只返回 bool，业务错误由调用方决定。纯计算，不需要 ctx。
-func (c *Credentials) CheckPassword(hash, plain string) bool {
+// checkPassword 校验明文密码；只返回 bool，业务错误由调用方决定。纯计算，不需要 ctx。
+// 包内未导出：对外的口令校验入口是 Verify（登录）与 Change（改密），不单独暴露比对原语。
+func (c *Credentials) checkPassword(hash, plain string) bool {
 	return c.compare([]byte(hash), []byte(plain)) == nil
 }
 
@@ -86,11 +93,11 @@ func (c *Credentials) Verify(user *model.User, plain string) bool {
 	if user != nil && user.Password != "" {
 		hash = user.Password
 	}
-	return c.CheckPassword(hash, plain)
+	return c.checkPassword(hash, plain)
 }
 
-// SetPassword 更换密码并撤销全部 refresh token（改密/重置共用）。
-func (c *Credentials) SetPassword(ctx context.Context, uid uint, plain string) error {
+// setPassword 更换密码并撤销全部会话（改密/重置共用）。
+func (c *Credentials) setPassword(ctx context.Context, uid uint, plain string) error {
 	if err := checkPasswordLength(plain); err != nil {
 		return err
 	}
@@ -98,10 +105,45 @@ func (c *Credentials) SetPassword(ctx context.Context, uid uint, plain string) e
 	if err != nil {
 		return err
 	}
-	if err := c.tokens.DeleteByUserID(ctx, uid); err != nil {
+	if err := c.sessions.Revoke(ctx, uid); err != nil {
 		return err
 	}
 	return c.users.UpdatePasswordHash(ctx, uid, string(hashed))
+}
+
+// Change 已登录改密的编排：读账号 → 验旧口令 → 撤销全部会话 → 写新哈希。
+//
+// 撤销失败则中止、不写新哈希（fail-closed，由 setPassword 的顺序承担）：
+// 否则会出现「新口令生效、旧 refresh token 仍活着」的中间态。
+// 旧口令比对失败回 model.ErrPasswordWrong——改密端点处于已认证上下文，
+// 不参与登录面的响应折叠（IsLoginDenied 只收登录拒绝）。
+func (c *Credentials) Change(ctx context.Context, uid uint, oldPassword, newPassword string) error {
+	user, err := c.users.FindByUID(ctx, uid)
+	if err != nil {
+		return err
+	}
+	if !c.checkPassword(user.Password, oldPassword) {
+		return model.ErrPasswordWrong
+	}
+	return c.setPassword(ctx, uid, newPassword)
+}
+
+// Reset 无旧口令的重置编排（找回密码流程，验证码校验留在认证模块）：
+// 撤销全部会话 → 写新哈希，同样 fail-closed。
+func (c *Credentials) Reset(ctx context.Context, uid uint, newPassword string) error {
+	return c.setPassword(ctx, uid, newPassword)
+}
+
+// IsLoginDenied 登录拒绝的折叠规则（ADR-0006）：这四枚哨兵在对外响应里必须完全一致。
+//
+// 折叠判据住在凭据模块，而不是 handler 逐枚列举 model 哨兵：尝试超限与账号锁定
+// 只可能出现在已注册账号上，映射时漏掉任何一枚，五次错误密码就能把
+// 「这个邮箱注册过吗」问出来。handler 只判一次本函数，命中即同一业务码与文案。
+func IsLoginDenied(err error) bool {
+	return errors.Is(err, model.ErrAccountNotFound) ||
+		errors.Is(err, model.ErrPasswordWrong) ||
+		errors.Is(err, model.ErrAttemptTooMany) ||
+		errors.Is(err, model.ErrAccountLocked)
 }
 
 // RecordFailedLogin 累加一次失败并报告结果。

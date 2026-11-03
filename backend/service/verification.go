@@ -71,8 +71,10 @@ func NewVerificationCodes(codes *code.Store, mailer Mailer) *VerificationCodes {
 func (s *VerificationCodes) Send(ctx context.Context, flow Flow, email string) error {
 	key := flow.prefix() + email
 
-	// 双窗口限流：两道任一超限即拒绝（ADR-0002 §4）
-	if !s.minute.Allow(key) || !s.hour.Allow(key) {
+	// 双窗口限流：两道任一超限即拒绝（ADR-0002 §4）。记账统一走 ratelimit.AllowAll：
+	// 先查全、全过才在两个窗口各记一次；任一窗口拒绝则本次尝试不记任何窗口——
+	// 被 hour 拒掉的发码不再白白消耗下一分钟的配额（原子是本语义的目标形态）。
+	if !ratelimit.AllowAll([]*ratelimit.Limiter{s.minute, s.hour}, key) {
 		return model.ErrAttemptTooMany
 	}
 

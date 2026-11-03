@@ -23,8 +23,9 @@ Superseded in part by: 0014（§1、§2）
   返回 `{migrated_count}`。
 * **空串是合法键**：`chapter_url` 的空串即书籍级评论（ADR-0011），因此两键用
   `omitempty` 而非 `required`——「书籍级 → 章节」与「章节 → 书籍级」两个方向都必须可表达。
-  binding tag 无法拼常量，读路径（公开列表过滤）与写路径的 `max=2048` 由
-  `TestChapterURLLengthLimitMatchesModelBinding` 用反射钉住一致。
+  binding tag 无法拼常量：写路径 tag 里的 `max=2048` 与 `MaxChapterURLLength` 由
+  `TestChapterURLBindingTagMatchesMaxChapterURLLength`（`backend/model/comment_test.go`）用反射钉住
+  一致；读路径（公开列表过滤）没有 tag，它判的就是同一个常量。
 * `old_key == new_key`（含两键同空）返回 `A0305`；无匹配行返回 0 而不报错——合并流程会重试，
   报错会让客户端无法区分「已生效」与「失败」。
 * 不迁移 `chapter_name/book_name`：它们是展示快照，聚合语义只看 `chapter_url`（ADR-0011）。

@@ -127,3 +127,51 @@ func TestLimiter_Peek(t *testing.T) {
 		t.Error("window expired should reset")
 	}
 }
+
+// TestAllowAll_AllWindowsPassRecordsEveryWindow 全过才记：一次成功在每个窗口各记一次。
+func TestAllowAll_AllWindowsPassRecordsEveryWindow(t *testing.T) {
+	minute, hour := New(2, time.Minute), New(2, time.Hour)
+
+	if !AllowAll([]*Limiter{minute, hour}, "k") {
+		t.Fatal("both windows under limit should allow")
+	}
+	// 两个窗口都被记了一次：第二次仍应全过，第三次起两窗一起拒
+	if !AllowAll([]*Limiter{minute, hour}, "k") {
+		t.Error("second call should still pass (limit 2 on each window)")
+	}
+	if AllowAll([]*Limiter{minute, hour}, "k") {
+		t.Error("third call should be rejected (limit 2 on each window)")
+	}
+	if !minute.PeekAt("k", time.Now()) || !hour.PeekAt("k", time.Now()) {
+		t.Error("a successful AllowAll must record every window")
+	}
+}
+
+// TestAllowAll_RejectionRecordsNoWindow 中途拒不记任何窗口：
+// 被 hour 拒掉的尝试不消耗 minute 配额（短路逐个 Allow 会白扣一次）。
+func TestAllowAll_RejectionRecordsNoWindow(t *testing.T) {
+	minute, hour := New(1, time.Minute), New(1, time.Hour)
+	hour.AllowAt("k", time.Now()) // hour 已满，minute 仍空
+
+	if AllowAll([]*Limiter{minute, hour}, "k") {
+		t.Fatal("exhausted hour window should reject")
+	}
+	if minute.PeekAt("k", time.Now()) {
+		t.Error("rejected attempt must not record the minute window")
+	}
+}
+
+// TestAllowAll_SingleLimiterMatchesAllow 单窗口退化形态与 Allow 同语义。
+func TestAllowAll_SingleLimiterMatchesAllow(t *testing.T) {
+	l := New(1, time.Minute)
+
+	if !AllowAll([]*Limiter{l}, "k") {
+		t.Fatal("first call should be allowed")
+	}
+	if AllowAll([]*Limiter{l}, "k") {
+		t.Error("second call should be rejected (limit 1)")
+	}
+	if !l.PeekAt("k", time.Now()) {
+		t.Error("AllowAll on one limiter should record it like Allow")
+	}
+}

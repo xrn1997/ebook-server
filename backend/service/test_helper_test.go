@@ -53,10 +53,11 @@ func setupTestDB(t *testing.T) {
 
 	// 验证码模块用记录型 Mailer：既能经真实下发链路预置码，又能断言防枚举的静默
 	sender := NewVerificationCodes(testCodes, testMails)
-	credentials := NewCredentials(users, tokens)
-	testAuth = NewAuthService(users, tokens, sender, testTokens, credentials)
+	sessions := NewSessions(tokens, users)
+	credentials := NewCredentials(users, sessions)
+	testAuth = NewAuthService(users, sessions, sender, testTokens, credentials)
 	testUsers = NewProfileService(users, upload.New(t.TempDir(), ""))
-	testAccount = NewAccountService(users, tokens, comments, sender, testUsers)
+	testAccount = NewAccountService(users, sessions, comments, sender, testUsers)
 	testComments = NewCommentService(comments)
 	testLogs = NewLogService(logs)
 }

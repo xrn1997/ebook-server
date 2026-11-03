@@ -16,7 +16,6 @@ import (
 	"ebook-server/config"
 	"ebook-server/handler"
 	"ebook-server/internal/admin"
-	"ebook-server/model"
 	"ebook-server/pkg/code"
 	"ebook-server/pkg/database"
 	"ebook-server/pkg/jwt"
@@ -44,7 +43,7 @@ import (
 // @in header
 // @name Authorization
 
-// main 只做两件事：装配依赖，然后开两个监听并等退出。
+// main 只做两件事：加载配置，然后把装配与运行交给 run，自己只负责退出码。
 //
 // 路由表不在这里——它住在 router 包，有 interface 因而可被测试。AGENTS.md 说 main.go
 // 是唯一装配点，指的是「把依赖递给谁」，不是「把三十行路由语句写在这里」。
@@ -56,6 +55,19 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
+	if err := run(cfg); err != nil {
+		// 失败原因已由 run 写到 stderr（os.Exit 之前 zap 的带缓冲日志可能来不及落盘）；
+		// main 只把它换成退出码。
+		os.Exit(1)
+	}
+}
+
+// run 装配依赖、启动两个监听并等待退出。
+//
+// 起步阶段的失败（logger/数据库/迁移）当场 log.Fatalf：此时还没有在途请求需要收场，
+// 终止进程与历史行为一致。监听失败不同——另一个监听已经在 Accept，必须走优雅关闭，
+// 因此以非 nil 返回、由 main 换成退出码：run 自己不做任何终止进程的动作。
+func run(cfg *config.Config) error {
 	if err := logger.Init(cfg.Server.Mode); err != nil {
 		log.Fatalf("Failed to init logger: %v", err)
 	}
@@ -70,7 +82,8 @@ func main() {
 	}
 
 	// 版本化迁移（ADR-0023）：新库执行 SQL 基线；AutoMigrate 时代的旧库先收养再标记基线。
-	if err := database.Migrate(db, &model.User{}, &model.Comment{}, &model.OperationLog{}, &model.RefreshToken{}); err != nil {
+	// 模型清单自持在 database.Migrate 内部，装配点不再抄一份字面量。
+	if err := database.Migrate(db); err != nil {
 		log.Fatalf("Failed to migrate schema: %v", err)
 	}
 
@@ -84,7 +97,13 @@ func main() {
 
 	// token 单元：用户端与后台端各持一把密钥，共用同一份签发/验签实现（ADR-0001/0010）
 	access := jwt.New(cfg.JWT.Secret, cfg.JWT.ExpireMin)
-	session := admin.NewSession(cfg.Admin)
+	// admin 包不 import config：配置 → 会话四项的转换只发生在这个装配点
+	session := admin.NewSession(admin.SessionConfig{
+		Username:  cfg.Admin.Username,
+		Password:  cfg.Admin.Password,
+		JWTSecret: cfg.Admin.JWTSecret,
+		ExpireMin: cfg.Admin.ExpireMin,
+	})
 
 	// 验证码存储与模块各全局唯一：注册/找回/注销共用同一个存储，
 	// 而下发与校验必须同源（ADR-0008）。
@@ -94,10 +113,12 @@ func main() {
 	uploadStore := upload.New(cfg.Upload.Dir, cfg.Server.PublicBaseURL)
 
 	// 业务服务
-	credentials := service.NewCredentials(userRepo, tokenRepo)
-	authService := service.NewAuthService(userRepo, tokenRepo, codeModule, access, credentials)
+	// 会话模块（refresh token 的签发/轮换/撤销）全局唯一，改密、登出、注销共用同一处
+	sessions := service.NewSessions(tokenRepo, userRepo)
+	credentials := service.NewCredentials(userRepo, sessions)
+	authService := service.NewAuthService(userRepo, sessions, codeModule, access, credentials)
 	profileService := service.NewProfileService(userRepo, uploadStore)
-	accountService := service.NewAccountService(userRepo, tokenRepo, commentRepo, codeModule, profileService)
+	accountService := service.NewAccountService(userRepo, sessions, commentRepo, codeModule, profileService)
 	commentService := service.NewCommentService(commentRepo)
 	logService := service.NewLogService(logRepo)
 
@@ -167,9 +188,7 @@ func main() {
 	if err := database.Close(db); err != nil {
 		logger.Error("关闭数据库连接失败", zap.Error(err))
 	}
-	if startErr != nil {
-		os.Exit(1)
-	}
+	return startErr
 }
 
 // shutdownGracePeriod 停止接受新连接后留给在途请求完成的时间。
@@ -219,7 +238,15 @@ func shutdown(servers ...*http.Server) {
 // 避免在正规环境把验证码悄悄漏进日志。
 func newMailer(cfg *config.Config) service.Mailer {
 	if (cfg.SMTP.Host != "" && cfg.SMTP.Port != 0) || cfg.Server.Mode == config.ModeRelease {
-		return mail.NewSMTPMailer(cfg.SMTP)
+		// mail 包不 import config：配置 → SMTP 六项的转换只发生在这个装配点
+		return mail.NewSMTPMailer(mail.SMTPConfig{
+			Host:     cfg.SMTP.Host,
+			Port:     cfg.SMTP.Port,
+			Username: cfg.SMTP.Username,
+			Password: cfg.SMTP.Password,
+			From:     cfg.SMTP.From,
+			Insecure: cfg.SMTP.Insecure,
+		})
 	}
 	return mail.NewLogMailer()
 }

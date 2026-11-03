@@ -34,6 +34,11 @@ _Avoid_: 用户信息（会把登录主标识与凭据一起卷进来）、profi
 _唯一实现_：`service.Credentials`（`backend/service/credentials.go`）
 _Avoid_: 密码（存储形态是哈希）、登录信息（含不可变的登录主标识，两者生命周期不同）
 
+**会话**:
+一次登录取得的 refresh token 从签发到作废的完整生命周期：签发（登录时）、单次消费（刷新即轮换，旧令牌作废）、撤销（登出、改密、注销共用同一处，按账号整批作废）。access token 无状态、不属会话，撤不掉，活到自身过期。注销后的会话在续期前被匿名化状态检查拒绝。
+_唯一实现_：`service.Sessions` 的 `Issue`/`Consume`/`Revoke`（`backend/service/sessions.go`）
+_Avoid_: 登录态（含无状态的 access token，比会话宽）、令牌管理（未说明生命周期语义）
+
 ## 账号生命周期
 
 **账号注销**:
@@ -83,8 +88,8 @@ _唯一实现_：`model.CommentKeyScope` 与 `service.CommentService.MigrateKeys
 _Avoid_: 迁移 vs 重哈希（两个词暗示两套逻辑，实际只有一套）、批量改键（未说明归属）
 
 **评论删除范围**:
-一次删除评论操作覆盖的账号范围，只有两种：**本人**（作者删，校验归属）与**治理**（后台删，只校验评论存在）。它是删除这一件事的同一个实现的两个 scope，不是两套逻辑；与「改键归属范围」同形但语义不同——改键范围决定查询是否带用户过滤，删除范围决定是否校验作者。
-_唯一实现_：`model.CommentScope` 与 `service.CommentService.Delete`（`backend/model/comment.go`、`backend/service/comment.go`）
+一次删除评论操作覆盖的账号范围，只有两种：**本人**（作者删，校验归属）与**治理**（后台删，只校验评论存在）。它是删除这一件事的同一个实现的两个 scope，不是两套逻辑；与「改键归属范围」同形但语义不同——改键范围决定查询是否带用户过滤，删除范围决定是否校验作者。条件删除没删到行时的归因（不存在 / 非本人 / 并发删除）也是同一件事的一部分：由存储实现判出结果归因，业务层只把它映射成错误码，RowsAffected 仍是成功判据。
+_唯一实现_：`model.CommentScope`、`model.DeleteOutcome` 与 `service.CommentService.Delete`（scope 与归因值）、`repository.CommentRepository.DeleteScoped`（归因判定）（`backend/model/comment.go`、`backend/service/comment.go`、`backend/repository/comment.go`）
 _Avoid_: 管理员删除（治理删同样只删一条，不因身份扩大范围）、权限等级（这里是归属范围，不是角色）
 
 ## 操作日志

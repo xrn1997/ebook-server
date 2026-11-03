@@ -2,6 +2,10 @@
  * 后台 API 调用 + 管理端 token 持久化（ADR-0010 独立后台 JWT；ADR-0024 token 存 localStorage）。
  *
  * 所有失败都以信封返回，不向视图抛异常；鉴权失败统一清 token 并回登录页。
+ * 视图不得 import SUCCESS_CODE，一律经 unwrap/useAdminList/useAdminDetail（这条由
+ * `eslint.config.js` 的 `no-restricted-imports` 强制，不靠注释自律）；
+ * Logs.vue 的 codeClass 直接读业务码，是当前唯一例外：徽标归类缓做，
+ * 见 docs/development.md「已知不做的事」的 Logs.vue 条目。
  */
 
 export interface Envelope<T = unknown> {
@@ -45,6 +49,9 @@ export interface AdminComment {
   user_id: number
   user?: { username?: string; nickname?: string }
   content: string
+  /** 对齐后端 model.AdminCommentView 的固定视图字段（后端有、前端此前漏） */
+  comment_key?: string
+  chapter_url?: string
   chapter_name?: string
   book_name?: string
   created_at: string
@@ -115,7 +122,10 @@ export const token = {
 
 function tokenStore(): Storage | undefined {
   try {
-    return globalThis.localStorage ?? undefined
+    // lib.dom 把它钉成非空 `Storage`，非浏览器环境实际取到 undefined。这里不加 `?? undefined`：
+    // 那个写法是纯类型层面的 no-op（undefined 进去 undefined 出来），运行时真相由返回类型
+    // `Storage | undefined` 承载；取用本身抛错才是要 catch 的那条路（隐私模式）。
+    return globalThis.localStorage
   } catch {
     // 隐私模式等场景下取 localStorage 本身就会抛：等同于「没有存储」
     return undefined
@@ -155,13 +165,13 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<Enve
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (auth && token.value) headers.Authorization = `Bearer ${token.value}`
 
+  // 无请求体时不建 body 键：RequestInit 的 body 是 `BodyInit | null`，显式传 undefined 不合法。
+  const init: RequestInit = { method, headers }
+  if (body !== undefined) init.body = JSON.stringify(body)
+
   let res: Response
   try {
-    res = await fetch(BASE + path, {
-      method,
-      headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
-    })
+    res = await fetch(BASE + path, init)
   } catch (e) {
     return {
       code: 'C0500',
@@ -201,6 +211,29 @@ function isEnvelope<T>(value: unknown): value is Envelope<T> {
     value !== null &&
     typeof (value as { code?: unknown }).code === 'string'
   )
+}
+
+/** unwrap 的结果：视图只看 ok/data/message，不再各自比较业务码。 */
+export type Unwrapped<T> = { ok: boolean; data?: T; message: string }
+
+/**
+ * 单次调用的成败解包：`code === SUCCESS_CODE` → ok=true、data=resp.data；
+ * 否则 ok=false、message=后端文案，缺 error 字段时用调用方传入的 fallback。
+ *
+ * 鉴权失败清 token、跳登录仍住 request 层（AUTH_FAILURE_CODES 判定），unwrap 不重复表达。
+ */
+export async function unwrap<T>(
+  call: Promise<Envelope<T>>,
+  fallbackMessage = '操作失败',
+): Promise<Unwrapped<T>> {
+  const resp = await call
+  if (resp.code === SUCCESS_CODE) {
+    // data 缺席就不建键：写 `data: undefined` 会把「后端没回 data」与「回了 undefined」折叠成一种值。
+    return resp.data === undefined
+      ? { ok: true, message: '' }
+      : { ok: true, data: resp.data, message: '' }
+  }
+  return { ok: false, message: resp.error || fallbackMessage }
 }
 
 export function login(username: string, password: string): Promise<Envelope<{ token: string }>> {

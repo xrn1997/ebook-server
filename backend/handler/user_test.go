@@ -1,45 +1,27 @@
-package handler
+package handler_test
 
 import (
 	"bytes"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
-	"ebook-server/middleware"
 )
 
 func TestUserHandler_GetMe_NoAuth(t *testing.T) {
 	app := newTestApp(t)
-	router := setupRouter()
-	userHandler := app.user
-	router.GET("/api/users/me", userHandler.GetMe)
+	router := app.engine
 
-	req, _ := http.NewRequest("GET", "/api/users/me", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	w := doJSON(t, router, http.MethodGet, "/api/users/me", nil, "")
 	assertErrorCode(t, w.Body.Bytes(), "A0230")
 }
 
 func TestUserHandler_GetMe_WithAuth(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	authHandler := app.auth
-	userHandler := app.user
-	router.POST("/api/auth/register", authHandler.Register)
-	router.POST("/api/auth/login", authHandler.Login)
-	router.GET("/api/users/me", middleware.JWTAuth(app.tokens), userHandler.GetMe)
+	router := app.engine
 
 	_, token := registerUser(t, router, "auth@example.com")
 
-	req, _ := http.NewRequest("GET", "/api/users/me", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	w := doJSON(t, router, http.MethodGet, "/api/users/me", nil, token)
 	data := decodeData(t, w.Body.Bytes())
 	if data["email"] != "auth@example.com" {
 		t.Errorf("Expected email 'auth@example.com', got %v", data["email"])
@@ -51,41 +33,22 @@ func TestUserHandler_GetMe_WithAuth(t *testing.T) {
 
 func TestUserHandler_GetMe_InvalidToken(t *testing.T) {
 	app := newTestApp(t)
-	router := setupRouter()
-	userHandler := app.user
-	router.GET("/api/users/me", middleware.JWTAuth(app.tokens), userHandler.GetMe)
+	router := app.engine
 
-	req, _ := http.NewRequest("GET", "/api/users/me", nil)
-	req.Header.Set("Authorization", "Bearer invalid-token")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	w := doJSON(t, router, http.MethodGet, "/api/users/me", nil, "invalid-token")
 	assertErrorCode(t, w.Body.Bytes(), "A0230")
 }
 
 func TestUserHandler_UpdateMe_Success(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	authHandler := app.auth
-	userHandler := app.user
-	router.POST("/api/auth/register", authHandler.Register)
-	router.POST("/api/auth/login", authHandler.Login)
-	router.PUT("/api/users/me", middleware.JWTAuth(app.tokens), userHandler.UpdateMe)
+	router := app.engine
 
 	_, token := registerUser(t, router, "update@example.com")
 
-	body := map[string]string{
+	w := doJSON(t, router, http.MethodPut, "/api/users/me", map[string]string{
 		"username": "myname",
 		"avatar":   "https://example.com/avatar.jpg",
-	}
-	jsonBody, _ := json.Marshal(body)
-	req, _ := http.NewRequest("PUT", "/api/users/me", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	}, token)
 	data := decodeData(t, w.Body.Bytes())
 	if data["username"] != "myname" {
 		t.Errorf("Expected username 'myname', got %v", data["username"])
@@ -99,130 +62,65 @@ func TestUserHandler_UpdateMe_Success(t *testing.T) {
 // TestUserHandler_UpdateMe_EmailImmutable 改登录主标识应返回 A0113（ADR-0004）
 func TestUserHandler_UpdateMe_EmailImmutable(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	authHandler := app.auth
-	userHandler := app.user
-	router.POST("/api/auth/register", authHandler.Register)
-	router.POST("/api/auth/login", authHandler.Login)
-	router.PUT("/api/users/me", middleware.JWTAuth(app.tokens), userHandler.UpdateMe)
+	router := app.engine
 
 	_, token := registerUser(t, router, "immutable-h@example.com")
 
-	body := map[string]string{"email": "another@example.com"}
-	jsonBody, _ := json.Marshal(body)
-	req, _ := http.NewRequest("PUT", "/api/users/me", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	w := doJSON(t, router, http.MethodPut, "/api/users/me",
+		map[string]string{"email": "another@example.com"}, token)
 	assertErrorCode(t, w.Body.Bytes(), "A0113")
 }
 
 func TestUserHandler_UpdateMe_InvalidEmail(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	authHandler := app.auth
-	userHandler := app.user
-	router.POST("/api/auth/register", authHandler.Register)
-	router.POST("/api/auth/login", authHandler.Login)
-	router.PUT("/api/users/me", middleware.JWTAuth(app.tokens), userHandler.UpdateMe)
+	router := app.engine
 
 	_, token := registerUser(t, router, "invalid-email@example.com")
 
-	body := map[string]string{"email": "not-an-email"}
-	jsonBody, _ := json.Marshal(body)
-	req, _ := http.NewRequest("PUT", "/api/users/me", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	w := doJSON(t, router, http.MethodPut, "/api/users/me",
+		map[string]string{"email": "not-an-email"}, token)
 	assertErrorCode(t, w.Body.Bytes(), "A0400")
 }
 
 func TestUserHandler_ChangePassword_Success(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	authHandler := app.auth
-	userHandler := app.user
-	router.POST("/api/auth/register", authHandler.Register)
-	router.POST("/api/auth/login", authHandler.Login)
-	router.PUT("/api/users/me/password", middleware.JWTAuth(app.tokens), userHandler.ChangePassword)
+	router := app.engine
 
 	email := "changepwd@example.com"
 	_, token := registerUser(t, router, email)
 
-	body := map[string]string{"old_password": "password123", "new_password": "newpass456"}
-	jsonBody, _ := json.Marshal(body)
-	req, _ := http.NewRequest("PUT", "/api/users/me/password", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	w := doJSON(t, router, http.MethodPut, "/api/users/me/password",
+		map[string]string{"old_password": "password123", "new_password": "newpass456"}, token)
 	assertErrorCode(t, w.Body.Bytes(), "00000")
 
-	// 新密码可登录，旧密码不可
-	loginBody := map[string]string{"email": email, "password": "newpass456"}
-	jsonBody, _ = json.Marshal(loginBody)
-	req, _ = http.NewRequest("POST", "/api/auth/login", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	w = httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-	decodeData(t, w.Body.Bytes())
+	// 新密码可登录
+	decodeData(t, doJSON(t, router, http.MethodPost, "/api/auth/login",
+		map[string]string{"email": email, "password": "newpass456"}, "").Body.Bytes())
 }
 
 func TestUserHandler_ChangePassword_WrongOldPassword(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	authHandler := app.auth
-	userHandler := app.user
-	router.POST("/api/auth/register", authHandler.Register)
-	router.POST("/api/auth/login", authHandler.Login)
-	router.PUT("/api/users/me/password", middleware.JWTAuth(app.tokens), userHandler.ChangePassword)
+	router := app.engine
 
 	_, token := registerUser(t, router, "wrongold@example.com")
 
-	body := map[string]string{"old_password": "wrongpassword", "new_password": "newpass456"}
-	jsonBody, _ := json.Marshal(body)
-	req, _ := http.NewRequest("PUT", "/api/users/me/password", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	w := doJSON(t, router, http.MethodPut, "/api/users/me/password",
+		map[string]string{"old_password": "wrongpassword", "new_password": "newpass456"}, token)
 	assertErrorCode(t, w.Body.Bytes(), "A0210")
 }
 
 func TestUserHandler_UpdateMe_NoAuth(t *testing.T) {
 	app := newTestApp(t)
-	router := setupRouter()
-	userHandler := app.user
-	router.PUT("/api/users/me", middleware.JWTAuth(app.tokens), userHandler.UpdateMe)
+	router := app.engine
 
-	body := map[string]string{"username": "newname"}
-	jsonBody, _ := json.Marshal(body)
-	req, _ := http.NewRequest("PUT", "/api/users/me", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	w := doJSON(t, router, http.MethodPut, "/api/users/me",
+		map[string]string{"username": "newname"}, "")
 	assertErrorCode(t, w.Body.Bytes(), "A0230")
 }
 
 func TestUserHandler_UpdateMe_InvalidJSON(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	authHandler := app.auth
-	userHandler := app.user
-	router.POST("/api/auth/register", authHandler.Register)
-	router.POST("/api/auth/login", authHandler.Login)
-	router.PUT("/api/users/me", middleware.JWTAuth(app.tokens), userHandler.UpdateMe)
+	router := app.engine
 
 	_, token := registerUser(t, router, "invalidjson@example.com")
 
@@ -237,29 +135,16 @@ func TestUserHandler_UpdateMe_InvalidJSON(t *testing.T) {
 
 func TestUserHandler_ChangePassword_NoAuth(t *testing.T) {
 	app := newTestApp(t)
-	router := setupRouter()
-	userHandler := app.user
-	router.PUT("/api/users/me/password", middleware.JWTAuth(app.tokens), userHandler.ChangePassword)
+	router := app.engine
 
-	body := map[string]string{"old_password": "old", "new_password": "new"}
-	jsonBody, _ := json.Marshal(body)
-	req, _ := http.NewRequest("PUT", "/api/users/me/password", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	w := doJSON(t, router, http.MethodPut, "/api/users/me/password",
+		map[string]string{"old_password": "old", "new_password": "new"}, "")
 	assertErrorCode(t, w.Body.Bytes(), "A0230")
 }
 
 func TestUserHandler_ChangePassword_InvalidJSON(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	authHandler := app.auth
-	userHandler := app.user
-	router.POST("/api/auth/register", authHandler.Register)
-	router.POST("/api/auth/login", authHandler.Login)
-	router.PUT("/api/users/me/password", middleware.JWTAuth(app.tokens), userHandler.ChangePassword)
+	router := app.engine
 
 	_, token := registerUser(t, router, "invalidpwd@example.com")
 

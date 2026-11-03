@@ -1,0 +1,57 @@
+name: CI
+
+# 门禁总入口是 `make gates`——本地与 CI 跑同一条命令，不在这里另写一份步骤清单。
+# 写第二份是漂移的开始：CI 改松了没人知道，发版门于是比检查门更宽。
+#
+# 刻意不在 CI 里的：起真实服务端的端到端验证、浏览器里的手动核对、需要外部凭据的
+# 邮件与代理路径。这些按 docs/development.md 的命令在开发机上跑，结论写进 PR。
+
+on:
+  push:
+    # 默认分支是 master；改名时这里必须同步，否则门禁只在 PR 上跑。
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    name: gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          # Go 版本住 backend/go.mod，不在这里重复一遍。
+          go-version-file: backend/go.mod
+          # cache 是布尔（setup-go 与 setup-node 不同：写 `dependency` 这类取值会被
+          # getBooleanInput 判错、整个步骤失败）。路径必须显式给出：默认它在
+          # workspace 根找 go.mod，本仓的 module 在 backend/ 下，找不到就只警告、
+          # 不缓存——门照样绿，但每次 CI 都重新下载全部依赖。
+          cache: true
+          cache-dependency-path: backend/go.sum
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          # 只跑 24。前端工具链的 Node 下限住在 frontend/package.json 的 engines（来自
+          # ESLint 10），这里不另开一条作业去验证它：依赖树里 nopt/abbrev 声明的下限比
+          # 那条更高，而 npm 默认不把 engines 当硬条件——开了 engine-strict，连声明支持
+          # 的那一档都装不上。下限之下的真实失败点是 frontend-lint 自己起不来。取舍见 ADR-0026。
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # 需要 gcc：test-race 的 race detector 走 cgo。ubuntu-latest 自带，不另装。
+      - name: Gates
+        run: make gates

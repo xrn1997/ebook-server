@@ -127,9 +127,15 @@ func Load(path string) (*Config, error) {
 	return cfg, nil
 }
 
-// ModeRelease 生产运行模式。与 gin.ReleaseMode 同值，此处不 import gin：
-// 「配置处于哪种模式」不该依赖 Web 框架，而 main.go 判 SMTP 时也要用同一个字面量。
-const ModeRelease = "release"
+// 运行模式取值。与 gin 的模式字面量同值，此处不 import gin：「配置处于哪种模式」
+// 不该依赖 Web 框架，而 main.go 判 SMTP 时也要用同一个常量。
+//
+// logger 侧判 debug 用同值字面量并以注释点名 ModeDebug（archtest 强制的是反向边：
+// config 不 import pkg；logger 侧也保持不依赖 config）；改这里的取值要同步改 pkg/logger。
+const (
+	ModeDebug   = "debug"
+	ModeRelease = "release"
+)
 
 // validate 拒绝那些会让认证安全或网络隔离形同虚设的配置。
 //

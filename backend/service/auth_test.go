@@ -142,11 +142,43 @@ func TestAuthService_Login_WrongPassword(t *testing.T) {
 	}
 }
 
-// TestAuthService_Login_ComparesOnceEvenWithoutAccount 钉住防枚举的「等代价」一侧（ADR-0006）。
+// TestAuthService_Login_UnknownEmailComparesAgainstPlaceholder 防枚举时序等价的测试抓手：
+// 未注册邮箱的登录必须恰花掉一次口令比对，且比对对象是 loginHashPlaceholder 占位摘要
+// ——「这个邮箱注册过吗」既问不出在响应码里，也问不出在响应时间里（ADR-0006）。
 //
-// 业务码统一只堵住了响应内容；一次请求的耗时差仍然会把「这个邮箱注册过吗」说出来——
-// 存在账号要跑 bcrypt（数十毫秒），不存在直接返回。所以不存在的账号也必须比对一次。
-func TestAuthService_Login_ComparesOnceEvenWithoutAccount(t *testing.T) {
+// 计数与入参都从 credentials.compare 这道可注入缝上观察（包内可及），不掐表测时。
+func TestAuthService_Login_UnknownEmailComparesAgainstPlaceholder(t *testing.T) {
+	setupTestDB(t)
+	defer cleanupTestDB(t)
+
+	var calls int
+	var gotHash string
+	testAuth.credentials.compare = func(hashed, plain []byte) error {
+		calls++
+		gotHash = string(hashed)
+		return errors.New("test compare: never matches")
+	}
+
+	_, err := testAuth.Login(testCtx, &model.LoginRequest{Email: "nobody-placeholder@example.com", Password: "whatever"})
+	if !errors.Is(err, model.ErrAccountNotFound) {
+		t.Fatalf("Expected ErrAccountNotFound, got %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("未知邮箱路径的口令比对次数 = %d, want 1", calls)
+	}
+	if gotHash != loginHashPlaceholder {
+		t.Errorf("比对入参 hashed = %q, want loginHashPlaceholder", gotHash)
+	}
+}
+
+// TestAuthService_Login_UnknownEmailAndPasswordWrongFoldToOneClass 未注册邮箱与错口令
+// 的登录失败经凭据模块的折叠规则（IsLoginDenied）归为同一类——handler 因此只判一次
+// 就能给两者完全相同的信封（ADR-0006）。
+//
+// 断言钉在公开面：信封逐字节一致由 handler/enumeration_test.go 用真实路由钉住；
+// 「不存在的账号也走一次等代价比对」的时序保证由
+// TestAuthService_Login_UnknownEmailComparesAgainstPlaceholder 钉住，本用例不重复该抓手。
+func TestAuthService_Login_UnknownEmailAndPasswordWrongFoldToOneClass(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
@@ -154,33 +186,55 @@ func TestAuthService_Login_ComparesOnceEvenWithoutAccount(t *testing.T) {
 	email := "svc-equal-cost@example.com"
 	serviceRegister(t, authService, email, "password123")
 
-	var compared []string
-	authService.credentials.compare = func(hashed, plain []byte) error {
-		compared = append(compared, string(hashed))
-		return errors.New("口令不匹配") // 本用例只关心比对发生了几次
+	_, wrongErr := authService.Login(testCtx, &model.LoginRequest{Email: email, Password: "wrong"})
+	if !IsLoginDenied(wrongErr) {
+		t.Fatalf("错口令应回可折叠的登录拒绝, got %v", wrongErr)
 	}
 
-	if _, err := authService.Login(testCtx, &model.LoginRequest{Email: email, Password: "wrong"}); err != model.ErrPasswordWrong {
-		t.Fatalf("存在账号 + 错口令应回 ErrPasswordWrong, got %v", err)
-	}
-	if len(compared) != 1 {
-		t.Fatalf("存在账号时比对 %d 次，期望 1 次", len(compared))
-	}
-
-	compared = nil
-	if _, err := authService.Login(testCtx, &model.LoginRequest{Email: "nobody@example.com", Password: "wrong"}); err != model.ErrAccountNotFound {
-		t.Fatalf("未注册邮箱应回 ErrAccountNotFound, got %v", err)
-	}
-	if len(compared) != 1 {
-		t.Fatalf("账号不存在时也必须走一次等代价比对（防时序枚举），实际 %d 次", len(compared))
-	}
-	if compared[0] == "" {
-		t.Error("占位比对必须落在一枚真实摘要上，否则等于什么都没做")
+	_, unknownErr := authService.Login(testCtx, &model.LoginRequest{Email: "nobody@example.com", Password: "wrong"})
+	if !IsLoginDenied(unknownErr) {
+		t.Fatalf("未注册邮箱应回可折叠的登录拒绝, got %v", unknownErr)
 	}
 }
 
-// TestAuthService_Login_LockedAccountStillCompares 锁定分支不得提前返回：
-// 省掉那次比对会让「账号存在但被锁」成为第二个可测的时序档。
+// TestAuthService_Login_LockedAccountFoldsIntoSameClass 尝试超限与账号锁定同样折进
+// 同一类：这两枚哨兵只可能出现在已注册账号上，若在 handler 漏折，五次错误密码就能
+// 判断某个邮箱是否已注册（ADR-0006 的硬规则）。
+func TestAuthService_Login_LockedAccountFoldsIntoSameClass(t *testing.T) {
+	setupTestDB(t)
+	defer cleanupTestDB(t)
+
+	authService := testAuth
+	email := "svc-locked-cost@example.com"
+	serviceRegister(t, authService, email, "password123")
+
+	var err error
+	for i := 0; i < 5; i++ {
+		_, err = authService.Login(testCtx, &model.LoginRequest{Email: email, Password: "wrong"})
+	}
+	if err != model.ErrAttemptTooMany {
+		t.Fatalf("第 5 次失败应回 ErrAttemptTooMany, got %v", err)
+	}
+	if !IsLoginDenied(err) {
+		t.Fatalf("尝试超限必须可折叠, got %v", err)
+	}
+
+	// 锁定期间正确密码也被拒绝，且同样折叠
+	if _, err = authService.Login(testCtx, &model.LoginRequest{Email: email, Password: "password123"}); err != model.ErrAccountLocked {
+		t.Fatalf("锁定期应回 ErrAccountLocked, got %v", err)
+	}
+	if !IsLoginDenied(err) {
+		t.Fatalf("账号锁定必须可折叠, got %v", err)
+	}
+}
+
+// TestAuthService_Login_LockedAccountStillCompares 锁定分支不得省掉那次比对：
+// 提前返回会让「账号存在但被锁」成为第二个可测的耗时档（ADR-0006 的时序面，
+// 生产侧的顺序保证见 backend/service/auth.go 的 Login「比对放在所有分支之前」）。
+//
+// 折叠只证明两类拒绝回同一个信封，证明不了它们花掉的代价相同；后者要在
+// credentials.compare 这道缝上数得出来，与
+// TestAuthService_Login_UnknownEmailComparesAgainstPlaceholder 同一个理由。
 func TestAuthService_Login_LockedAccountStillCompares(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)

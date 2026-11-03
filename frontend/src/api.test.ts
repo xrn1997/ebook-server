@@ -9,6 +9,7 @@ import {
   fetchUsers,
   login,
   token,
+  unwrap,
 } from './api'
 
 interface Call {
@@ -22,8 +23,10 @@ const calls: Call[] = []
 function stubFetch(reply: unknown): void {
   vi.stubGlobal(
     'fetch',
-    vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
-      calls.push({ url: String(url), init })
+    // 替身签名收窄到 `string`：本仓所有调用都传 `BASE + path`，写成 fetch 的全签名反而让
+    // String(url) 有把 Request 变成 '[object Object]' 的空间。
+    vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init })
       return new Response(JSON.stringify(reply), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
@@ -83,7 +86,11 @@ describe('后台 API 调用层', () => {
 
     expect(calls[0]?.url).toBe('/admin/api/login')
     expect(calls[0]?.init?.method).toBe('POST')
-    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ username: 'admin', password: 'secret' })
+    // body 只可能是 JSON.stringify 出来的串；不是串就直接炸这条用例，
+    // 而不是 String() 成 '[object Object]' 再让 JSON.parse 报一句难读的错。
+    const body = calls[0]?.init?.body
+    if (typeof body !== 'string') throw new Error(`期望请求体是字符串，实得 ${typeof body}`)
+    expect(JSON.parse(body)).toEqual({ username: 'admin', password: 'secret' })
     expect(resp.data?.token).toBe('jwt')
   })
 
@@ -154,5 +161,43 @@ describe('后台 API 调用层', () => {
 
     expect(resp.code).toBe('C0500')
     expect(resp.error).toBe('后端返回了无法识别的响应')
+  })
+})
+
+describe('unwrap', () => {
+  it('成功信封解出 ok 与 data', async () => {
+    const result = await unwrap(
+      Promise.resolve({ code: '00000', data: { users: 1, comments: 2 } }),
+      '加载失败',
+    )
+
+    expect(result.ok).toBe(true)
+    expect(result.data).toEqual({ users: 1, comments: 2 })
+    expect(result.message).toBe('')
+  })
+
+  it('失败信封带 error 时透传后端文案，而不是退回兜底', async () => {
+    const result = await unwrap(
+      Promise.resolve({ code: 'A0304', error: '评论不存在' }),
+      '删除评论失败',
+    )
+
+    expect(result.ok).toBe(false)
+    expect(result.data).toBeUndefined()
+    expect(result.message).toBe('评论不存在')
+  })
+
+  it('失败信封缺 error 字段时用调用方传入的 fallback', async () => {
+    const result = await unwrap(Promise.resolve({ code: 'A0120' }), '加载用户详情失败')
+
+    expect(result.ok).toBe(false)
+    expect(result.message).toBe('加载用户详情失败')
+  })
+
+  it('省略兜底文案时使用默认文案', async () => {
+    const result = await unwrap(Promise.resolve({ code: 'A0120' }))
+
+    expect(result.ok).toBe(false)
+    expect(result.message).toBe('操作失败')
   })
 })

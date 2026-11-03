@@ -1,5 +1,6 @@
 import { computed, ref, type Ref } from 'vue'
-import { SUCCESS_CODE, type Envelope, type Page } from './api'
+import { unwrap, type Envelope, type Page } from './api'
+import { createRequestGuard } from './requestGuard'
 
 /** 每页条数固定 20（显式传给后台；后台缺省是 10，不能依赖）。 */
 export const PAGE_SIZE = 20
@@ -31,43 +32,44 @@ export function useAdminList<T>(load: (params: ListParams) => Promise<Envelope<P
    * 请求序号：筛选条件改得快时，先发的那次可能后回。
    * 只认最新一次发出的响应，慢回的旧响应整段丢弃——否则第 2 页的慢包会把
    * 已经落地的第 1 页覆盖掉，用户在看到的却是另一套筛选条件下的行。
+   * 守卫实现与 useAdminDetail 共用 requestGuard。
    */
-  let requestId = 0
+  const requests = createRequestGuard()
 
   /** 拉取一页；成功时清空错误，失败时只留一句可直接展示的中文原因 */
   async function loadPage(target: number): Promise<void> {
     error.value = ''
-    const id = ++requestId
+    const id = requests.begin()
     loading.value = true
     try {
-      const resp = await load({ page: target, pageSize: PAGE_SIZE })
-      if (id !== requestId) return
-      if (resp.code === SUCCESS_CODE) {
-        // data 缺失按空页处理（既有语义）；但 data 存在而 list/total 形状不对时，
-        // `?? []` 会把「后端改了字段名」渲染成「没有匹配的行」。契约漂移要报错。
-        const found = resp.data
-        if (found && (!Array.isArray(found.list) || typeof found.total !== 'number')) {
-          rows.value = []
-          total.value = 0
-          error.value = '列表数据格式不正确'
-          return
-        }
-        rows.value = found?.list ?? []
-        total.value = found?.total ?? 0
-        page.value = target
-      } else {
+      const result = await unwrap(load({ page: target, pageSize: PAGE_SIZE }), '加载失败')
+      if (!requests.isCurrent(id)) return
+      if (!result.ok) {
         rows.value = []
-        error.value = resp.error || '加载失败'
+        error.value = result.message
+        return
       }
+      // data 缺失按空页处理（既有语义）；但 data 存在而 list/total 形状不对时，
+      // `?? []` 会把「后端改了字段名」渲染成「没有匹配的行」。契约漂移要报错。
+      const found = result.data
+      if (found && (!Array.isArray(found.list) || typeof found.total !== 'number')) {
+        rows.value = []
+        total.value = 0
+        error.value = '列表数据格式不正确'
+        return
+      }
+      rows.value = found?.list ?? []
+      total.value = found?.total ?? 0
+      page.value = target
     } catch (e) {
-      if (id !== requestId) return
+      if (!requests.isCurrent(id)) return
       // api 层已经把网络失败翻译成信封，抛到这里只剩编程错误：
       // 说成「无法连接后端服务」会把真 bug 伪装成运维问题，所以只留通用文案、原文进控制台。
       console.error('后台列表加载抛出意外异常', e)
       rows.value = []
       error.value = '加载失败'
     } finally {
-      if (id === requestId) loading.value = false
+      if (requests.isCurrent(id)) loading.value = false
     }
   }
 

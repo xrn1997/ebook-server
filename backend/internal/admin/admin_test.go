@@ -1,60 +1,71 @@
-package admin
+// 后台用例站在真路由表上：引擎来自 router.AdminConsole，路由与中间件顺序的唯一真相
+// 在 router 包（router_test.go 与 engine.Routes() 双向比对）。本文件因此是**外部测试包**
+// admin_test——router import 了 internal/admin，包内测试引 router 会成环；只有外部测试包
+// 能引它。代价是用例碰不到 internal/admin 的未导出符号，白盒断言只能改走公开面。
+// 留在包内的用例只有两枚：embed_test.go 的 mimeType 与 binding_test.go 的改键 tag 反射钉
+// ——都只关本包的局部规则（内嵌资产的 MIME、自己 struct 的 binding），与路由表无关。
+package admin_test
 
 import (
 	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"reflect"
 	"strconv"
-	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"ebook-server/config"
+	"ebook-server/internal/admin"
 	"ebook-server/model"
-	"ebook-server/pkg/errcode"
 	pubjwt "ebook-server/pkg/jwt"
 	"ebook-server/pkg/testdb"
 	"ebook-server/repository"
+	"ebook-server/router"
 	"ebook-server/service"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 	"gorm.io/gorm"
 )
 
-// TestMimeType ES module 必须返回 JS MIME，否则浏览器拒绝执行导致白屏（回归保护）。
-func TestMimeType(t *testing.T) {
-	cases := []struct{ name, want string }{
-		{"assets/index-abc.js", "text/javascript; charset=utf-8"},
-		{"assets/app-abc.css", "text/css; charset=utf-8"},
-		{"assets/app-abc.json", "application/json; charset=utf-8"},
-		{"assets/logo.svg", "image/svg+xml"},
-	}
-	for _, c := range cases {
-		if got := mimeType(c.name, nil); got != c.want {
-			t.Errorf("mimeType(%q) = %q, want %q", c.name, got, c.want)
-		}
-	}
+// 后台会话的测试配置：凭据与密钥都在这里，签发/伪造 token 的用例共用同一份，
+// 免得「setup 里的密钥」与「用例里的密钥」各写一遍。
+const (
+	adminUsername  = "admin"
+	adminPassword  = "pass123"
+	adminSecret    = "admin-test-secret"
+	adminExpireMin = 30
+	adminExpire    = time.Duration(adminExpireMin) * time.Minute
+)
+
+// loginFailureLimit 后台登录的失败配额：每个来源 IP 每分钟 5 次（README 的「登录限流」
+// 与 ADR-0010 §决策 都把它写在纸面上）。这里按**规格**取值，不引生产的同名常量——
+// 生产常量被改动而规格没变，用例就该红。
+const loginFailureLimit = 5
+
+// adminTokenClaims 后台 token 声明集在用例里的读法：只按 JSON 形状解析，
+// 不引 internal/admin 的未导出类型（那正是外部测试包要避开的那道白盒）。
+type adminTokenClaims struct {
+	Role string `json:"role"`
+	jwt.RegisteredClaims
 }
 
-// setup 组装后台测试环境：独立 :memory: 库 + 独立会话配置 + 后台路由。
+// setup 组装后台测试环境：独立 :memory: 库 + 独立会话配置 + **真后台路由表**。
 func setup(t *testing.T) (*gin.Engine, *gorm.DB) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 
-	adminCfg := config.AdminConfig{
-		Username:  "admin",
-		Password:  "pass123",
-		JWTSecret: "admin-test-secret",
-		ExpireMin: 30,
-	}
-	session := NewSession(adminCfg)
+	session := admin.NewSession(admin.SessionConfig{
+		Username:  adminUsername,
+		Password:  adminPassword,
+		JWTSecret: adminSecret,
+		ExpireMin: adminExpireMin,
+	})
 
 	db := testdb.Open(t)
 	commentRepo := repository.NewCommentRepository(db)
-	h := NewHandler(
+	h := admin.NewHandler(
 		repository.NewUserRepository(db),
 		// 读视图、治理删、统计与改键走与公开表面同一个评论模块：规则只有一份实现
 		service.NewCommentService(commentRepo),
@@ -62,23 +73,9 @@ func setup(t *testing.T) (*gin.Engine, *gorm.DB) {
 		session,
 	)
 
-	r := gin.New()
-	adm := r.Group("/admin")
-	{
-		adm.POST("/api/login", h.Login)
-		api := adm.Group("/api")
-		api.Use(session.AuthMiddleware())
-		{
-			api.GET("/stats", h.Stats)
-			api.GET("/users", h.ListUsers)
-			api.GET("/users/:uid", h.GetUser)
-			api.GET("/comments", h.ListComments)
-			api.DELETE("/comments/:id", h.DeleteComment)
-			api.POST("/comments/rehash", h.RehashComments)
-			api.GET("/logs", h.ListLogs)
-		}
-	}
-	return r, db
+	// 引擎来自真表：Base 中间件链、/admin/api 鉴权挂载、SPA 与 Swagger 路由都在其中。
+	// 此前这里手抄了 8 条后台路由（路由表的第三份副本），漏挂中间件不会有任何用例变红。
+	return router.AdminConsole(router.AdminDeps{Session: session, Handler: h}), db
 }
 
 // perform 执行请求并返回响应体。
@@ -137,27 +134,34 @@ func TestAdminLogin_BadJSONUsesSharedTranslation(t *testing.T) {
 // 必须由 pkg/jwt 提供，否则改一边忘一边不会有任何地方报错——有效期接错就会把 30 分钟
 // 签成立刻过期或签成永不过期，而 issuer 分叉会让两端 token 的校验规则各说各话。
 func TestSession_IssuedTokenClaims(t *testing.T) {
-	session := NewSession(config.AdminConfig{
-		Username:  "admin",
-		Password:  "pass123",
-		JWTSecret: "admin-test-secret",
-		ExpireMin: 30,
+	// 刻意用既不是默认值、也不是 setup 那 30 分钟的时长：Session 若把 TTL 写死在自己身上，
+	// 30 这个数会与写死值重合，用例照绿——只有喂给它一个别の数，才测得出「有效期跟着配置走」。
+	const expireMin = 17
+
+	session := admin.NewSession(admin.SessionConfig{
+		Username:  adminUsername,
+		Password:  adminPassword,
+		JWTSecret: adminSecret,
+		ExpireMin: expireMin,
 	})
 
-	token, err := session.Login("admin", "pass123")
+	token, err := session.Login(adminUsername, adminPassword)
 	if err != nil {
 		t.Fatalf("Login failed: %v", err)
 	}
 
-	claims := &adminClaims{}
-	if err := session.tokens.Parse(token, claims); err != nil {
+	// 解析走公开面：用同一把密钥另建一枚 TokenBox。它的 Parse 自带三条校验（算法白名单、
+	// 必须带 exp、签发者必须是 pkg/jwt 那一枚常量），所以「后台把 issuer 写成别的」或
+	// 「签出的 token 没有 exp」都在这里当场失败，不必再抄一遍常量做第二次断言。
+	claims := &adminTokenClaims{}
+	if err := pubjwt.New(adminSecret, expireMin).Parse(token, claims); err != nil {
 		t.Fatalf("Parse failed: %v", err)
 	}
-	if claims.Issuer != pubjwt.Issuer {
-		t.Errorf("签发者不是 pkg/jwt 那一枚常量: got %q want %q", claims.Issuer, pubjwt.Issuer)
+	if claims.Role != "admin" {
+		t.Errorf("role = %q, want admin（后台鉴权认的就是这一枚声明）", claims.Role)
 	}
-	if got := claims.ExpiresAt.Time.Sub(claims.IssuedAt.Time); got != 30*time.Minute {
-		t.Errorf("有效期没跟着配置走: got %v want 30m", got)
+	if got := claims.ExpiresAt.Time.Sub(claims.IssuedAt.Time); got != time.Duration(expireMin)*time.Minute {
+		t.Errorf("有效期没跟着配置走: got %v, want %d 分钟", got, expireMin)
 	}
 }
 
@@ -220,19 +224,19 @@ func TestAdminLogin_RateLimitIsAtomicUnderBurst(t *testing.T) {
 	verified, limited := 0, 0
 	for code := range codes {
 		switch code {
-		case adminAuthFailureCode:
+		case "A0403": // 口令不符（本文件其余用例同样按字面码断言）
 			verified++
-		case errcode.AttemptTooMany:
+		case "A0241": // 尝试过于频繁
 			limited++
 		default:
 			t.Errorf("unexpected code %q", code)
 		}
 	}
-	if verified != loginLimiterLimit {
-		t.Errorf("only %d attempts should reach password verification, got %d", loginLimiterLimit, verified)
+	if verified != loginFailureLimit {
+		t.Errorf("only %d attempts should reach password verification, got %d", loginFailureLimit, verified)
 	}
-	if limited != burst-loginLimiterLimit {
-		t.Errorf("expected %d rate-limited responses, got %d", burst-loginLimiterLimit, limited)
+	if limited != burst-loginFailureLimit {
+		t.Errorf("expected %d rate-limited responses, got %d", burst-loginFailureLimit, limited)
 	}
 }
 
@@ -241,7 +245,7 @@ func TestAdminLogin_RateLimitIsAtomicUnderBurst(t *testing.T) {
 func TestAdminLogin_SuccessNotCounted(t *testing.T) {
 	r, _ := setup(t)
 
-	for i := 0; i < loginLimiterLimit+3; i++ {
+	for i := 0; i < loginFailureLimit+3; i++ {
 		resp := perform(r, http.MethodPost, "/admin/api/login", `{"username":"admin","password":"pass123"}`, "")
 		if resp["code"] != "00000" {
 			t.Fatalf("successful login #%d should not be rate-limited, got %v", i+1, resp["code"])
@@ -358,6 +362,16 @@ func TestAdminListPagingUsesSiteDefault(t *testing.T) {
 	}
 }
 
+// seedUser 直接入库一个账号并返回其 uid，只为给评论提供外键指向的真实归属。
+func seedUser(t *testing.T, db *gorm.DB, email string) uint {
+	t.Helper()
+	user := &model.User{Email: email, Password: "hp", Username: "seed", Nickname: "seed"}
+	if err := db.Create(user).Error; err != nil {
+		t.Fatalf("seed user failed: %v", err)
+	}
+	return user.UID
+}
+
 // seedComment 直接入库一条归属某用户、挂在某聚合键下的评论。
 func seedComment(t *testing.T, db *gorm.DB, userID uint, content, commentKey string) {
 	t.Helper()
@@ -385,9 +399,9 @@ func countUnder(t *testing.T, db *gorm.DB, commentKey string) int64 {
 func TestAdminRehashComments_CrossUser(t *testing.T) {
 	r, db := setup(t)
 
-	seedComment(t, db, 1, "u1-mine", "ck1:polluted")
-	seedComment(t, db, 2, "u2-theirs", "ck1:polluted")
-	seedComment(t, db, 3, "u3-other", "ck1:untouched")
+	seedComment(t, db, seedUser(t, db, "rehash-mine@example.com"), "u1-mine", "ck1:polluted")
+	seedComment(t, db, seedUser(t, db, "rehash-theirs@example.com"), "u2-theirs", "ck1:polluted")
+	seedComment(t, db, seedUser(t, db, "rehash-other@example.com"), "u3-other", "ck1:untouched")
 
 	tok := adminLogin(t, r)
 	resp := perform(r, http.MethodPost, "/admin/api/comments/rehash",
@@ -454,12 +468,19 @@ func TestAdminRehashComments_RequiresToken(t *testing.T) {
 // 这条以前没有任何用例——Session.validate 里的 role 检查无人盯。
 func TestAdminToken_WrongRoleRejected(t *testing.T) {
 	r, _ := setup(t)
-	session := NewSession(config.AdminConfig{
-		Username: "admin", Password: "pass123", JWTSecret: "admin-test-secret", ExpireMin: 30,
-	})
 
-	// 同一把密钥签发的、role 写错的 token：验签会过，只能靠 role 检查挡住
-	forged, err := session.tokens.Issue(&adminClaims{Role: "not-admin"})
+	// 同一把密钥签发的、role 写错的 token：验签、算法白名单、exp、签发者全都过，
+	// 只剩 role 这一道能挡。声明在这里手拼——不借后台 Session 的签发单元，
+	// 免得「token 形状是对的」成为被测代码自己的功劳。
+	now := time.Now()
+	forged, err := pubjwt.New(adminSecret, adminExpireMin).Issue(&adminTokenClaims{
+		Role: "not-admin",
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(now.Add(adminExpire)),
+			IssuedAt:  jwt.NewNumericDate(now),
+			Issuer:    pubjwt.Issuer,
+		},
+	})
 	if err != nil {
 		t.Fatalf("issue forged token failed: %v", err)
 	}
@@ -467,32 +488,6 @@ func TestAdminToken_WrongRoleRejected(t *testing.T) {
 	resp := perform(r, http.MethodGet, "/admin/api/stats", "", forged)
 	if resp["code"] != "A0403" {
 		t.Errorf("code = %v, want A0403（role 检查失效？）", resp["code"])
-	}
-}
-
-// TestRehashRequestBindingMatchesColumnLimit 钉住后台改键的 binding 与列约束同源。
-//
-// tag 里的 200 与 model.MaxCommentKeyLength 是同一列的同一个上限，抄在两处就会漂；
-// 漂了的后果是把评论迁到一个自己再也提交不出、也就永远读不回来的键上。
-func TestRehashRequestBindingMatchesColumnLimit(t *testing.T) {
-	cases := []struct{ field, wantRequired string }{
-		{"OldKey", "required"},
-		{"NewKey", "required"},
-	}
-	typ := reflect.TypeOf(rehashRequest{})
-
-	for _, tc := range cases {
-		field, ok := typ.FieldByName(tc.field)
-		if !ok {
-			t.Fatalf("rehashRequest has no field %s", tc.field)
-		}
-		tag := string(field.Tag.Get("binding"))
-		if !strings.Contains(tag, tc.wantRequired) {
-			t.Errorf("%s binding = %q, want it to contain %q", tc.field, tag, tc.wantRequired)
-		}
-		if maxOf := bindingMaxFromTag(t, tag); maxOf != model.MaxCommentKeyLength {
-			t.Errorf("%s binding max = %d, want model.MaxCommentKeyLength %d", tc.field, maxOf, model.MaxCommentKeyLength)
-		}
 	}
 }
 
@@ -510,20 +505,4 @@ func TestAdminRehash_RejectsMissingKeys(t *testing.T) {
 			t.Errorf("body=%s code = %v, want A0400", body, resp["code"])
 		}
 	}
-}
-
-// bindingMaxFromTag 从 binding tag（如 "required,max=200"）里取出 max 的数值。
-func bindingMaxFromTag(t *testing.T, tag string) int {
-	t.Helper()
-	for _, part := range strings.Split(tag, ",") {
-		if value, found := strings.CutPrefix(strings.TrimSpace(part), "max="); found {
-			n, err := strconv.Atoi(value)
-			if err != nil {
-				t.Fatalf("bad max in binding tag %q: %v", tag, err)
-			}
-			return n
-		}
-	}
-	t.Fatalf("no max= in binding tag %q", tag)
-	return 0
 }

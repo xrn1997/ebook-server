@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { login, SUCCESS_CODE, token } from '../api'
+import { login, unwrap, token } from '../api'
 
 const router = useRouter()
 const username = ref('')
@@ -10,9 +10,9 @@ const error = ref('')
 
 async function submit(): Promise<void> {
   error.value = ''
-  const resp = await login(username.value, password.value)
-  const issued = resp.data?.token
-  if (resp.code === SUCCESS_CODE && issued) {
+  const result = await unwrap(login(username.value, password.value), '登录失败')
+  const issued = result.data?.token
+  if (result.ok && issued) {
     token.set(issued)
     // token.set 在 localStorage 不可用/配额满时静默失败；继续跳转只会被路由守卫弹回
     // 登录页，用户看不到任何原因。以读回值确认令牌真的落库了。
@@ -20,9 +20,12 @@ async function submit(): Promise<void> {
       error.value = '无法保存登录状态，请检查浏览器是否禁用了本地存储'
       return
     }
-    router.push('/')
+    // 等跳转落地再返回：顺序确定（submit 完成即已到目标页），且 push 的失败落在这一条
+    // 事件链上，而不是变成一个谁也不等的悬空 Promise。
+    await router.push('/')
   } else {
-    error.value = resp.error || '登录失败'
+    // 信封成功却没带 token 属于契约漂移：同样报「登录失败」，不能显示空错误条
+    error.value = result.ok ? '登录失败' : result.message
   }
 }
 </script>

@@ -26,5 +26,7 @@
 | 0020 | Agent 文档分层与根 AGENTS 预算 | accepted | 根 AGENTS 只留会话规则，事实按层分家 |
 | 0021 | 文档与分层门禁随 go test 运行 | accepted | docscheck 与 archtest 随 go test 运行 |
 | 0022 | context 贯穿 service 与 repository | accepted | service/repository 请求作用域方法贯穿 ctx |
-| 0023 | 版本化迁移采用嵌入 SQL + 基线收养 | accepted | 嵌入 SQL 的版本化迁移与基线收养 |
+| 0023 | 版本化迁移采用嵌入 SQL + 基线收养 | accepted；测试库建表路径被 0025 取代 | 嵌入 SQL 的版本化迁移与基线收养 |
 | 0024 | 后台收敛为内嵌 web 唯一表面 | accepted | 删除桌面端与 sidecar，web 后台补位数据管理 |
+| 0025 | 测试库与生产同走版本化迁移 | accepted | 测试库建表走 Migrate，AutoMigrate 退出测试建表 |
+| 0026 | 前端编译器档位与门禁收成一条 make gates | accepted | 开高摩擦标志、建类型感知 lint、补 CI 跑 make gates |

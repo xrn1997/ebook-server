@@ -1,4 +1,7 @@
-package handler
+// 本文件是 handler 用例的公共装配：newTestApp 经 router.Public 真路由表组装引擎，
+// 路由表的唯一真相在 router 包（router_test.go 的 publicTable 双向比对）。
+// handler 用例不再手抄影子路由——漏挂的中间件/路由会在这里的真表装配下暴露。
+package handler_test
 
 import (
 	"bytes"
@@ -9,12 +12,13 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"ebook-server/middleware"
+	"ebook-server/handler"
 	"ebook-server/pkg/code"
 	"ebook-server/pkg/jwt"
 	"ebook-server/pkg/testdb"
 	"ebook-server/pkg/upload"
 	"ebook-server/repository"
+	"ebook-server/router"
 	"ebook-server/service"
 
 	"github.com/gin-gonic/gin"
@@ -86,30 +90,30 @@ func seedCodeWrong(t *testing.T, flow service.Flow, email string) string {
 // go test 同包默认串行执行，seedCode 等助手经它注入验证码（ADR-0007）。
 var testCodes *code.Store
 
-// testApp 一套相互独立的测试应用：独立 :memory: 库、验证码存储与服务实例。
+// testApp 一套相互独立的测试应用：独立 :memory: 库、头像目录与真路由引擎。
 //
 // 每个测试通过 newTestApp 获得全新环境，且配置/token 都以值注入——没有全局可改写，
 // 用例之间不互相污染（历史上曾改写全局 database.DB 并共享 code.Default()）。
+//
+// 只留用例真正碰得到的三样：引擎（发请求）、库（直接播种）与头像目录（断言文件生命周期）。
+// handler 实例是喂 router.Deps 的一次性装配料，用例一律经真表发 HTTP，不再从结构体上取。
 type testApp struct {
-	db      *gorm.DB
-	tokens  *jwt.TokenBox
-	auth    *AuthHandler
-	user    *UserHandler
-	account *AccountHandler
-	comment *CommentHandler
-	log     *LogHandler
-	uploads *UploadHandler
+	db          *gorm.DB
+	engine      *gin.Engine
+	uploadStore *upload.Store
 }
 
-// newTestApp 组装本测试专用的处理器集合。
+// newTestApp 经 router.Public 真路由表组装本测试专用的引擎。
 //
-// 所有 handler 共享同一套依赖，与 router.Public 的装配方式一致。
+// Access 直接注入真 *jwt.TokenBox（它本身满足 middleware.Parser）：token 由
+// registerUser 经真表真实签发。Logs 传 nil 表示不挂审计中间件，与现状等价。
 func newTestApp(t *testing.T) *testApp {
 	t.Helper()
+	gin.SetMode(gin.TestMode)
 
 	db := testdb.Open(t)
 	users := repository.NewUserRepository(db)
-	tokens := repository.NewRefreshTokenRepository(db)
+	tokenRepo := repository.NewRefreshTokenRepository(db)
 	comments := repository.NewCommentRepository(db)
 	logs := repository.NewLogRepository(db)
 	codes := code.NewStore()
@@ -119,21 +123,34 @@ func newTestApp(t *testing.T) *testApp {
 
 	// 验证码模块用记录型 Mailer：用例经 seedCode 走真实下发链路预置码
 	codeModule := service.NewVerificationCodes(codes, &recordingMailer{})
-	credentials := service.NewCredentials(users, tokens)
-	authSvc := service.NewAuthService(users, tokens, codeModule, access, credentials)
+	sessions := service.NewSessions(tokenRepo, users)
+	credentials := service.NewCredentials(users, sessions)
+	authSvc := service.NewAuthService(users, sessions, codeModule, access, credentials)
 	uploads := upload.New(t.TempDir(), "")
 	profileSvc := service.NewProfileService(users, uploads)
-	accountSvc := service.NewAccountService(users, tokens, comments, codeModule, profileSvc)
+	accountSvc := service.NewAccountService(users, sessions, comments, codeModule, profileSvc)
+	commentSvc := service.NewCommentService(comments)
+	logSvc := service.NewLogService(logs)
+
+	engine := router.Public(router.Deps{
+		Handlers: router.Handlers{
+			Auth:    handler.NewAuthHandler(authSvc),
+			User:    handler.NewUserHandler(profileSvc, authSvc),
+			Account: handler.NewAccountHandler(accountSvc),
+			Comment: handler.NewCommentHandler(commentSvc),
+			Log:     handler.NewLogHandler(logSvc),
+			Upload:  handler.NewUploadHandler(uploads),
+		},
+		Access:    access,
+		Logs:      nil,
+		AvatarDir: uploads.AvatarDir(),
+		APIDocs:   false,
+	})
 
 	return &testApp{
-		db:      db,
-		tokens:  access,
-		auth:    NewAuthHandler(authSvc),
-		user:    NewUserHandler(profileSvc, authSvc),
-		account: NewAccountHandler(accountSvc),
-		comment: NewCommentHandler(service.NewCommentService(comments)),
-		log:     NewLogHandler(service.NewLogService(logs)),
-		uploads: NewUploadHandler(uploads),
+		db:          db,
+		engine:      engine,
+		uploadStore: uploads,
 	}
 }
 
@@ -166,18 +183,6 @@ func doJSON(t *testing.T, router *gin.Engine, method, path string, body interfac
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	return w
-}
-
-// commentRoutes 注册评论用例需要的路由：认证两端 + 创建/列表/聚合键迁移。
-//
-// 需要其中一部分的测试也用它（多注册的路由不调用即无副作用），省下五行装配样板。
-func commentRoutes(t *testing.T, router *gin.Engine, app *testApp) {
-	t.Helper()
-	router.POST("/api/auth/register", app.auth.Register)
-	router.POST("/api/auth/login", app.auth.Login)
-	router.POST("/api/comments", middleware.JWTAuth(app.tokens), app.comment.Create)
-	router.GET("/api/comments", app.comment.GetList)
-	router.POST("/api/comments/migrate", middleware.JWTAuth(app.tokens), app.comment.MigrateKey)
 }
 
 // createComment 以 token 身份发一条归属 commentKey 聚合键的评论，失败即终止用例。
@@ -217,7 +222,7 @@ func registerUser(t *testing.T, router *gin.Engine, email string) (uint, string)
 	return registerUserWith(t, router, email, "password123")
 }
 
-// registerUserWith 指定密码的注册+登录助手
+// registerUserWith 指定密码的注册+登录助手（经真表真实 HTTP）
 func registerUserWith(t *testing.T, router *gin.Engine, email, password string) (uint, string) {
 	t.Helper()
 	// 经模块真实下发注册码（存储键格式是它的私有细节）

@@ -1,44 +1,60 @@
 package database
 
 import (
-	"database/sql"
 	"fmt"
-	"sort"
-	"strings"
+	"reflect"
 	"testing"
 	"testing/fstest"
 
-	"ebook-server/model"
+	"ebook-server/migrations"
 
-	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
-
-func testModels() []interface{} {
-	return []interface{}{&model.User{}, &model.Comment{}, &model.OperationLog{}, &model.RefreshToken{}}
-}
 
 func openRawDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
-	})
+	db, err := OpenMemory()
 	if err != nil {
 		t.Fatal(err)
 	}
-	sqlDB, err := db.DB()
-	if err != nil {
-		t.Fatal(err)
-	}
-	sqlDB.SetMaxOpenConns(1)
-	t.Cleanup(func() { _ = sqlDB.Close() })
+	t.Cleanup(func() { _ = Close(db) })
 	return db
 }
 
+// embeddedVersions 从内嵌 FS 派生当前二进制携带的全部迁移版本（按文件名序）。
+//
+// 用例钉的是「应用了内嵌的全部版本、且不重复应用」这条性质，不是「现在恰好有
+// 一个迁移」这个数字：写死数字的人加第一个合法 0002_*.sql 时会撞上两条无关红字，
+// 而被训练成的动作是删断言。
+func embeddedVersions(t *testing.T) []string {
+	t.Helper()
+	files, err := migrationFiles(migrations.FS)
+	if err != nil {
+		t.Fatalf("read embedded migrations: %v", err)
+	}
+	versions := make([]string, 0, len(files))
+	for _, file := range files {
+		versions = append(versions, file.version)
+	}
+	return versions
+}
+
+// appliedVersionsOf 读出库里已登记的版本，按登记顺序返回。
+func appliedVersionsOf(t *testing.T, db *gorm.DB) []string {
+	t.Helper()
+	var versions []string
+	if err := db.Table(migrateTable).Order("version").Pluck("version", &versions).Error; err != nil {
+		t.Fatal(err)
+	}
+	return versions
+}
+
+// TestMigrateFreshDatabase 空库直接 Migrate(db)：业务表齐、版本登记是内嵌全集、
+// 第二次运行不重复登记。清单自持在本包（见 migrate.go 的 models），调用方不传。
 func TestMigrateFreshDatabase(t *testing.T) {
 	db := openRawDB(t)
-	if err := Migrate(db, testModels()...); err != nil {
+	want := embeddedVersions(t)
+	if err := Migrate(db); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	for _, table := range []string{"users", "comments", "operation_logs", "refresh_tokens", migrateTable} {
@@ -46,41 +62,31 @@ func TestMigrateFreshDatabase(t *testing.T) {
 			t.Errorf("missing table %s", table)
 		}
 	}
-
-	var count int64
-	if err := db.Table(migrateTable).Count(&count).Error; err != nil {
-		t.Fatal(err)
-	}
-	if count != 1 {
-		t.Fatalf("schema_migrations rows = %d, want 1", count)
+	if got := appliedVersionsOf(t, db); !reflect.DeepEqual(got, want) {
+		t.Fatalf("applied versions = %v, want %v", got, want)
 	}
 
-	if err := Migrate(db, testModels()...); err != nil {
+	if err := Migrate(db); err != nil {
 		t.Fatalf("second Migrate: %v", err)
 	}
-	if err := db.Table(migrateTable).Count(&count).Error; err != nil {
-		t.Fatal(err)
-	}
-	if count != 1 {
-		t.Fatalf("schema_migrations rows after second run = %d, want 1", count)
+	if got := appliedVersionsOf(t, db); !reflect.DeepEqual(got, want) {
+		t.Fatalf("schema_migrations after second run = %v, want %v（不得重复登记）", got, want)
 	}
 }
 
 func TestMigrateAdoptsLegacyDatabase(t *testing.T) {
 	db := openRawDB(t)
-	if err := db.AutoMigrate(testModels()...); err != nil {
+	if err := db.AutoMigrate(models...); err != nil {
 		t.Fatal(err)
 	}
-	if err := Migrate(db, testModels()...); err != nil {
+	if err := Migrate(db); err != nil {
 		t.Fatalf("Migrate legacy: %v", err)
 	}
 
-	var version string
-	if err := db.Table(migrateTable).Select("version").Scan(&version).Error; err != nil {
-		t.Fatal(err)
-	}
-	if version != "0001_init" {
-		t.Fatalf("version = %q, want 0001_init", version)
+	// 收养必须登记内嵌的全部版本，而不是只登记第一个：AutoMigrate 已把库带到
+	// 当前 models 的最新 schema，漏登记的未来迁移会在下次启动时重放并因列已存在而失败。
+	if got := appliedVersionsOf(t, db); !reflect.DeepEqual(got, embeddedVersions(t)) {
+		t.Fatalf("adoption registered %v, want %v", got, embeddedVersions(t))
 	}
 }
 
@@ -91,7 +97,7 @@ func TestMigrateAdoptsLegacyDatabase(t *testing.T) {
 // 而失败，而失败发生在「迁移收养本应保护的升级路径」上。
 func TestMigrateAdoptionMarksEveryEmbeddedVersion(t *testing.T) {
 	db := openRawDB(t)
-	if err := db.AutoMigrate(testModels()...); err != nil {
+	if err := db.AutoMigrate(models...); err != nil {
 		t.Fatal(err)
 	}
 
@@ -99,7 +105,7 @@ func TestMigrateAdoptionMarksEveryEmbeddedVersion(t *testing.T) {
 		"0001_init.sql":         &fstest.MapFile{Data: []byte("CREATE TABLE IF NOT EXISTS baseline_marker (id integer);")},
 		"0002_add_nickname.sql": &fstest.MapFile{Data: []byte("ALTER TABLE users ADD COLUMN nickname text;")},
 	}
-	if err := migrateFS(db, fsys, testModels()...); err != nil {
+	if err := migrateFS(db, fsys, models...); err != nil {
 		t.Fatalf("legacy adoption replayed a future migration: %v", err)
 	}
 
@@ -136,37 +142,6 @@ func TestMigrateFreshDatabaseRunsEveryMigration(t *testing.T) {
 	}
 }
 
-func TestMigrateSchemaMatchesAutoMigrate(t *testing.T) {
-	migrated := openRawDB(t)
-	if err := Migrate(migrated, testModels()...); err != nil {
-		t.Fatal(err)
-	}
-
-	auto := openRawDB(t)
-	if err := auto.AutoMigrate(testModels()...); err != nil {
-		t.Fatal(err)
-	}
-
-	for _, table := range []string{"users", "comments", "operation_logs", "refresh_tokens"} {
-		got := tableInfo(t, migrated, table)
-		want := tableInfo(t, auto, table)
-		if diff := compareColumns(got, want); diff != "" {
-			t.Errorf("%s schema drift:\n%s", table, diff)
-		}
-		if diff := compareIndexes(tableIndexes(t, migrated, table), tableIndexes(t, auto, table)); diff != "" {
-			t.Errorf("%s index drift:\n%s", table, diff)
-		}
-	}
-
-	var fkCount int
-	if err := migrated.Raw("SELECT count(*) FROM pragma_foreign_key_list('comments')").Scan(&fkCount).Error; err != nil {
-		t.Fatal(err)
-	}
-	if fkCount != 1 {
-		t.Fatalf("comments foreign keys = %d, want 1", fkCount)
-	}
-}
-
 func TestMigrateRollsBackFailedMigration(t *testing.T) {
 	db := openRawDB(t)
 	fsys := fstest.MapFS{
@@ -191,7 +166,7 @@ func TestMigrateRollsBackFailedMigration(t *testing.T) {
 
 func TestMigrateLegacyRequiresModels(t *testing.T) {
 	db := openRawDB(t)
-	if err := db.AutoMigrate(testModels()...); err != nil {
+	if err := db.AutoMigrate(models...); err != nil {
 		t.Fatal(err)
 	}
 	if err := migrateFS(db, fstest.MapFS{}); err == nil {
@@ -293,87 +268,4 @@ func TestMigrateKeepsSemicolonInsideLiteral(t *testing.T) {
 	if stored != ";a;b" {
 		t.Fatalf("stored = %q, want %q", stored, ";a;b")
 	}
-}
-
-type columnInfo struct {
-	Name      string
-	Type      string
-	NotNull   int
-	DfltValue sql.NullString
-	PK        int
-}
-
-func tableInfo(t *testing.T, db *gorm.DB, table string) []columnInfo {
-	t.Helper()
-	var cols []columnInfo
-	if err := db.Raw(fmt.Sprintf("PRAGMA table_info(`%s`)", table)).Scan(&cols).Error; err != nil {
-		t.Fatal(err)
-	}
-	sort.Slice(cols, func(i, j int) bool { return cols[i].Name < cols[j].Name })
-	return cols
-}
-
-// indexInfo 索引的结构事实：名字、唯一性、列顺序。
-//
-// 只比名字挡不住「UNIQUE 被删掉但名字还在」这类漂移；迁移库与 AutoMigrate 库
-// 必须是同一个索引定义，而不只是同一批索引名。
-type indexInfo struct {
-	Name    string
-	Unique  int
-	Columns string
-}
-
-func tableIndexes(t *testing.T, db *gorm.DB, table string) []indexInfo {
-	t.Helper()
-	var raw []struct {
-		Name   string
-		Unique int
-	}
-	if err := db.Raw(fmt.Sprintf("PRAGMA index_list(`%s`)", table)).Scan(&raw).Error; err != nil {
-		t.Fatal(err)
-	}
-
-	out := make([]indexInfo, 0, len(raw))
-	for _, idx := range raw {
-		if strings.HasPrefix(idx.Name, "sqlite_") {
-			continue
-		}
-		var cols []struct {
-			Name string
-		}
-		if err := db.Raw(fmt.Sprintf("PRAGMA index_info(`%s`)", idx.Name)).Scan(&cols).Error; err != nil {
-			t.Fatal(err)
-		}
-		names := make([]string, 0, len(cols))
-		for _, col := range cols {
-			names = append(names, col.Name)
-		}
-		out = append(out, indexInfo{Name: idx.Name, Unique: idx.Unique, Columns: strings.Join(names, ",")})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	return out
-}
-
-func compareColumns(got, want []columnInfo) string {
-	if len(got) != len(want) {
-		return fmt.Sprintf("column count %d != %d", len(got), len(want))
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			return fmt.Sprintf("column %q = %#v, want %#v", want[i].Name, got[i], want[i])
-		}
-	}
-	return ""
-}
-
-func compareIndexes(got, want []indexInfo) string {
-	if len(got) != len(want) {
-		return fmt.Sprintf("index count %d != %d: %v vs %v", len(got), len(want), got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			return fmt.Sprintf("index %q = %#v, want %#v", want[i].Name, got[i], want[i])
-		}
-	}
-	return ""
 }

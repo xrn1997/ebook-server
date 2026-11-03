@@ -225,7 +225,7 @@ func TestCommentRepository_List_UserZeroScopeMatchesNobody(t *testing.T) {
 }
 
 // TestCommentRepository_DeleteScoped_AuthorScope 作者 scope 同时匹配 id 与 user_id：
-// 别人的评论删不动，自己的能删。
+// 别人的评论删不动（归因 DeleteNotOwner），自己的能删（DeleteDeleted）。
 func TestCommentRepository_DeleteScoped_AuthorScope(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
@@ -240,23 +240,23 @@ func TestCommentRepository_DeleteScoped_AuthorScope(t *testing.T) {
 	comment := &model.Comment{UserID: owner.UID, Content: "Owned comment"}
 	repo.Create(testCtx, comment)
 
-	deleted, err := repo.DeleteScoped(testCtx, comment.ID, model.CommentScopeOfAuthor(other.UID))
+	outcome, err := repo.DeleteScoped(testCtx, comment.ID, model.CommentScopeOfAuthor(other.UID))
 	if err != nil {
 		t.Fatalf("DeleteScoped failed: %v", err)
 	}
-	if deleted {
-		t.Fatal("非作者不应删掉别人的评论")
+	if outcome != model.DeleteNotOwner {
+		t.Fatalf("非作者删他人评论 outcome = %v, want DeleteNotOwner", outcome)
 	}
 	if _, err := repo.FindByID(testCtx, comment.ID); err != nil {
 		t.Fatalf("评论应仍在: %v", err)
 	}
 
-	deleted, err = repo.DeleteScoped(testCtx, comment.ID, model.CommentScopeOfAuthor(owner.UID))
+	outcome, err = repo.DeleteScoped(testCtx, comment.ID, model.CommentScopeOfAuthor(owner.UID))
 	if err != nil {
 		t.Fatalf("DeleteScoped failed: %v", err)
 	}
-	if !deleted {
-		t.Fatal("作者应能删除自己的评论")
+	if outcome != model.DeleteDeleted {
+		t.Fatalf("作者删自己评论 outcome = %v, want DeleteDeleted", outcome)
 	}
 	if _, err := repo.FindByID(testCtx, comment.ID); !errors.Is(err, model.ErrCommentNotFound) {
 		t.Errorf("软删后查不到应回 model.ErrCommentNotFound, got %v", err)
@@ -264,7 +264,7 @@ func TestCommentRepository_DeleteScoped_AuthorScope(t *testing.T) {
 }
 
 // TestCommentRepository_DeleteScoped_AdminBypassesOwnership 治理删不挂 user_id；
-// 重复删除返回 false 而不是假成功。
+// 重复删除归因 DeleteNotFound，而不是假成功。
 func TestCommentRepository_DeleteScoped_AdminBypassesOwnership(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
@@ -277,16 +277,16 @@ func TestCommentRepository_DeleteScoped_AdminBypassesOwnership(t *testing.T) {
 	comment := &model.Comment{UserID: owner.UID, Content: "governance"}
 	repo.Create(testCtx, comment)
 
-	deleted, err := repo.DeleteScoped(testCtx, comment.ID, model.CommentScopeOfAdmin())
-	if err != nil || !deleted {
-		t.Fatalf("admin DeleteScoped = %v, %v; want true, nil", deleted, err)
+	outcome, err := repo.DeleteScoped(testCtx, comment.ID, model.CommentScopeOfAdmin())
+	if err != nil || outcome != model.DeleteDeleted {
+		t.Fatalf("admin DeleteScoped = %v, %v; want DeleteDeleted, nil", outcome, err)
 	}
-	deleted, err = repo.DeleteScoped(testCtx, comment.ID, model.CommentScopeOfAdmin())
+	outcome, err = repo.DeleteScoped(testCtx, comment.ID, model.CommentScopeOfAdmin())
 	if err != nil {
 		t.Fatalf("second DeleteScoped: %v", err)
 	}
-	if deleted {
-		t.Fatal("重复删除应返回 false（RowsAffected 是唯一依据）")
+	if outcome != model.DeleteNotFound {
+		t.Fatalf("重复删除 outcome = %v, want DeleteNotFound（RowsAffected 是唯一依据）", outcome)
 	}
 }
 
@@ -295,12 +295,90 @@ func TestCommentRepository_DeleteScoped_NotFound(t *testing.T) {
 	defer cleanupTestDB(t)
 
 	repo := NewCommentRepository(testDB)
-	deleted, err := repo.DeleteScoped(testCtx, 999999, model.CommentScopeOfAdmin())
+	outcome, err := repo.DeleteScoped(testCtx, 999999, model.CommentScopeOfAdmin())
 	if err != nil {
 		t.Fatalf("DeleteScoped: %v", err)
 	}
-	if deleted {
-		t.Fatal("不存在的评论不应报告删除成功")
+	if outcome != model.DeleteNotFound {
+		t.Fatalf("不存在的评论 outcome = %v, want DeleteNotFound", outcome)
+	}
+}
+
+// TestCommentRepository_DeleteScoped_StoreErrorReturnsUnknown 数据库不可用时
+// 不得把失败归因成「不存在」：outcome 必须是零值 Unknown，错误原样上抛。
+func TestCommentRepository_DeleteScoped_StoreErrorReturnsUnknown(t *testing.T) {
+	setupTestDB(t)
+	defer cleanupTestDB(t)
+
+	sqlDB, err := testDB.DB()
+	if err != nil {
+		t.Fatalf("get sql.DB: %v", err)
+	}
+	if err := sqlDB.Close(); err != nil {
+		t.Fatalf("close sql.DB: %v", err)
+	}
+
+	repo := NewCommentRepository(testDB)
+	outcome, err := repo.DeleteScoped(testCtx, 1, model.CommentScopeOfAdmin())
+	if err == nil {
+		t.Fatal("DeleteScoped on closed DB should return error")
+	}
+	if outcome != model.DeleteOutcomeUnknown {
+		t.Fatalf("outcome = %v, want DeleteOutcomeUnknown on store error", outcome)
+	}
+}
+
+// TestCommentRepository_DeleteScoped_ConcurrentDeleteAttributedNotFound 行在表里
+// 但条件删除 0 行时，归因必须落回 DeleteNotFound，而不是 DeleteNotOwner。
+//
+// 复现手法：先用治理删软删该行（deleted_at 置位，物理行仍在），再分别以「非作者」
+// 与「作者本人」的作者 scope 删除同一个 id。条件 DELETE 命中 0 行；若归因回落读行时
+// 绕过软删可见性（Unscoped），就会读到这条物理上还在的行——非作者那次会误报
+// DeleteNotOwner，把一次「已经不在了」谎报成越权。SQLite 串行执行，这个形状稳定
+// 复现真实的并发删除窗口：行在，但对可见性已经不在。
+func TestCommentRepository_DeleteScoped_ConcurrentDeleteAttributedNotFound(t *testing.T) {
+	setupTestDB(t)
+	defer cleanupTestDB(t)
+
+	userRepo := NewUserRepository(testDB)
+	owner := &model.User{Email: "cc-owner@example.com", Password: "hp", Username: "owner", Nickname: "owner"}
+	other := &model.User{Email: "cc-other@example.com", Password: "hp", Username: "other", Nickname: "other"}
+	userRepo.Create(testCtx, owner)
+	userRepo.Create(testCtx, other)
+
+	repo := NewCommentRepository(testDB)
+	comment := &model.Comment{UserID: owner.UID, Content: "deleted-elsewhere"}
+	repo.Create(testCtx, comment)
+
+	// 模拟并发的那次删除：行物理上还在，只是对正常查询不可见
+	if outcome, err := repo.DeleteScoped(testCtx, comment.ID, model.CommentScopeOfAdmin()); outcome != model.DeleteDeleted || err != nil {
+		t.Fatalf("seed concurrent delete = %v, %v; want DeleteDeleted, nil", outcome, err)
+	}
+	var physical int64
+	if err := testDB.Unscoped().Model(&model.Comment{}).Where("id = ?", comment.ID).Count(&physical).Error; err != nil {
+		t.Fatalf("count physical row: %v", err)
+	}
+	if physical != 1 {
+		t.Fatalf("软删后物理行应仍在表里，实际 %d 行", physical)
+	}
+
+	// 非作者 scope：物理行的作者确实不匹配，但对调用方这条评论已经不在——
+	// 归因必须是 DeleteNotFound 而不是 DeleteNotOwner。
+	outcome, err := repo.DeleteScoped(testCtx, comment.ID, model.CommentScopeOfAuthor(other.UID))
+	if err != nil {
+		t.Fatalf("DeleteScoped(other): %v", err)
+	}
+	if outcome != model.DeleteNotFound {
+		t.Fatalf("非作者删已不可见行 outcome = %v, want DeleteNotFound（不可见的行不得归因成非本人）", outcome)
+	}
+
+	// 作者本人 scope：存在、归属无误仍 0 行 → 并发删，同样按 DeleteNotFound。
+	outcome, err = repo.DeleteScoped(testCtx, comment.ID, model.CommentScopeOfAuthor(owner.UID))
+	if err != nil {
+		t.Fatalf("DeleteScoped(owner): %v", err)
+	}
+	if outcome != model.DeleteNotFound {
+		t.Fatalf("作者删已不可见行 outcome = %v, want DeleteNotFound（并发删）", outcome)
 	}
 }
 

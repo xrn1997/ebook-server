@@ -16,7 +16,7 @@ function memoryStorage(): Storage {
     key: (index: number) => [...map.keys()][index] ?? null,
     getItem: (name: string) => map.get(name) ?? null,
     setItem: (name: string, value: string) => {
-      map.set(name, String(value))
+      map.set(name, value)
     },
     removeItem: (name: string) => {
       map.delete(name)
@@ -24,7 +24,7 @@ function memoryStorage(): Storage {
     clear: () => {
       map.clear()
     },
-  } as Storage
+  }
 }
 
 Object.defineProperty(globalThis, 'localStorage', {

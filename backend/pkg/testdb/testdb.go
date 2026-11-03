@@ -7,45 +7,29 @@ package testdb
 import (
 	"testing"
 
-	"ebook-server/model"
+	"ebook-server/pkg/database"
 
-	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
-// Open 创建独立的 :memory: 数据库并完成全部实体迁移，连接在测试结束时自动关闭。
+// Open 创建独立的 :memory: 数据库并完成建表，连接在测试结束时自动关闭。
+//
+// 连接与 pragma 都由 database.OpenMemory 给出：外键约束与写锁等待和生产同源，
+// 测试不再跑在一个「约束没开」的库里。建表走 database.Migrate——与生产同一条
+// 迁移路径，测试库与生产库不再有两套建表事实源（模型清单也自持在 Migrate 内部，
+// 这里同样不传清单）。
 func Open(t *testing.T) *gorm.DB {
 	t.Helper()
 
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
-	})
+	db, err := database.OpenMemory()
 	if err != nil {
 		t.Fatalf("failed to open test database: %v", err)
 	}
 
-	// SQLite 的 :memory: 库随连接生灭：连接池里的每个新连接都会得到一个空库。
-	// 强制单连接，保证同一 *gorm.DB 上的所有操作看到同一个库。
-	sqlDB, err := db.DB()
-	if err != nil {
-		t.Fatalf("failed to get test database handle: %v", err)
-	}
-	sqlDB.SetMaxOpenConns(1)
-
-	if err := db.AutoMigrate(
-		&model.User{},
-		&model.Comment{},
-		&model.OperationLog{},
-		&model.RefreshToken{},
-	); err != nil {
+	if err := database.Migrate(db); err != nil {
 		t.Fatalf("failed to migrate test database: %v", err)
 	}
 
-	t.Cleanup(func() {
-		if sqlDB, err := db.DB(); err == nil {
-			_ = sqlDB.Close()
-		}
-	})
+	t.Cleanup(func() { _ = database.Close(db) })
 	return db
 }

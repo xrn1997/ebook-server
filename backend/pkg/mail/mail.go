@@ -10,19 +10,31 @@ import (
 	"fmt"
 	"net/smtp"
 
-	"ebook-server/config"
 	"ebook-server/pkg/logger"
 
 	"go.uber.org/zap"
 )
 
+// SMTPConfig 是 NewSMTPMailer 的构造输入：发送所需的六项。
+//
+// 与 config.SMTPConfig 字段同形但彼此独立——mail 包不 import config，
+// 配置到本结构的转换留在装配层（main.go，ADR-0007）。
+type SMTPConfig struct {
+	Host     string
+	Port     int
+	Username string
+	Password string
+	From     string
+	Insecure bool
+}
+
 // SMTPMailer 通过 SMTP 发送验证码邮件（465 端口走显式 TLS，其余走 STARTTLS）。
 type SMTPMailer struct {
-	cfg config.SMTPConfig
+	cfg SMTPConfig
 }
 
 // NewSMTPMailer 创建 SMTP 邮件 adapter。
-func NewSMTPMailer(cfg config.SMTPConfig) *SMTPMailer {
+func NewSMTPMailer(cfg SMTPConfig) *SMTPMailer {
 	return &SMTPMailer{cfg: cfg}
 }
 

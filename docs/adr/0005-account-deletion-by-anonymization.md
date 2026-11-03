@@ -25,7 +25,7 @@ Status: accepted
 
 **软删除** —— 不释放唯一索引（同一邮箱无法重新注册），且 `Preload` 会过滤掉已注销用户，评论作者显示不出来。
 
-**`(email, deleted_at)` 部分唯一索引** —— SQLite 与 PostgreSQL 支持，MySQL 不支持，会与 `sql/init.sql` 产生行为分歧；且已注销的行保留原 email 明文，与"服务端不留原 email"冲突。
+**`(email, deleted_at)` 部分唯一索引** —— SQLite 与 PostgreSQL 支持，MySQL 不支持，会与 `sql/init.sql`（已删）产生行为分歧；且已注销的行保留原 email 明文，与"服务端不留原 email"冲突。
 
 **注销时邮件发送数据附件** —— 与注销目的方向相反：会在发件方"已发送"、若干中继、收件方邮箱留下至少三份用户控制不了的副本，且 STARTTLS 可被降级、无法端到端保证加密。此外 `pkg/mail` 当前只发 `text/plain`，带附件需改造成 `multipart/mixed`，还受 SMTP 10–25MB 附件限制。
 

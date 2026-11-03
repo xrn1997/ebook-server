@@ -6,6 +6,7 @@ import (
 	"unicode/utf8"
 
 	"ebook-server/model"
+	"ebook-server/repository"
 )
 
 // TestLogService_Record_FiltersNonClientTraffic 后台自身请求（/admin*）与
@@ -100,6 +101,101 @@ func TestLogService_Record_BoundsClientControlledFields(t *testing.T) {
 		if !utf8.ValidString(value) {
 			t.Errorf("%s was cut mid-rune: %q", name, value)
 		}
+	}
+}
+
+// TestLogService_Record_EnvelopeChain Record 身后全链钉住：客户端字段有界截断 →
+// 业务码原样落库 → OnlyFailed 的成败判据（空码与 00000 都不算失败）。
+//
+// 这条链跨两段实现：截断在 Record，成败判据在 repository.FindBy 的 OnlyFailed。
+// 审计缓冲把超大响应截掉之后信封解析不出来、业务码留空——空码一旦被误判成失败，
+// 每次超大成功响应都会混进后台「只看失败」的列表里，且没有任何一处会报错。
+func TestLogService_Record_EnvelopeChain(t *testing.T) {
+	setupTestDB(t)
+	defer cleanupTestDB(t)
+
+	logRepo := repository.NewLogRepository(testDB)
+	longCJK := strings.Repeat("评", 600)
+
+	cases := []struct {
+		name      string
+		record    model.OperationRecord
+		truncated bool // 超长字段必须被截到上限内且 UTF-8 完整
+		failed    bool // 是否被 OnlyFailed 选中
+	}{
+		{
+			name: "超长字段截断且 UTF-8 完整",
+			record: model.OperationRecord{
+				UserID: 101, Username: "u", Method: "GET",
+				Path:         "/api/" + longCJK,
+				UserAgent:    longCJK,
+				ErrorMessage: longCJK,
+				ResponseCode: 200,
+			},
+			truncated: true,
+		},
+		{
+			name:   "空码不算失败（超大响应被审计缓冲截断后的形态）",
+			record: model.OperationRecord{UserID: 102, Method: "GET", Path: "/api/big", ResponseCode: 200},
+		},
+		{
+			name:   "成功码不算失败",
+			record: model.OperationRecord{UserID: 103, Method: "GET", Path: "/api/ok", ResponseCode: 200, ErrorCode: model.SuccessCode},
+		},
+		{
+			name: "非空错误码算失败",
+			record: model.OperationRecord{
+				UserID: 104, Method: "DELETE", Path: "/api/comments/1", ResponseCode: 200,
+				ErrorCode: "A0303", ErrorMessage: "无权删除",
+			},
+			failed: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := testLogs.Record(testCtx, tc.record); err != nil {
+				t.Fatalf("Record: %v", err)
+			}
+
+			// 落库事实：一行、业务码原样
+			rows, total, err := logRepo.FindBy(testCtx, model.LogFilter{UserID: tc.record.UserID}, 1, 10)
+			if err != nil || total != 1 {
+				t.Fatalf("FindBy(user=%d) = %d 行, %v", tc.record.UserID, total, err)
+			}
+			got := rows[0]
+			if got.ErrorCode != tc.record.ErrorCode {
+				t.Errorf("落库业务码 = %q, want %q", got.ErrorCode, tc.record.ErrorCode)
+			}
+			if tc.truncated {
+				for name, value := range map[string]string{
+					"path": got.Path, "user_agent": got.UserAgent, "error_message": got.ErrorMessage,
+				} {
+					if !utf8.ValidString(value) {
+						t.Errorf("%s 被切成了半个字符: %q", name, value)
+					}
+				}
+				if len(got.Path) > model.MaxOperationLogPathLength ||
+					len(got.UserAgent) > model.MaxOperationLogUserAgentLength ||
+					len(got.ErrorMessage) > model.MaxOperationLogErrorMessageLength {
+					t.Errorf("字段未被截到上限内: path=%d ua=%d msg=%d",
+						len(got.Path), len(got.UserAgent), len(got.ErrorMessage))
+				}
+			}
+
+			// OnlyFailed 判据
+			_, failedTotal, err := logRepo.FindBy(testCtx, model.LogFilter{UserID: tc.record.UserID, OnlyFailed: true}, 1, 10)
+			if err != nil {
+				t.Fatalf("FindBy(OnlyFailed): %v", err)
+			}
+			want := int64(0)
+			if tc.failed {
+				want = 1
+			}
+			if failedTotal != want {
+				t.Errorf("OnlyFailed 选中 %d 条, want %d", failedTotal, want)
+			}
+		})
 	}
 }
 

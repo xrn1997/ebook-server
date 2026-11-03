@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 
 	"ebook-server/model"
 
@@ -132,17 +133,60 @@ func (r *CommentRepository) CountByUserID(ctx context.Context, userID uint) (int
 	return count, err
 }
 
-// DeleteScoped 条件软删除：作者 scope 同时匹配 user_id，治理 scope 只匹配 id。
+// userScope 只要求「声明本次是否限定用户」：删除的 model.CommentScope 与改键的
+// model.CommentKeyScope 都满足它，scope→WHERE 的展开因此共用一份实现。
+type userScope interface {
+	UserID() (userID uint, byUser bool)
+}
+
+// applyUserScope 把 scope 的「是否限定用户」展开成 WHERE user_id 条件。
 //
-// RowsAffected 是判定「是否真的删了一行」的唯一依据：先 FindByID 再 Delete 会把
-// 重复删除当成成功，也让条件删除的 WHERE 与归属校验分成两处。
-func (r *CommentRepository) DeleteScoped(ctx context.Context, id uint, scope model.CommentScope) (bool, error) {
-	q := r.db.WithContext(ctx).Where("id = ?", id)
-	if uid, byUser := scope.UserID(); byUser {
-		q = q.Where("user_id = ?", uid)
+// 两份只差一个字段的 WHERE 悄悄分叉，正是要把归属做成数据时要防的。
+// 限定用户时哪怕 ID 是 0 也照样挂上（匹配 0 行才是安全的结果）。
+func applyUserScope(q *gorm.DB, s userScope) *gorm.DB {
+	userID, byUser := s.UserID()
+	if byUser {
+		return q.Where("user_id = ?", userID)
 	}
+	return q
+}
+
+// DeleteScoped 条件软删除：作者 scope 同时匹配 id 与 user_id，治理 scope 只匹配 id。
+//
+// RowsAffected 仍是判定「是否真的删了一行」的唯一依据（ADR-0015 §2）：先 FindByID
+// 再 Delete 会把重复删除当成成功。没删到行时的归因也下沉在本层完成：按与删除相同的
+// 可见性回落 FindByID——行不存在（或已不可见，含并发删除）回 DeleteNotFound；
+// 存在但作者非 scope 指定用户回 DeleteNotOwner；存在、归属无误仍 0 行是并发删除，
+// 同样按 DeleteNotFound。service 只把 outcome 映射成错误码。
+func (r *CommentRepository) DeleteScoped(ctx context.Context, id uint, scope model.CommentScope) (model.DeleteOutcome, error) {
+	q := applyUserScope(r.db.WithContext(ctx).Where("id = ?", id), scope)
 	result := q.Delete(&model.Comment{})
-	return result.RowsAffected > 0, result.Error
+	if result.Error != nil {
+		return model.DeleteOutcomeUnknown, result.Error
+	}
+	if result.RowsAffected > 0 {
+		return model.DeleteDeleted, nil
+	}
+	return r.attributeDeleteMiss(ctx, id, scope)
+}
+
+// attributeDeleteMiss 条件删除 0 行时的归因回落。
+//
+// 刻意用 FindByID（软删可见）而不是 Unscoped 读：并发删除留下的物理行对调用方
+// 已经不可见，拿它说「存在但非本人」会把一次「已经不在了」谎报成越权——
+// 三种归因与删除语句看到的是同一批行。
+func (r *CommentRepository) attributeDeleteMiss(ctx context.Context, id uint, scope model.CommentScope) (model.DeleteOutcome, error) {
+	comment, err := r.FindByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, model.ErrCommentNotFound) {
+			return model.DeleteNotFound, nil
+		}
+		return model.DeleteOutcomeUnknown, err
+	}
+	if uid, byUser := scope.UserID(); byUser && comment.UserID != uid {
+		return model.DeleteNotOwner, nil
+	}
+	return model.DeleteNotFound, nil
 }
 
 // MigrateKey 按归属范围批量改键（comment_key 列），返回受影响行数。
@@ -168,9 +212,7 @@ func (r *CommentRepository) MigrateKey(ctx context.Context, scope model.CommentK
 	} else {
 		q = q.Where("comment_key = ?", oldKey)
 	}
-	if uid, byUser := scope.UserID(); byUser {
-		q = q.Where("user_id = ?", uid)
-	}
+	q = applyUserScope(q, scope)
 	result := q.Update("comment_key", newKey)
 	return result.RowsAffected, result.Error
 }

@@ -172,12 +172,3 @@ func Error(c *gin.Context, code, message string) {
 		Error: message,
 	})
 }
-
-// SuccessMsg 成功响应（带提示文案）
-func SuccessMsg(c *gin.Context, message string, data interface{}) {
-	c.JSON(http.StatusOK, gin.H{
-		"code":  SuccessCode,
-		"error": message,
-		"data":  data,
-	})
-}

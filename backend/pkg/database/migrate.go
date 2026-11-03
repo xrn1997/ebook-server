@@ -3,20 +3,50 @@ package database
 import (
 	"fmt"
 	"io/fs"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
 
 	"ebook-server/migrations"
+	"ebook-server/model"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/schema"
 )
 
 // migrateTable 记录已执行的迁移版本。
 const migrateTable = "schema_migrations"
 
+// models 是本包自持的全部业务实体清单（唯一一份）。
+//
+// 调用方不再传清单：main.go、testdb 与测试曾经各自抄一份四个实体的字面量，
+// 加一个实体要改三处，漏抄一处的表现是对应路径上缺表，且只有跑到才暴露。
+var models = []interface{}{&model.User{}, &model.Comment{}, &model.OperationLog{}, &model.RefreshToken{}}
+
+// tabler 是 GORM 的自定义表名约定：实体显式声明表名时以它为准。
+type tabler interface{ TableName() string }
+
 // legacyTables 是 AutoMigrate 时代已经存在的表；任一存在即视为遗留库。
-var legacyTables = []string{"users", "comments", "operation_logs", "refresh_tokens"}
+//
+// 表名从 models 派生而不是另抄一份字面量：清单是唯一事实源，
+// 两份手写清单迟早漂移，而漂移的表现是「遗留库不再被识别为遗留库」。
+var legacyTables = tableNames(models)
+
+// tableNames 把实体清单翻成表名：显式 TableName() 优先，否则退回 GORM 的
+// NamingStrategy——复刻 GORM 自己的解析规则，避免这里与 GORM 各算各的表名。
+func tableNames(entities []interface{}) []string {
+	naming := schema.NamingStrategy{}
+	names := make([]string, 0, len(entities))
+	for _, e := range entities {
+		if t, ok := e.(tabler); ok {
+			names = append(names, t.TableName())
+			continue
+		}
+		names = append(names, naming.TableName(reflect.Indirect(reflect.ValueOf(e)).Type().Name()))
+	}
+	return names
+}
 
 type migrationFile struct {
 	version string
@@ -26,14 +56,15 @@ type migrationFile struct {
 // Migrate 执行未应用的迁移。
 //
 // 新库按文件名顺序执行嵌入的 SQL；遗留库（已有业务表、但 schema_migrations 为空）
-// 先对 models 跑一次 AutoMigrate 收养。
+// 先对内置 models 清单跑一次 AutoMigrate 收养。清单自持：调用方不传、也不再能传
+// 模型列表（见 models 的注释）。
 //
 // 收养后必须把**当前二进制内嵌的全部版本**标记为已应用，而不是只标记 0001：
 // AutoMigrate 已把库带到当前 models 的最新 schema，仍标记为未应用的未来迁移会在
 // 下一次启动时重放，`ALTER TABLE ... ADD COLUMN` 之类立即因列已存在而失败——
 // 恰好砸在收养机制要保护的升级路径上。代价是存量库不会再执行当前版本中的数据迁移；
 // 当前迁移只有 schema 变更，引入数据迁移前必须重新设计收养（见 ADR-0023）。
-func Migrate(db *gorm.DB, models ...interface{}) error {
+func Migrate(db *gorm.DB) error {
 	return migrateFS(db, migrations.FS, models...)
 }
 
@@ -128,7 +159,7 @@ func applyMigration(db *gorm.DB, fsys fs.FS, file migrationFile) error {
 //
 // 按裸分号切分听着够用，实际会在第一条带分号的数据上把一条 INSERT 切成两条非法 SQL，
 // 而失败只出现在真实数据跑起来的那台部署机上。这里按 SQL 词法走一遍：定界符内原样
-// 保留（含 SQL 的双写转义 `''`），`--` 到行尾、`/* */` 到闭合为止整体丢弃。
+// 保留（含 SQL 里用两个单引号表示一个的那层转义），`--` 到行尾、`/* */` 到闭合为止整体丢弃。
 // 逐字节扫描对 UTF-8 安全——多字节字符的后续字节都 >= 0x80，不会撞上这些 ASCII 边界符。
 func splitStatements(body string) []string {
 	var out []string

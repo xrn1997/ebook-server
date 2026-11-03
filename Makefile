@@ -26,7 +26,7 @@ WINRES_SCRIPT := $(BACKEND)/winres/generate.sh
 WINRES_GOOS ?= $(GOOS)
 WINRES_GOARCH ?= $(GOARCH)
 
-.PHONY: build run clean test frontend-build frontend-embed frontend-dev frontend-test all fmt deps docs linux windows \
+.PHONY: build run clean test frontend-build frontend-deps frontend-embed frontend-dev frontend-test frontend-lint gates all fmt deps docs linux windows \
 	test-coverage test-verbose test-model test-pkg test-service test-handler test-race lint \
 	test-auth test-user test-comment db-init backend-winres
 
@@ -41,10 +41,20 @@ build: backend-winres frontend-embed
 	mkdir -p build
 	cd $(BACKEND) && go build -trimpath -ldflags "$(LDFLAGS)" -o ../$(OUT_BIN) .
 
-# 前端构建：产物落在 frontend/dist（标准位置）。已有 node_modules 时直接构建；
-# 全新环境用 npm ci，保证按 package-lock.json 安装且不改写锁文件。
-frontend-build:
-	cd $(FRONTEND) && (test -d node_modules || npm ci) && npm run build
+# 前端依赖：只装一次，且只有一条依赖边。三个前端门各自 `test -d node_modules || npm ci`
+# 时，`make -j gates` 会同时看到缺 node_modules、并发跑两个 npm ci 写同一棵树；vite build
+# 的 emptyOutDir 还会与另一条门互踩。戳文件用 npm 自己写的 node_modules/.package-lock.json——
+# 它比 package.json 与 lock 都新，就说明依赖已按当前清单装好。
+FRONTEND_STAMP := $(FRONTEND)/node_modules/.package-lock.json
+
+frontend-deps: $(FRONTEND_STAMP)
+
+$(FRONTEND_STAMP): $(FRONTEND)/package.json $(FRONTEND)/package-lock.json
+	cd $(FRONTEND) && npm ci
+
+# 前端构建：产物落在 frontend/dist（标准位置）。依赖由 frontend-deps 保证。
+frontend-build: frontend-deps
+	cd $(FRONTEND) && npm run build
 
 # 一键：先构建前端，再产出内嵌了后台界面的单 exe 到 build/
 all: frontend-build build
@@ -59,9 +69,15 @@ run:
 frontend-dev:
 	npm --prefix $(FRONTEND) run dev
 
-# 前端门禁：类型检查 + vitest。已有 node_modules 时直接跑；全新环境用 npm ci。
-frontend-test:
-	cd $(FRONTEND) && (test -d node_modules || npm ci) && npm run typecheck && npm test
+# 前端门禁：类型检查 + vitest。`vue-tsc` 就在这里跑——gates 覆盖类型检查靠的是这一条，
+# 不是 frontend-build（vite 不做类型检查）。
+frontend-test: frontend-deps
+	cd $(FRONTEND) && npm run typecheck && npm test
+
+# 前端 lint：类型感知 ESLint，管 vue-tsc 看不见的那一类（显式 any、边界 any 扩散、
+# 悬浮 Promise、非空断言）。规则取舍与「为什么关掉某条」住 frontend/eslint.config.js 的注释。
+frontend-lint: frontend-deps
+	cd $(FRONTEND) && npm run lint
 
 # 重新生成 API 文档（swag init）：handler 注解变动后需重跑，产物入 backend/docs/
 docs:
@@ -97,7 +113,7 @@ test-coverage:
 	cd $(BACKEND) && go test $(GO_TEST_FLAGS) -coverprofile=coverage.out ./... && go tool cover -html=coverage.out -o coverage.html
 	@echo "覆盖率报告已生成: backend/coverage.html"
 
-# 竞态与静态检查门禁（提交前跑；CI 未配置时由本地承担）
+# 竞态门禁：`make gates` 已含它，CI 与本仓库跑的是同一条命令；想单独跑这一扇用 `make test-race`。
 # GOTMPDIR 指向工作区：Windows 上部分环境会拒绝执行 %TEMP% 下的 race 测试二进制。
 test-race:
 	@mkdir -p .tmp
@@ -106,6 +122,13 @@ test-race:
 
 lint:
 	cd $(BACKEND) && go vet ./...
+
+# 提交门禁总入口：CI 与本地跑同一条命令，任何一红即红。
+# 用 test-race 而不是 test：本仓有并发写路径（sqlite WAL + 请求作用域 ctx），
+# AGENTS.md 的提交前口径本来也是 -race；docscheck 与 archtest 随 go test 一起跑。
+# 含 frontend-build：`vue-tsc` 只查类型，查不到 bundler 侧的解析与资源；不含 frontend-embed——
+# 它会把产物写进 `backend/internal/admin/web`，那不是门该做的事。
+gates: lint test-race frontend-test frontend-lint frontend-build
 
 test-model:
 	cd $(BACKEND) && go test $(GO_TEST_FLAGS) -v ./model/...
@@ -132,7 +155,6 @@ test-comment:
 db-init:
 	@echo "项目使用 SQLite；生产启动时由 backend/pkg/database 的 Migrate 执行版本化迁移"
 	@echo "新增 schema 变更请在 backend/migrations/ 添加迁移文件，不要手动建表"
-	@echo "如需参考 MySQL 建表脚本，请查看 sql/init.sql"
 
 # 格式化代码
 fmt:

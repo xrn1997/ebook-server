@@ -97,28 +97,31 @@ func toListResponse(comments []model.Comment, total int64, page, pageSize int) *
 //
 // 非本人返回 model.ErrCommentNotOwner（映射 A0303）——评论域的「非本人」是专门语义，
 // 客户端可据此给出「无权删除他人评论」的明确提示，而不是通用「无权限」。
-// 删除本身是条件 DELETE：0 行才回落查存在性，重复删除因此得到 A0304 而非假成功。
+// 删除与归因都在存储实现完成（ADR-0015 §2）：条件 DELETE 的 RowsAffected 是成功判据，
+// 0 行时的「不存在 / 非本人 / 并发删」由仓储回落判出，这里只做 outcome→错误码的映射。
+// 并发删除与不存在同样回 ErrCommentNotFound（A0304）：客户端重试幂等。
 func (s *CommentService) Delete(ctx context.Context, commentID uint, scope model.CommentScope) error {
-	deleted, err := s.comments.DeleteScoped(ctx, commentID, scope)
+	outcome, err := s.comments.DeleteScoped(ctx, commentID, scope)
 	if err != nil {
 		return err
 	}
-	if deleted {
-		return nil
-	}
+	return deleteOutcomeError(outcome)
+}
 
-	comment, err := s.comments.FindByID(ctx, commentID)
-	if err != nil {
-		return err // 评论不存在 → model.ErrCommentNotFound（A0304）
+// deleteOutcomeError 把仓储归因翻译成对外错误。
+//
+// 未知归因（含零值漏赋值）按「已经不在了」失败安全：宁可回 A0304，也不谎报成功。
+func deleteOutcomeError(outcome model.DeleteOutcome) error {
+	switch outcome {
+	case model.DeleteDeleted:
+		return nil
+	case model.DeleteNotOwner:
+		return model.ErrCommentNotOwner
+	case model.DeleteNotFound:
+		return model.ErrCommentNotFound
+	default:
+		return model.ErrCommentNotFound
 	}
-	if !scope.IsAdmin() {
-		uid, _ := scope.UserID()
-		if comment.UserID != uid {
-			return model.ErrCommentNotOwner
-		}
-	}
-	// 存在但没删掉且归属无误：只可能是并发删除，按「已经不在了」处理。
-	return model.ErrCommentNotFound
 }
 
 // ListForAdmin 后台评论列表：查询语义、分页钳制与固定视图都在模块内。

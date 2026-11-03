@@ -1,4 +1,4 @@
-package admin
+package admin_test
 
 import (
 	"fmt"
@@ -163,7 +163,14 @@ func TestAdminDeleteComment(t *testing.T) {
 	comments.Create(testCtx, comment)
 
 	path := fmt.Sprintf("/admin/api/comments/%d", comment.ID)
-	assertAdminCode(t, perform(r, http.MethodDelete, path, "", tok), "00000")
+	deleteResp := perform(r, http.MethodDelete, path, "", tok)
+	assertAdminCode(t, deleteResp, "00000")
+	if _, exists := deleteResp["data"]; exists {
+		t.Error("删除成功不应带 data 键（ADR-0001）")
+	}
+	if deleteResp["error"] != "" {
+		t.Errorf("删除成功的 error = %v, want 空串", deleteResp["error"])
+	}
 
 	// 软删除后列表里不再出现
 	resp := perform(r, http.MethodGet, "/admin/api/comments", "", tok)

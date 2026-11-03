@@ -12,8 +12,11 @@ Status: accepted
 
 ### 1. 接入边界由路由组决定，审计规则由日志模块决定
 
-* 公开引擎的中间件链收敛为 RequestID → Recovery → Logger → CORS；审计中间件只挂在
-  `/api` 路由组上。`/health`、`/api-docs`、`/uploads/avatar` 从物理上不经过它。
+* 公开引擎的中间件链收敛为 RequestID → Recovery → Logger → CORS（两个表面的引擎级链
+  由 `router` 包的 `base` 统一构造，后台表面不挂 CORS）；审计中间件只挂在 `/api` 路由组上，
+  组内侧再挂一层 Recovery——panic 先被内侧 Recovery 落成 C0500 信封，外侧审计才提取
+  得到业务失败码，引擎级 Recovery 仍兜住其余表面。`/health`、`/api-docs`、
+  `/uploads/avatar` 从物理上不经过审计。
 * 中间件不做路径过滤，只把事实（方法、路径、IP、UA、状态码、当前用户、信封业务码）
   交给 `OperationRecorder`。
 * `LogService.Record` 是「什么算一次操作」的唯一实现：`/admin*` 与 `/health` 不写库。

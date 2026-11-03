@@ -28,6 +28,11 @@ func NewLogService(logs LogStore) *LogService {
 //
 // 规则放在模块里而不是中间件里：接入方式（挂在哪张表、哪个路由组）会变，
 // 规则不该跟着复制一遍。
+//
+// Record 身后的全链（截断 → 落库 → 成败判据）由 TestLogService_Record_EnvelopeChain
+// 钉住：Path/UserAgent/ErrorMessage 在这里截到上限内；业务码的成败判据
+// （空码与 "00000" 都不算失败——空码来自审计缓冲截断后解析不出信封的超大响应）
+// 在 repository.FindBy 的 OnlyFailed，两段一起才是「只看失败」不会误收成功请求的因果链。
 func (s *LogService) Record(ctx context.Context, record model.OperationRecord) error {
 	if strings.HasPrefix(record.Path, "/admin") || record.Path == "/health" {
 		return nil

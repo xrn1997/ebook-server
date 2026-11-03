@@ -30,15 +30,16 @@ Go 后端 + 内嵌 web 后台；公开 API 与后台 API 是两个独立监听�
 - 管理员凭据不进前端；后台 token 存浏览器 `localStorage`，只用于同源 `/admin/api` 调用，鉴权失败立即清除并回登录页。
 - 头像文件与资料列同生命周期；换头像删旧文件前按文件名确认没有其他账号引用；注销时尽力删除。
 - service/repository 的请求作用域方法第一参数是 `context.Context`；handler 传 `c.Request.Context()`，repository 使用 `WithContext`。
-- schema 变更必须加 `backend/migrations` 迁移文件；生产启动走 `database.Migrate`，测试库才用 AutoMigrate。
+- schema 变更必须加 `backend/migrations` 迁移文件；生产与测试库都走 `database.Migrate`。
 - SQLite pragmas（WAL/busy_timeout/foreign_keys）只住 `backend/pkg/database`；Logger 不读 request body，request id 由 `middleware.RequestID` 写入。
 
 ## 必过门
 
+- 一条命令：`make gates`。CI 与本地跑同一条，不另抄步骤清单；它由哪些目标组成见 `docs/development.md` 的表与 `Makefile`。
 - 改 Go：`cd backend && go test ./...`（已包含 `docscheck` 与 `archtest`）
-- 改 frontend：`make frontend-test`（`vue-tsc` + `vitest`）
+- 改 frontend：`make frontend-test && make frontend-lint && make frontend-build`（`vue-tsc` + `vitest` + 类型感知 ESLint + vite 打包）
 - 改 Swagger 注解：`make docs`
-- 提交前：`go vet ./...` 与 `go test -race ./...`（或 `make lint` / `make test-race`）；`git diff` 检查只包含预期文件；不提交 `.env`、`*.db`、构建产物
+- 提交前：`git status --short` 检查改动只包含预期文件，且 **`??` 必须为空**——`git diff` 看不见未跟踪文件，新加的源文件漏 `git add` 会提交出一棵编译不过的树。不提交 `.env`、`*.db`、构建产物（想单独跑某一扇，用 `make lint` / `make test-race` / `make frontend-test` / `make frontend-lint` / `make frontend-build`）
 
 ## 环境坑
 

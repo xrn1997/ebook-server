@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"ebook-server/model"
@@ -150,7 +151,8 @@ func TestOperationLog_DetachesAuditContextFromCancellation(t *testing.T) {
 }
 
 // TestOperationLog_RecordsOnPanic handler panic 时审计事实也不能随栈展开丢掉，
-// 且必须记成业务失败（router.Public 在审计内侧再挂一层 Recovery）。
+// 且必须记成业务失败（公开表面在 /api 组内侧再挂一层 Recovery：引擎级链见
+// router 的 base 构造，内侧这一层是 /api 组装配的一部分）。
 func TestOperationLog_RecordsOnPanic(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := &fakeRecorder{}
@@ -255,5 +257,33 @@ func TestRecordWriter_SkipsNonJSON(t *testing.T) {
 	}
 	if bw.body.Len() != 0 {
 		t.Fatalf("captured non-JSON body: %d bytes", bw.body.Len())
+	}
+}
+
+// TestOperationLog_OversizeResponseLeavesEmptyCode 审计缓冲有界这一刀落在全链上的形态：
+// 超大 JSON 响应被截到 4 KiB 后信封解析不出来，业务码必须留空——留空的码不会被后台
+// 「只看失败」选中（判据在 repository.FindBy），超大成功响应因此不会被误记成失败。
+// 审计截断只能作用于自己的缓冲，真实响应必须完整转发。
+func TestOperationLog_OversizeResponseLeavesEmptyCode(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := &fakeRecorder{}
+	r := gin.New()
+	r.Use(OperationLog(w))
+	big := strings.Repeat("x", 8<<10)
+	r.GET("/api/comments", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"code": "00000", "error": "", "data": gin.H{"list": big}})
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/comments", nil))
+
+	if w.record == nil {
+		t.Fatal("expected operation log written")
+	}
+	if w.record.ErrorCode != "" || w.record.ErrorMessage != "" {
+		t.Errorf("超大响应被截断后不该解析出业务码，got %q/%q", w.record.ErrorCode, w.record.ErrorMessage)
+	}
+	if !strings.Contains(rec.Body.String(), big) {
+		t.Error("审计缓冲的截断不得截断真实响应")
 	}
 }

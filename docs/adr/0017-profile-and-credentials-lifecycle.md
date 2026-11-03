@@ -41,8 +41,9 @@ Status: accepted
 ### 2. `Credentials` 是密码与登录失败策略的唯一实现
 
 * `CreateWithPassword`：唯一的「哈希 + 建号」入口。
-* `CheckPassword`：只回答真/假，业务错误由认证模块决定。
-* `SetPassword`：**先撤销该用户全部 refresh token，再写新哈希**（fail-closed）。两种失败
+* `checkPassword`（包内未导出）：只回答真/假；对外的口令校验入口是 `Verify`（登录）与 `Change`（改密）。
+* `Change`（验旧口令）与 `Reset`：改密/重置的唯一公开编排入口，两者都落在包内未导出的 `setPassword` 上。
+* `setPassword`：**先撤销该用户全部 refresh token，再写新哈希**（fail-closed）。两种失败
   都不会留下「新密码生效、旧 refresh token 仍活着」的状态；最坏情况是用户被登出、
   旧密码仍可用，可重新登录重试。
 * `RecordFailedLogin`：原子 `UPDATE login_attempts = login_attempts + 1`，达到 5 次写入

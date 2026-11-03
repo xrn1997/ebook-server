@@ -4,6 +4,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import Users from './Users.vue'
 import Comments from './Comments.vue'
 import Logs from './Logs.vue'
+import { must, pick } from '../fixture'
 
 /**
  * 三张管理视图的集成测试：只在 fetch 边界打桩，
@@ -23,8 +24,8 @@ function stubAdmin(...replies: unknown[]): void {
   queue = [...replies]
   vi.stubGlobal(
     'fetch',
-    vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
-      calls.push({ url: String(url), method: init?.method ?? 'GET' })
+    vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, method: init?.method ?? 'GET' })
       const reply = queue.length > 1 ? queue.shift() : queue[0]
       return new Response(JSON.stringify(reply), {
         status: 200,
@@ -42,20 +43,21 @@ function listEnvelope(list: Array<Record<string, unknown>>, total = list.length)
 function stubAdminPending() {
   let settle!: (reply: unknown) => void
   const promise = new Promise<Response>((resolve) => {
-    settle = (reply: unknown) =>
+    settle = (reply: unknown) => {
       resolve(
         new Response(JSON.stringify(reply), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
         }),
       )
+    }
   })
   vi.stubGlobal('fetch', vi.fn(async () => promise))
   return { settle }
 }
 
 function userRow(uid: number, email: string): Record<string, unknown> {
-  return { uid, email, username: 'u' + uid, nickname: '', avatar: '', created_at: 't' }
+  return { uid, email, username: `u${uid}`, nickname: '', avatar: '', created_at: 't' }
 }
 
 beforeEach(() => {
@@ -74,9 +76,8 @@ describe('Users.vue', () => {
     await flushPromises()
 
     await wrapper.find('input').setValue('alice')
-    const search = wrapper.findAll('button').find((b) => b.text() === '搜索')
-    expect(search).toBeTruthy()
-    await search!.trigger('click')
+    const search = must(wrapper.findAll('button').find((b) => b.text() === '搜索'), '「搜索」按钮')
+    await search.trigger('click')
     await flushPromises()
 
     expect(calls.at(-1)?.url).toContain('/admin/api/users?page=1&page_size=20&keyword=alice')
@@ -97,9 +98,8 @@ describe('Users.vue', () => {
     const wrapper = mount(Users)
     await flushPromises()
 
-    const detail = wrapper.findAll('button').find((b) => b.text() === '详情')
-    expect(detail).toBeTruthy()
-    await detail!.trigger('click')
+    const detail = must(wrapper.findAll('button').find((b) => b.text() === '详情'), '「详情」按钮')
+    await detail.trigger('click')
     await flushPromises()
 
     expect(calls.at(-1)?.url).toBe('/admin/api/users/7')
@@ -128,9 +128,8 @@ describe('Users.vue', () => {
     const wrapper = mount(Users)
     await flushPromises()
 
-    const next = wrapper.findAll('button').find((b) => b.text() === '下一页')
-    expect(next).toBeTruthy()
-    expect((next!.element as HTMLButtonElement).disabled).toBe(true)
+    const next = must(wrapper.findAll('button').find((b) => b.text() === '下一页'), '「下一页」按钮')
+    expect((next.element as HTMLButtonElement).disabled).toBe(true)
     expect(wrapper.text()).toContain('共 1 个账号')
   })
 
@@ -143,16 +142,61 @@ describe('Users.vue', () => {
     const wrapper = mount(Users)
     await flushPromises()
 
-    await wrapper.findAll('button').find((b) => b.text() === '详情')!.trigger('click')
+    await must(wrapper.findAll('button').find((b) => b.text() === '详情'), '「详情」按钮').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('评论数')
 
-    await wrapper.findAll('button').find((b) => b.text() === '搜索')!.trigger('click')
+    await must(wrapper.findAll('button').find((b) => b.text() === '搜索'), '「搜索」按钮').trigger('click')
     await flushPromises()
 
     // 详情属于旧筛选条件的结果，不能挂在新列表旁边
     expect(wrapper.text()).not.toContain('评论数')
     expect(wrapper.text()).toContain('v@x.com')
+  })
+
+  it('连续点开两个详情：先发后回的慢响应不得覆盖新详情', async () => {
+    // 列表立即落地；两个详情请求各自手动了结，让第一个（uid 7）后回——
+    // 竞态丢弃已下沉进 useAdminDetail，这里钉住视图接线后行为不变。
+    function json(reply: unknown): Response {
+      return new Response(JSON.stringify(reply), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
+    const detailGates: Array<(reply: unknown) => void> = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        calls.push({ url, method: 'GET' })
+        // 列表是 /users?query，详情是 /users/:uid
+        if (!url.includes('/users/')) return json(listEnvelope([userRow(7, 'a@x.com'), userRow(8, 'b@x.com')]))
+        return new Promise<Response>((resolve) => {
+          detailGates.push((reply) => {
+            resolve(json(reply))
+          })
+        })
+      }),
+    )
+    const wrapper = mount(Users)
+    await flushPromises()
+
+    const details = () => wrapper.findAll('button').filter((b) => b.text() === '详情')
+    await pick(details(), 0, 'details()').trigger('click') // 先点 uid 7：慢回
+    await pick(details(), 1, 'details()').trigger('click') // 再点 uid 8：先回
+
+    pick(detailGates, 1, 'detailGates')({
+      code: '00000',
+      data: { user: { ...userRow(8, 'b@x.com'), nickname: '快八' }, comment_count: 8 },
+    })
+    await flushPromises()
+    pick(detailGates, 0, 'detailGates')({
+      code: '00000',
+      data: { user: { ...userRow(7, 'a@x.com'), nickname: '慢七' }, comment_count: 7 },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('快八')
+    expect(wrapper.text()).not.toContain('慢七')
   })
 })
 
@@ -174,7 +218,7 @@ describe('Comments.vue', () => {
     const wrapper = mount(Comments)
     await flushPromises()
 
-    const delButton = () => wrapper.findAll('button').find((b) => b.text().includes('删除'))!
+    const delButton = () => must(wrapper.findAll('button').find((b) => b.text().includes('删除')), '「删除」按钮')
     expect(delButton().text()).toBe('删除')
     await delButton().trigger('click')
     expect(delButton().text()).toBe('确认删除')
@@ -195,10 +239,10 @@ describe('Comments.vue', () => {
     const wrapper = mount(Comments)
     await flushPromises()
 
-    await wrapper.findAll('button').find((b) => b.text().includes('删除'))!.trigger('click')
+    await must(wrapper.findAll('button').find((b) => b.text().includes('删除')), '「删除」按钮').trigger('click')
     expect(wrapper.text()).toContain('确认删除')
 
-    const next = wrapper.findAll('button').find((b) => b.text() === '下一页')!
+    const next = must(wrapper.findAll('button').find((b) => b.text() === '下一页'), '「下一页」按钮')
     expect((next.element as HTMLButtonElement).disabled).toBe(false)
     await next.trigger('click')
     await flushPromises()
@@ -214,7 +258,7 @@ describe('Comments.vue', () => {
     const wrapper = mount(Comments)
     await flushPromises()
 
-    const del = wrapper.findAll('button').find((b) => b.text().includes('删除'))!
+    const del = must(wrapper.findAll('button').find((b) => b.text().includes('删除')), '「删除」按钮')
     await del.trigger('click')
     await del.trigger('click')
     await flushPromises()
@@ -243,11 +287,10 @@ describe('Comments.vue', () => {
     await flushPromises()
 
     const inputs = wrapper.findAll('input')
-    await inputs[0].setValue('精彩')
-    await inputs[1].setValue('书A')
-    const search = wrapper.findAll('button').find((b) => b.text() === '搜索')
-    expect(search).toBeTruthy()
-    await search!.trigger('click')
+    await pick(inputs, 0, 'inputs').setValue('精彩')
+    await pick(inputs, 1, 'inputs').setValue('书A')
+    const search = must(wrapper.findAll('button').find((b) => b.text() === '搜索'), '「搜索」按钮')
+    await search.trigger('click')
     await flushPromises()
 
     expect(calls.at(-1)?.url).toContain('keyword=')
@@ -295,9 +338,8 @@ describe('Logs.vue', () => {
 
     await wrapper.find('select').setValue('POST')
     await wrapper.find('input:not([type="checkbox"])').setValue('/comments')
-    const filter = wrapper.findAll('button').find((b) => b.text() === '筛选')
-    expect(filter).toBeTruthy()
-    await filter!.trigger('click')
+    const filter = must(wrapper.findAll('button').find((b) => b.text() === '筛选'), '「筛选」按钮')
+    await filter.trigger('click')
     await flushPromises()
 
     expect(calls.at(-1)?.url).toContain('method=POST')

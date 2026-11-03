@@ -25,11 +25,15 @@ Status: accepted
 仓储把范围直接编进条件：author scope 同时匹配 `id` 与 `user_id`，admin scope 只匹配 `id`。
 一条条件 DELETE 天然是原子的：删到一行才算成功，不存在「先查后删」的窗口。
 
-没删到行时由 `CommentService.Delete` 补一次查询来区分原因：
+没删到行时由仓储按与删除相同的可见性回落一次查询，把原因归因进 `model.DeleteOutcome`
+（零值 `Unknown` 刻意不代表任何归因，漏赋值时失败安全地按「已经不在了」处理）：
 
-* 评论不存在 → `model.ErrCommentNotFound`（A0304）；
-* 存在但作者不是调用者 → `model.ErrCommentNotOwner`（A0303）；
-* 存在、归属无误但仍没删掉 → 并发删除，按「已经不在了」回 `ErrCommentNotFound`。
+* 行不存在（或已不可见）→ `DeleteNotFound`；
+* 存在但作者不是调用者 → `DeleteNotOwner`；
+* 存在、归属无误但仍没删掉 → 并发删除，按「已经不在了」归入 `DeleteNotFound`。
+
+归因的解释权在存储实现，service 只映射错误码（`DeleteNotFound` → `model.ErrCommentNotFound`
+（A0304），`DeleteNotOwner` → `model.ErrCommentNotOwner`（A0303））；`RowsAffected` 判据本身不变。
 
 ### 3. 后台评论列表使用固定视图 `AdminCommentView`
 

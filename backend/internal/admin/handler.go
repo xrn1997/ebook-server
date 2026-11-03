@@ -48,6 +48,9 @@ type LogStore interface {
 // 后台登录是暴力破解的主要攻击面（密码门若被撞开，用户隐私数据全量泄露），
 // 必须做应用层兜底——即使后台已通过独立监听地址做了网络隔离，也要防
 // 内网/本机侧的爆破。限流 key 用来源 IP，单进程内存实现（pkg/ratelimit）。
+//
+// loginLockMessage 不进 errcode 表：那是 model 哨兵到业务码的映射，这里没有哨兵
+// ——限流拒绝是本端点自己的判定，码与文案在调用点显式给出（A0241 + 这句文案）。
 const (
 	loginLimiterLimit  = 5           // 每个窗口最多 5 次尝试
 	loginLimiterWindow = time.Minute // 固定窗口 1 分钟
@@ -111,7 +114,8 @@ func (h *Handler) Login(c *gin.Context) {
 	}
 
 	// 绑定失败不占配额；从「是否已锁定」到「记录这次失败」必须在同一临界区里，
-	// 否则并发爆发能绕过限流（见 loginMu）。
+	// 否则并发爆发能绕过限流（见 loginMu）。登录只有单窗口，直接用 Limiter 的
+	// Peek/Allow：成功不记账、失败才记。多窗口形态（发码的双窗口）才走 ratelimit.AllowAll。
 	h.loginMu.Lock()
 	defer h.loginMu.Unlock()
 	if h.loginLimiter.Peek(ip) {
@@ -252,15 +256,18 @@ func (h *Handler) DeleteComment(c *gin.Context) {
 		errcode.Respond(c, err, "删除评论失败")
 		return
 	}
-	errcode.SuccessMsg(c, "删除成功", nil)
+	errcode.Success(c, nil)
 }
 
 // rehashRequest 后台全局改键请求体。
 //
 // binding 上留 required + max=200 只为把契约写进对外文档（Swagger 会照着 tag 标出
-// 「必填」与 maxLength）；真正的判定在评论模块 MigrateKeys 一处，两处的数值由
-// TestRehashRequestBindingMatchesColumnLimit 钉住一致——此前后台这份 200 没有任何
-// 用例盯着，可以静默漂离写这一列的约束。
+// 「必填」与 maxLength）；真正的判定在评论模块 MigrateKeys 一处——它按字节再查一次
+// 键长，与写这一列的约束同源，超长键无论 tag 写什么都会被 A0400 拒掉。
+// （tag 只能写字面量、引用不了 model.MaxCommentKeyLength：本包 struct 由同包的
+// TestRehashRequestBindingMatchesMaxCommentKeyLength 钉住，model 包那三个键由
+// TestCommentKeyBindingTagsMatchMaxCommentKeyLength 钉住——同一个常量，各钉各自包里的
+// struct。运行时的字节检查只兜「已放行」之后的底，救不了被 tag 提前拒掉的请求。）
 type rehashRequest struct {
 	OldKey string `json:"old_key" binding:"required,max=200"`
 	NewKey string `json:"new_key" binding:"required,max=200"`

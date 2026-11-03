@@ -6,6 +6,7 @@ import Dashboard from './views/Dashboard.vue'
 import Login from './views/Login.vue'
 import router from './router'
 import { SUCCESS_CODE, token } from './api'
+import { pick } from './fixture'
 
 /**
  * 后台鉴权链路的组件级用例。
@@ -27,8 +28,8 @@ function stubReplies(...replies: unknown[]): void {
   const queue = [...replies]
   vi.stubGlobal(
     'fetch',
-    vi.fn(async (url: string | URL | Request) => {
-      calls.push({ url: String(url) })
+    vi.fn(async (url: string) => {
+      calls.push({ url })
       const reply = queue.length > 1 ? queue.shift() : queue[0]
       return new Response(JSON.stringify(reply), {
         status: 200,
@@ -92,8 +93,8 @@ describe('Login.vue', () => {
     stubReplies({ code: SUCCESS_CODE, data: { token: 'jwt-issued' } })
     const wrapper = mount(Login, { global: { plugins: [router] } })
 
-    await wrapper.findAll('input')[0].setValue('admin')
-    await wrapper.findAll('input')[1].setValue('secret')
+    await pick(wrapper.findAll('input'), 0).setValue('admin')
+    await pick(wrapper.findAll('input'), 1).setValue('secret')
     await wrapper.find('form').trigger('submit.prevent')
     await flushPromises()
 
@@ -107,12 +108,28 @@ describe('Login.vue', () => {
     stubReplies({ code: 'A0403', error: '账号或密码错误' })
     const wrapper = mount(Login, { global: { plugins: [router] } })
 
-    await wrapper.findAll('input')[0].setValue('admin')
-    await wrapper.findAll('input')[1].setValue('wrong')
+    await pick(wrapper.findAll('input'), 0).setValue('admin')
+    await pick(wrapper.findAll('input'), 1).setValue('wrong')
     await wrapper.find('form').trigger('submit.prevent')
     await flushPromises()
 
     expect(wrapper.text()).toContain('账号或密码错误')
+    expect(token.value).toBe('')
+    expect(router.currentRoute.value.path).toBe('/login')
+  })
+
+  it('信封成功却没带 token：报登录失败，不写空令牌、不跳转', async () => {
+    // 后端改了字段名或整键被 omitempty 掉时，`result.ok` 仍为真。只判 ok 会把 undefined
+    // 写进存储并跳到概览页，用户看到的是「登录成功但立刻被守卫弹回」，且没有任何原因。
+    stubReplies({ code: SUCCESS_CODE })
+
+    const wrapper = mount(Login, { global: { plugins: [router] } })
+    await pick(wrapper.findAll('input'), 0).setValue('admin')
+    await pick(wrapper.findAll('input'), 1).setValue('secret')
+    await wrapper.find('form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('登录失败')
     expect(token.value).toBe('')
     expect(router.currentRoute.value.path).toBe('/login')
   })
@@ -153,6 +170,18 @@ describe('Dashboard.vue', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('无法连接后端服务')
+    expect(wrapper.text()).not.toContain('加载中')
+  })
+
+  it('概览成功却没带 data：报数据格式不正确，不挂在加载中', async () => {
+    // 与上一条同一条判据（失败不得停在「加载中」），触发点换成契约漂移：
+    // 无载荷的成功信封的 `data` 键整键缺席（ADR-0001），stats 留 null 会让模板落到 v-else。
+    stubReplies({ code: SUCCESS_CODE })
+
+    const wrapper = mount(Dashboard)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('统计数据格式不正确')
     expect(wrapper.text()).not.toContain('加载中')
   })
 })

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useAdminList } from '../useAdminList'
-import { fetchComments, deleteComment, SUCCESS_CODE, type AdminComment } from '../api'
+import { fetchComments, deleteComment, unwrap, type AdminComment } from '../api'
 import Pager from '../components/Pager.vue'
 
 const keyword = ref('')
@@ -48,11 +48,12 @@ async function onDelete(comment: AdminComment): Promise<void> {
   }
   pendingDelete.value = null
   actionError.value = ''
-  const resp = await deleteComment(comment.id)
-  if (resp.code === SUCCESS_CODE) {
+  const result = await unwrap(deleteComment(comment.id), '删除评论失败')
+  if (result.ok) {
     await reload()
   } else {
-    actionError.value = resp.error || '删除评论失败'
+    // 失败保留现有行：只展示原因，不动列表
+    actionError.value = result.message
   }
 }
 </script>

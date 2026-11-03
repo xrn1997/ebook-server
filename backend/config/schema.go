@@ -48,7 +48,7 @@ const (
 // 真的能生效，并让配置加载知道这个键存在。
 var fieldDefaults = []fieldDefault{
 	{Section: "server", Key: "port", Value: 9090},
-	{Section: "server", Key: "mode", Value: "debug"},
+	{Section: "server", Key: "mode", Value: ModeDebug},
 	// 公开资源（头像）URL 的来源。留空 = 按请求 Host 拼接，所以它没有内置默认值，
 	// 但必须登记：不登记的话 SERVER_PUBLIC_BASE_URL 覆盖压根不生效。
 	{Section: "server", Key: "public_base_url", Value: "", Env: "SERVER_PUBLIC_BASE_URL"},
@@ -180,7 +180,7 @@ type validationRule struct {
 func validationRules() []validationRule {
 	return []validationRule{
 		{Field: "server.port", Kind: ruleRange, Min: 1, Max: 65535, Message: "server.port 必须在 1-65535 之间"},
-		{Field: "server.mode", Kind: ruleOneOf, Values: []string{"debug", "release", "test"}, Message: "server.mode 必须是 debug、release 或 test"},
+		{Field: "server.mode", Kind: ruleOneOf, Values: []string{ModeDebug, ModeRelease, "test"}, Message: "server.mode 必须是 debug、release 或 test"},
 		{Field: "admin.listen_port", Kind: ruleRange, Min: 1, Max: 65535, Message: "admin.listen_port 必须在 1-65535 之间"},
 		{Field: "smtp.port", Kind: ruleRange, Min: 1, Max: 65535, When: "smtp.host", Message: "smtp.port 必须在 1-65535 之间"},
 		{Field: "jwt.expire_min", Kind: ruleRange, Min: 1, Max: 525600, Message: "jwt.expire_min 必须在 1-525600 之间"},

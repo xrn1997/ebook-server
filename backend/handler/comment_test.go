@@ -1,4 +1,4 @@
-package handler
+package handler_test
 
 import (
 	"bytes"
@@ -7,12 +7,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"reflect"
 	"strconv"
 	"strings"
 	"testing"
 
-	"ebook-server/middleware"
 	"ebook-server/model"
 
 	"github.com/gin-gonic/gin"
@@ -20,33 +18,18 @@ import (
 
 func TestCommentHandler_GetList_Success(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	authHandler := app.auth
-	commentHandler := app.comment
-	router.POST("/api/auth/register", authHandler.Register)
-	router.POST("/api/auth/login", authHandler.Login)
-	router.POST("/api/comments", middleware.JWTAuth(app.tokens), commentHandler.Create)
-	router.GET("/api/comments", commentHandler.GetList)
+	router := app.engine
 
 	_, token := registerUser(t, router, "list@example.com")
 
 	for i := 0; i < 3; i++ {
-		commentBody := map[string]string{
+		w := doJSON(t, router, http.MethodPost, "/api/comments", map[string]string{
 			"content": "Comment " + strconv.Itoa(i), "comment_key": "ck1:list",
-		}
-		jsonBody, _ := json.Marshal(commentBody)
-		req, _ := http.NewRequest("POST", "/api/comments", bytes.NewBuffer(jsonBody))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+token)
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
+		}, token)
+		assertErrorCode(t, w.Body.Bytes(), "00000")
 	}
 
-	req, _ := http.NewRequest("GET", "/api/comments?page=1&page_size=10", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	w := doJSON(t, router, http.MethodGet, "/api/comments?page=1&page_size=10", nil, "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("Expected status 200, got %d", w.Code)
 	}
@@ -58,13 +41,7 @@ func TestCommentHandler_GetList_Success(t *testing.T) {
 // user 只含 uid/username/nickname/avatar 四字段（无 email）、add_time 为格式化字符串。
 func TestCommentHandler_Create_WithChapter(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	authHandler := app.auth
-	commentHandler := app.comment
-	router.POST("/api/auth/register", authHandler.Register)
-	router.POST("/api/auth/login", authHandler.Login)
-	router.POST("/api/comments", middleware.JWTAuth(app.tokens), commentHandler.Create)
+	router := app.engine
 
 	_, token := registerUser(t, router, "chapter_create@example.com")
 
@@ -75,12 +52,7 @@ func TestCommentHandler_Create_WithChapter(t *testing.T) {
 		"chapter_name": "第二章",
 		"book_name":    "天启之书",
 	}
-	jsonBody, _ := json.Marshal(body)
-	req, _ := http.NewRequest("POST", "/api/comments", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	w := doJSON(t, router, http.MethodPost, "/api/comments", body, token)
 
 	data := decodeData(t, w.Body.Bytes())
 	if data["comment_key"] != body["comment_key"] {
@@ -111,9 +83,7 @@ func TestCommentHandler_Create_WithChapter(t *testing.T) {
 // 让换键之前就存在的数据继续可见，而不是让新客户端有条写入路径。
 func TestCommentHandler_GetList_ByChapter(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	commentRoutes(t, router, app)
+	router := app.engine
 
 	uid, token := registerUser(t, router, "chapter_list_h@example.com")
 	urlA := "https://src.example.com/book/1/2.html"
@@ -144,15 +114,9 @@ func seedLegacyComment(t *testing.T, app *testApp, uid uint, content, chapterURL
 
 func TestCommentHandler_GetList_Empty(t *testing.T) {
 	app := newTestApp(t)
+	router := app.engine
 
-	router := setupRouter()
-	commentHandler := app.comment
-	router.GET("/api/comments", commentHandler.GetList)
-
-	req, _ := http.NewRequest("GET", "/api/comments", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	w := doJSON(t, router, http.MethodGet, "/api/comments", nil, "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("Expected status 200, got %d", w.Code)
 	}
@@ -160,24 +124,12 @@ func TestCommentHandler_GetList_Empty(t *testing.T) {
 
 func TestCommentHandler_Create_Success(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	authHandler := app.auth
-	commentHandler := app.comment
-	router.POST("/api/auth/register", authHandler.Register)
-	router.POST("/api/auth/login", authHandler.Login)
-	router.POST("/api/comments", middleware.JWTAuth(app.tokens), commentHandler.Create)
+	router := app.engine
 
 	_, token := registerUser(t, router, "create@example.com")
 
-	commentBody := map[string]string{"content": "This is a test comment", "comment_key": "ck1:create"}
-	jsonBody, _ := json.Marshal(commentBody)
-	req, _ := http.NewRequest("POST", "/api/comments", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	w := doJSON(t, router, http.MethodPost, "/api/comments",
+		map[string]string{"content": "This is a test comment", "comment_key": "ck1:create"}, token)
 	if w.Code != http.StatusOK {
 		t.Fatalf("Expected status 200, got %d", w.Code)
 	}
@@ -186,40 +138,21 @@ func TestCommentHandler_Create_Success(t *testing.T) {
 
 func TestCommentHandler_Create_NoAuth(t *testing.T) {
 	app := newTestApp(t)
-	router := setupRouter()
-	commentHandler := app.comment
-	router.POST("/api/comments", commentHandler.Create)
+	router := app.engine
 
-	body := map[string]string{"content": "This is a comment"}
-	jsonBody, _ := json.Marshal(body)
-	req, _ := http.NewRequest("POST", "/api/comments", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	w := doJSON(t, router, http.MethodPost, "/api/comments",
+		map[string]string{"content": "This is a comment"}, "")
 	assertErrorCode(t, w.Body.Bytes(), "A0230")
 }
 
 func TestCommentHandler_Create_EmptyContent(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	authHandler := app.auth
-	commentHandler := app.comment
-	router.POST("/api/auth/register", authHandler.Register)
-	router.POST("/api/auth/login", authHandler.Login)
-	router.POST("/api/comments", middleware.JWTAuth(app.tokens), commentHandler.Create)
+	router := app.engine
 
 	_, token := registerUser(t, router, "empty@example.com")
 
-	commentBody := map[string]string{"content": "", "comment_key": "ck1:empty"}
-	jsonBody, _ := json.Marshal(commentBody)
-	req, _ := http.NewRequest("POST", "/api/comments", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	w := doJSON(t, router, http.MethodPost, "/api/comments",
+		map[string]string{"content": "", "comment_key": "ck1:empty"}, token)
 	assertErrorCode(t, w.Body.Bytes(), "A0400")
 }
 
@@ -231,9 +164,7 @@ func TestCommentHandler_Create_EmptyContent(t *testing.T) {
 // 宁可回 A0400 让客户端立刻发现，也不要这种静默丢失。
 func TestCommentHandler_Create_MissingCommentKey(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	commentRoutes(t, router, app)
+	router := app.engine
 
 	_, token := registerUser(t, router, "nokey@example.com")
 
@@ -249,8 +180,7 @@ func TestCommentHandler_Create_MissingCommentKey(t *testing.T) {
 // 忽略其余，这条用例把这个「多余字段不得致错」的边界钉住——否则客户端一改实体就 400。
 func TestCommentHandler_Create_FullClientEntity(t *testing.T) {
 	app := newTestApp(t)
-	router := setupRouter()
-	commentRoutes(t, router, app)
+	router := app.engine
 
 	uid, token := registerUser(t, router, "entity@example.com")
 
@@ -286,132 +216,79 @@ func TestCommentHandler_Create_FullClientEntity(t *testing.T) {
 
 func TestCommentHandler_Delete_Success(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	authHandler := app.auth
-	commentHandler := app.comment
-	router.POST("/api/auth/register", authHandler.Register)
-	router.POST("/api/auth/login", authHandler.Login)
-	router.POST("/api/comments", middleware.JWTAuth(app.tokens), commentHandler.Create)
-	router.DELETE("/api/comments/:id", middleware.JWTAuth(app.tokens), commentHandler.Delete)
+	router := app.engine
 
 	_, token := registerUser(t, router, "delete@example.com")
 
-	commentBody := map[string]string{"content": "Comment to delete", "comment_key": "ck1:delete"}
-	jsonBody, _ := json.Marshal(commentBody)
-	req, _ := http.NewRequest("POST", "/api/comments", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	w := doJSON(t, router, http.MethodPost, "/api/comments",
+		map[string]string{"content": "Comment to delete", "comment_key": "ck1:delete"}, token)
 	data := decodeData(t, w.Body.Bytes())
 	commentID := uint(data["id"].(float64))
 
-	req, _ = http.NewRequest("DELETE", "/api/comments/"+strconv.Itoa(int(commentID)), nil)
-	req.Header.Set("Authorization", "Bearer "+token)
-	w = httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	w = doJSON(t, router, http.MethodDelete, "/api/comments/"+strconv.Itoa(int(commentID)), nil, token)
 	// HTTP 恒为 200（ADR-0001），只看状态码连 C0500/A0304 都会放过
 	if w.Code != http.StatusOK {
 		t.Fatalf("Expected status 200, got %d", w.Code)
 	}
 	assertErrorCode(t, w.Body.Bytes(), "00000")
+	var envelope map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode delete envelope: %v", err)
+	}
+	if _, exists := envelope["data"]; exists {
+		t.Error("删除成功不应带 data 键（ADR-0001）")
+	}
+	if envelope["error"] != "" {
+		t.Errorf("删除成功的 error = %v, want 空串", envelope["error"])
+	}
 }
 
 func TestCommentHandler_Delete_NoAuth(t *testing.T) {
 	app := newTestApp(t)
-	router := setupRouter()
-	commentHandler := app.comment
-	router.DELETE("/api/comments/:id", commentHandler.Delete)
+	router := app.engine
 
-	req, _ := http.NewRequest("DELETE", "/api/comments/1", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	w := doJSON(t, router, http.MethodDelete, "/api/comments/1", nil, "")
 	assertErrorCode(t, w.Body.Bytes(), "A0230")
 }
 
 func TestCommentHandler_Delete_InvalidID(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	authHandler := app.auth
-	commentHandler := app.comment
-	router.POST("/api/auth/register", authHandler.Register)
-	router.POST("/api/auth/login", authHandler.Login)
-	router.DELETE("/api/comments/:id", middleware.JWTAuth(app.tokens), commentHandler.Delete)
+	router := app.engine
 
 	_, token := registerUser(t, router, "invalid@example.com")
 
-	req, _ := http.NewRequest("DELETE", "/api/comments/invalid", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	w := doJSON(t, router, http.MethodDelete, "/api/comments/invalid", nil, token)
 	assertErrorCode(t, w.Body.Bytes(), "A0400")
 }
 
 func TestCommentHandler_Delete_NoPermission(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	authHandler := app.auth
-	commentHandler := app.comment
-	router.POST("/api/auth/register", authHandler.Register)
-	router.POST("/api/auth/login", authHandler.Login)
-	router.POST("/api/comments", middleware.JWTAuth(app.tokens), commentHandler.Create)
-	router.DELETE("/api/comments/:id", middleware.JWTAuth(app.tokens), commentHandler.Delete)
+	router := app.engine
 
 	_, token1 := registerUser(t, router, "user1@example.com")
 	_, token2 := registerUser(t, router, "user2@example.com")
 
 	// user1 创建评论
-	commentBody := map[string]string{"content": "Comment by user1", "comment_key": "ck1:noperm"}
-	jsonBody, _ := json.Marshal(commentBody)
-	req, _ := http.NewRequest("POST", "/api/comments", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token1)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	w := doJSON(t, router, http.MethodPost, "/api/comments",
+		map[string]string{"content": "Comment by user1", "comment_key": "ck1:noperm"}, token1)
 	data := decodeData(t, w.Body.Bytes())
 	commentID := uint(data["id"].(float64))
 
 	// user2 尝试删除 user1 的评论（ADR-0011：仅本人可删，专用码 A0303）
-	req, _ = http.NewRequest("DELETE", "/api/comments/"+strconv.Itoa(int(commentID)), nil)
-	req.Header.Set("Authorization", "Bearer "+token2)
-	w = httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	w = doJSON(t, router, http.MethodDelete, "/api/comments/"+strconv.Itoa(int(commentID)), nil, token2)
 	assertErrorCode(t, w.Body.Bytes(), "A0303")
 }
 
 func TestCommentHandler_GetMyComments_Success(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	authHandler := app.auth
-	commentHandler := app.comment
-	router.POST("/api/auth/register", authHandler.Register)
-	router.POST("/api/auth/login", authHandler.Login)
-	router.POST("/api/comments", middleware.JWTAuth(app.tokens), commentHandler.Create)
-	router.GET("/api/comments/my", middleware.JWTAuth(app.tokens), commentHandler.GetMyComments)
+	router := app.engine
 
 	_, token := registerUser(t, router, "mycomments@example.com")
 
-	commentBody := map[string]string{"content": "My comment", "comment_key": "ck1:mine"}
-	jsonBody, _ := json.Marshal(commentBody)
-	req, _ := http.NewRequest("POST", "/api/comments", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	doJSON(t, router, http.MethodPost, "/api/comments",
+		map[string]string{"content": "My comment", "comment_key": "ck1:mine"}, token)
 
-	req, _ = http.NewRequest("GET", "/api/comments/my", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
-	w = httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	w := doJSON(t, router, http.MethodGet, "/api/comments/my", nil, token)
 	data := decodeData(t, w.Body.Bytes())
 	items := data["items"].([]interface{})
 	if len(items) != 1 {
@@ -421,43 +298,24 @@ func TestCommentHandler_GetMyComments_Success(t *testing.T) {
 
 func TestCommentHandler_GetMyComments_NoAuth(t *testing.T) {
 	app := newTestApp(t)
-	router := setupRouter()
-	commentHandler := app.comment
-	router.GET("/api/comments/my", middleware.JWTAuth(app.tokens), commentHandler.GetMyComments)
+	router := app.engine
 
-	req, _ := http.NewRequest("GET", "/api/comments/my", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	w := doJSON(t, router, http.MethodGet, "/api/comments/my", nil, "")
 	assertErrorCode(t, w.Body.Bytes(), "A0230")
 }
 
 func TestCommentHandler_GetList_Pagination(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	authHandler := app.auth
-	commentHandler := app.comment
-	router.POST("/api/auth/register", authHandler.Register)
-	router.POST("/api/auth/login", authHandler.Login)
-	router.POST("/api/comments", middleware.JWTAuth(app.tokens), commentHandler.Create)
-	router.GET("/api/comments", commentHandler.GetList)
+	router := app.engine
 
 	_, token := registerUser(t, router, "paginate@example.com")
 
 	for i := 0; i < 15; i++ {
-		commentBody := map[string]string{"content": "Comment " + strconv.Itoa(i), "comment_key": "ck1:paging"}
-		jsonBody, _ := json.Marshal(commentBody)
-		req, _ := http.NewRequest("POST", "/api/comments", bytes.NewBuffer(jsonBody))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+token)
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
+		doJSON(t, router, http.MethodPost, "/api/comments",
+			map[string]string{"content": "Comment " + strconv.Itoa(i), "comment_key": "ck1:paging"}, token)
 	}
 
-	req, _ := http.NewRequest("GET", "/api/comments?page=1&page_size=5", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	w := doJSON(t, router, http.MethodGet, "/api/comments?page=1&page_size=5", nil, "")
 	data := decodeData(t, w.Body.Bytes())
 	items := data["items"].([]interface{})
 	if len(items) != 5 {
@@ -467,9 +325,7 @@ func TestCommentHandler_GetList_Pagination(t *testing.T) {
 		t.Errorf("Expected page 1, got %v", data["page"])
 	}
 
-	req, _ = http.NewRequest("GET", "/api/comments?page=2&page_size=5", nil)
-	w = httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	w = doJSON(t, router, http.MethodGet, "/api/comments?page=2&page_size=5", nil, "")
 	data = decodeData(t, w.Body.Bytes())
 	items = data["items"].([]interface{})
 	if len(items) != 5 {
@@ -479,32 +335,16 @@ func TestCommentHandler_GetList_Pagination(t *testing.T) {
 
 func TestCommentHandler_GetMyComments_Pagination(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	authHandler := app.auth
-	commentHandler := app.comment
-	router.POST("/api/auth/register", authHandler.Register)
-	router.POST("/api/auth/login", authHandler.Login)
-	router.POST("/api/comments", middleware.JWTAuth(app.tokens), commentHandler.Create)
-	router.GET("/api/comments/my", middleware.JWTAuth(app.tokens), commentHandler.GetMyComments)
+	router := app.engine
 
 	_, token := registerUser(t, router, "mypaginate@example.com")
 
 	for i := 0; i < 5; i++ {
-		commentBody := map[string]string{"content": "Comment " + strconv.Itoa(i), "comment_key": "ck1:paging"}
-		jsonBody, _ := json.Marshal(commentBody)
-		req, _ := http.NewRequest("POST", "/api/comments", bytes.NewBuffer(jsonBody))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+token)
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
+		doJSON(t, router, http.MethodPost, "/api/comments",
+			map[string]string{"content": "Comment " + strconv.Itoa(i), "comment_key": "ck1:paging"}, token)
 	}
 
-	req, _ := http.NewRequest("GET", "/api/comments/my?page=1&page_size=3", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	w := doJSON(t, router, http.MethodGet, "/api/comments/my?page=1&page_size=3", nil, token)
 	data := decodeData(t, w.Body.Bytes())
 	items := data["items"].([]interface{})
 	if len(items) != 3 {
@@ -517,13 +357,7 @@ func TestCommentHandler_GetMyComments_Pagination(t *testing.T) {
 
 func TestCommentHandler_Create_InvalidJSON(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	authHandler := app.auth
-	commentHandler := app.comment
-	router.POST("/api/auth/register", authHandler.Register)
-	router.POST("/api/auth/login", authHandler.Login)
-	router.POST("/api/comments", middleware.JWTAuth(app.tokens), commentHandler.Create)
+	router := app.engine
 
 	_, token := registerUser(t, router, "invalidjson@example.com")
 
@@ -538,21 +372,11 @@ func TestCommentHandler_Create_InvalidJSON(t *testing.T) {
 
 func TestCommentHandler_Delete_NotFound(t *testing.T) {
 	app := newTestApp(t)
-
-	router := setupRouter()
-	authHandler := app.auth
-	commentHandler := app.comment
-	router.POST("/api/auth/register", authHandler.Register)
-	router.POST("/api/auth/login", authHandler.Login)
-	router.DELETE("/api/comments/:id", middleware.JWTAuth(app.tokens), commentHandler.Delete)
+	router := app.engine
 
 	_, token := registerUser(t, router, "notfound@example.com")
 
-	req, _ := http.NewRequest("DELETE", "/api/comments/999999", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
+	w := doJSON(t, router, http.MethodDelete, "/api/comments/999999", nil, token)
 	// 评论不存在 → 评论域专用码 A0304（ADR-0011）
 	assertErrorCode(t, w.Body.Bytes(), "A0304")
 }
@@ -563,8 +387,7 @@ func TestCommentHandler_Delete_NotFound(t *testing.T) {
 // 所以这里必须验「一个参数里的多个键」，而不是重复参数。
 func TestCommentHandler_GetList_MultiCommentKeys(t *testing.T) {
 	app := newTestApp(t)
-	router := setupRouter()
-	commentRoutes(t, router, app)
+	router := app.engine
 
 	_, token := registerUser(t, router, "multi_keys@example.com")
 	createComment(t, router, token, "A1", "ck1:a#0")
@@ -587,8 +410,7 @@ func TestCommentHandler_GetList_MultiCommentKeys(t *testing.T) {
 // 因为「不解析 #」正是 M2 把键派生交给客户端的前提。
 func TestCommentHandler_GetList_SingleCommentKey(t *testing.T) {
 	app := newTestApp(t)
-	router := setupRouter()
-	commentRoutes(t, router, app)
+	router := app.engine
 
 	_, token := registerUser(t, router, "single_key@example.com")
 	createComment(t, router, token, "A1", "ck1:a")
@@ -610,8 +432,7 @@ func TestCommentHandler_GetList_SingleCommentKey(t *testing.T) {
 // 空串不参与 IN 匹配，否则随便一个查询都会把全站旧行捞进来。
 func TestCommentHandler_GetList_CommentKeysSkipsLegacyRows(t *testing.T) {
 	app := newTestApp(t)
-	router := setupRouter()
-	commentRoutes(t, router, app)
+	router := app.engine
 
 	uid, _ := registerUser(t, router, "legacy_skip@example.com")
 	seedLegacyComment(t, app, uid, "旧行1", "https://src.example.com/1.html")
@@ -630,8 +451,7 @@ func TestCommentHandler_GetList_CommentKeysSkipsLegacyRows(t *testing.T) {
 // 还是并集全靠实现顺序——这里定成 M2 主路径优先，书名也不再收窄（它已不是聚合维度）。
 func TestCommentHandler_GetList_CommentKeysPrecedence(t *testing.T) {
 	app := newTestApp(t)
-	router := setupRouter()
-	commentRoutes(t, router, app)
+	router := app.engine
 
 	uid, token := registerUser(t, router, "precedence@example.com")
 	createComment(t, router, token, "新键行", "ck1:win")
@@ -652,8 +472,7 @@ func TestCommentHandler_GetList_CommentKeysPrecedence(t *testing.T) {
 // 没有可用键（例如键列表为空时直接不透传），因此退化为全局最新列表而不是空集。
 func TestCommentHandler_GetList_EmptyCommentKeysIgnored(t *testing.T) {
 	app := newTestApp(t)
-	router := setupRouter()
-	commentRoutes(t, router, app)
+	router := app.engine
 
 	_, token := registerUser(t, router, "empty_keys@example.com")
 	createComment(t, router, token, "带键的行", "ck1:some")
@@ -671,8 +490,7 @@ func TestCommentHandler_GetList_EmptyCommentKeysIgnored(t *testing.T) {
 // A0400）；查询串里留空只是没填筛选条件，应退化为全站最新列表而不是报错。
 func TestCommentHandler_GetList_EmptyChapterURLLegacyIgnored(t *testing.T) {
 	app := newTestApp(t)
-	router := setupRouter()
-	commentRoutes(t, router, app)
+	router := app.engine
 
 	_, token := registerUser(t, router, "empty_legacy_url@example.com")
 	createComment(t, router, token, "有键的行", "ck1:legacy")
@@ -690,8 +508,7 @@ func TestCommentHandler_GetList_EmptyChapterURLLegacyIgnored(t *testing.T) {
 // 越界与恰好在上限内两种情形都验，否则上限写错方向（off-by-one）不会被发现。
 func TestCommentHandler_GetList_CommentKeysLimits(t *testing.T) {
 	app := newTestApp(t)
-	router := setupRouter()
-	commentRoutes(t, router, app)
+	router := app.engine
 
 	// 超出数量上限
 	w := doJSON(t, router, http.MethodGet,
@@ -724,8 +541,7 @@ func keysQuery(n int) string {
 // 兼容路径不是「放着不管」的代码：它同样面向未认证流量，两条上限必须与换键前一致。
 func TestCommentHandler_GetList_ChapterURLLimits(t *testing.T) {
 	app := newTestApp(t)
-	router := setupRouter()
-	commentRoutes(t, router, app)
+	router := app.engine
 
 	w := doJSON(t, router, http.MethodGet, "/api/comments?"+chapterURLQuery(model.MaxCommentFilterKeys+1), nil, "")
 	assertErrorCode(t, w.Body.Bytes(), "A0400")
@@ -769,8 +585,7 @@ func migrateKey(t *testing.T, router *gin.Engine, token, oldKey, newKey string) 
 // TestCommentHandler_MigrateKey_Success 迁移后评论只在新键下可见，且重复迁移为幂等。
 func TestCommentHandler_MigrateKey_Success(t *testing.T) {
 	app := newTestApp(t)
-	router := setupRouter()
-	commentRoutes(t, router, app)
+	router := app.engine
 
 	_, token := registerUser(t, router, "migrate_h@example.com")
 	createComment(t, router, token, "c1", "old-key")
@@ -797,8 +612,7 @@ func TestCommentHandler_MigrateKey_Success(t *testing.T) {
 // TestCommentHandler_MigrateKey_NoAuth 未登录不得改别人的聚合键。
 func TestCommentHandler_MigrateKey_NoAuth(t *testing.T) {
 	app := newTestApp(t)
-	router := setupRouter()
-	commentRoutes(t, router, app)
+	router := app.engine
 
 	assertErrorCode(t, migrateKey(t, router, "", "a", "b").Body.Bytes(), "A0230")
 }
@@ -806,8 +620,7 @@ func TestCommentHandler_MigrateKey_NoAuth(t *testing.T) {
 // TestCommentHandler_MigrateKey_SameKey 新旧相同返回 A0305，而不是静默「迁移 0 行」。
 func TestCommentHandler_MigrateKey_SameKey(t *testing.T) {
 	app := newTestApp(t)
-	router := setupRouter()
-	commentRoutes(t, router, app)
+	router := app.engine
 
 	_, token := registerUser(t, router, "samekey@example.com")
 
@@ -823,8 +636,7 @@ func TestCommentHandler_MigrateKey_SameKey(t *testing.T) {
 // 旧行用 seedLegacyComment 造——创建端点现在强制要求带键，空键请求会被当场拒绝。
 func TestCommentHandler_MigrateKey_LegacyUnkeyedRows(t *testing.T) {
 	app := newTestApp(t)
-	router := setupRouter()
-	commentRoutes(t, router, app)
+	router := app.engine
 
 	uid, token := registerUser(t, router, "unkeyed@example.com")
 	seedLegacyComment(t, app, uid, "b1", "https://src.example.com/1.html")
@@ -849,8 +661,7 @@ func TestCommentHandler_MigrateKey_LegacyUnkeyedRows(t *testing.T) {
 // 带键」致命的正是同一件事，因此不能从迁移侧开后门。旧键方向仍允许空（收拢历史行）。
 func TestCommentHandler_MigrateKey_RejectsEmptyNewKey(t *testing.T) {
 	app := newTestApp(t)
-	router := setupRouter()
-	commentRoutes(t, router, app)
+	router := app.engine
 
 	_, token := registerUser(t, router, "emptynew@example.com")
 	createComment(t, router, token, "c1", "key-a")
@@ -865,8 +676,7 @@ func TestCommentHandler_MigrateKey_RejectsEmptyNewKey(t *testing.T) {
 // TestCommentHandler_MigrateKey_OversizedKey 迁移键受写入 comment_key 列的同一长度上限约束。
 func TestCommentHandler_MigrateKey_OversizedKey(t *testing.T) {
 	app := newTestApp(t)
-	router := setupRouter()
-	commentRoutes(t, router, app)
+	router := app.engine
 
 	_, token := registerUser(t, router, "longkey@example.com")
 	tooLong := strings.Repeat("a", model.MaxCommentKeyLength+1)
@@ -878,8 +688,7 @@ func TestCommentHandler_MigrateKey_OversizedKey(t *testing.T) {
 // TestCommentHandler_MigrateKey_UserIsolation 只迁自己的评论，他人同键评论不受影响。
 func TestCommentHandler_MigrateKey_UserIsolation(t *testing.T) {
 	app := newTestApp(t)
-	router := setupRouter()
-	commentRoutes(t, router, app)
+	router := app.engine
 
 	_, token1 := registerUser(t, router, "iso_u1@example.com")
 	_, token2 := registerUser(t, router, "iso_u2@example.com")
@@ -893,65 +702,4 @@ func TestCommentHandler_MigrateKey_UserIsolation(t *testing.T) {
 	if got := commentTotalUnder(t, router, "shared-key"); got != 1 {
 		t.Errorf("Expected other user's comment left under shared key, got %v", got)
 	}
-}
-
-// TestChapterURLLengthLimitMatchesModelBinding 钉住已废弃的 chapter_url 读路径与
-// 写路径对同一列的长度约束（上限 2048）。
-//
-// struct tag 只能写字面量、拼不了常量，所以 handler 的 model.MaxChapterURLLength 与
-// model 上的 `max=2048` 是两份必须人工同步的数字——用反射比一次，漏同步当场失败。
-// 迁移键不在此列：M2 后 migrate 作用于 comment_key，由下面的用例钉。
-func TestChapterURLLengthLimitMatchesModelBinding(t *testing.T) {
-	requestType := reflect.TypeOf(model.CreateCommentRequest{})
-	field, ok := requestType.FieldByName("ChapterURL")
-	if !ok {
-		t.Fatal("CreateCommentRequest has no field ChapterURL")
-	}
-	if maxValue := bindingMax(t, field.Tag.Get("binding")); maxValue != model.MaxChapterURLLength {
-		t.Errorf("CreateCommentRequest.ChapterURL binding max=%d, want model limit %d",
-			maxValue, model.MaxChapterURLLength)
-	}
-}
-
-// TestCommentKeyLengthLimitMatchesModelBinding 钉住 comment_key 三处长度约束一致（上限 200）。
-//
-// 读过滤（model.MaxCommentKeyLength）、写评论与迁移（两个 binding tag）针对的是同一列：
-// 三者不一致就能造出「迁过去就再也提交不出、也就永远读不回来」的键。
-func TestCommentKeyLengthLimitMatchesModelBinding(t *testing.T) {
-	cases := []struct {
-		requestType reflect.Type
-		field       string
-	}{
-		{reflect.TypeOf(model.CreateCommentRequest{}), "CommentKey"},
-		{reflect.TypeOf(model.MigrateCommentKeyRequest{}), "OldKey"},
-		{reflect.TypeOf(model.MigrateCommentKeyRequest{}), "NewKey"},
-	}
-
-	for _, c := range cases {
-		field, ok := c.requestType.FieldByName(c.field)
-		if !ok {
-			t.Fatalf("%s has no field %s", c.requestType.Name(), c.field)
-		}
-		maxValue := bindingMax(t, field.Tag.Get("binding"))
-		if maxValue != model.MaxCommentKeyLength {
-			t.Errorf("%s.%s binding max=%d, want model limit %d",
-				c.requestType.Name(), c.field, maxValue, model.MaxCommentKeyLength)
-		}
-	}
-}
-
-// bindingMax 从 binding tag（如 "omitempty,max=2048"）里取出 max 的数值。
-func bindingMax(t *testing.T, tag string) int {
-	t.Helper()
-	for _, part := range strings.Split(tag, ",") {
-		if value, found := strings.CutPrefix(part, "max="); found {
-			maxValue, err := strconv.Atoi(value)
-			if err != nil {
-				t.Fatalf("bad max in binding tag %q: %v", tag, err)
-			}
-			return maxValue
-		}
-	}
-	t.Fatalf("binding tag %q has no max", tag)
-	return 0
 }

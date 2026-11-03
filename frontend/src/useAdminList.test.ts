@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { PAGE_SIZE, useAdminList } from './useAdminList'
 import type { Envelope, Page } from './api'
+import { pick } from './fixture'
 
 const okResp: Envelope<Page<{ id: number }>> = {
   code: '00000',
@@ -158,21 +159,21 @@ describe('useAdminList', () => {
     let n = 0
     const list = useAdminList<{ id: number }>((params) => {
       seen.push(params.page)
-      const entry = gates[n]
+      const entry = pick(gates, n)
       n += 1
       return entry.promise
     })
 
     // 先把总页数撑起来（137 条 = 7 页），否则翻页会被钳回第 1 页
     const boot = list.reload()
-    gates[0].resolve(pageEnv([{ id: 0 }], 137))
+    pick(gates, 0).resolve(pageEnv([{ id: 0 }], 137))
     await boot
 
     const slow = list.gotoPage(2) // 先发出、后落地
     const fast = list.reload() // 后发出、先落地
-    gates[2].resolve(pageEnv([{ id: 9 }], 1))
+    pick(gates, 2).resolve(pageEnv([{ id: 9 }], 1))
     await fast
-    gates[1].resolve(pageEnv([{ id: 1 }, { id: 2 }], 137))
+    pick(gates, 1).resolve(pageEnv([{ id: 1 }, { id: 2 }], 137))
     await slow
 
     expect(seen).toEqual([1, 2, 1])

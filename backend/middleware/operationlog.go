@@ -103,11 +103,10 @@ func OperationLog(recorder OperationRecorder) gin.HandlerFunc {
 }
 
 // extractEnvelope 从统一信封提取业务码与文案；非 JSON 或无 code 时置空。
+//
+// 解码目标是 model.Response——信封键名的唯一主人，审计不再另存一份键名清单。
 func extractEnvelope(body []byte, record *model.OperationRecord) {
-	var env struct {
-		Code  string `json:"code"`
-		Error string `json:"error"`
-	}
+	var env model.Response
 	if len(body) == 0 || json.Unmarshal(body, &env) != nil {
 		return
 	}

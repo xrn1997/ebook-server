@@ -1,18 +1,23 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useAdminList } from '../useAdminList'
-import { fetchUsers, fetchUserDetail, SUCCESS_CODE, type AdminUser, type UserDetail } from '../api'
+import { useAdminDetail } from '../useAdminDetail'
+import { fetchUsers, fetchUserDetail, type AdminUser, type UserDetail } from '../api'
 import Pager from '../components/Pager.vue'
 
 const keyword = ref('')
-const detail = ref<UserDetail | null>(null)
-const detailLoading = ref(false)
-const detailError = ref('')
-/** 详情请求序号：连续点开两个账号时，先发后回的旧响应必须整段丢弃。 */
-let detailRequestId = 0
 
 const { rows, total, page, pageCount, hasPrev, hasNext, error, loading, reload, nextPage, prevPage } =
   useAdminList<AdminUser>((p) => fetchUsers({ ...p, keyword: keyword.value }))
+
+/** 详情区：同一时刻只看一个账号，连续点开的竞态与作废由 useAdminDetail 的请求序号承担 */
+const {
+  data: detail,
+  error: detailError,
+  loading: detailLoading,
+  load: loadDetail,
+  reset: resetDetail,
+} = useAdminDetail<UserDetail, number>((uid) => fetchUserDetail(uid), '加载用户详情失败')
 
 onMounted(reload)
 
@@ -22,19 +27,6 @@ function search(): void {
   void reload()
 }
 
-/**
- * 作废详情区的所有在途/已展示状态。
- *
- * 只清 data 不够：`showDetail` 的序号校验会让旧请求照常落地，把上一个筛选条件下
- * 的账号重新显示出来；翻页后列表里已经没有这个账号了。
- */
-function resetDetail(): void {
-  detailRequestId++
-  detailLoading.value = false
-  detail.value = null
-  detailError.value = ''
-}
-
 /** 翻页同样属于「换了列表」，详情卡片必须一起作废。 */
 function changePage(move: () => Promise<void>): void {
   resetDetail()
@@ -42,19 +34,8 @@ function changePage(move: () => Promise<void>): void {
 }
 
 /** 展开某账号的详情（同一时刻只看一个） */
-async function showDetail(uid: number): Promise<void> {
-  const id = ++detailRequestId
-  detailLoading.value = true
-  detailError.value = ''
-  detail.value = null
-  const resp = await fetchUserDetail(uid)
-  if (id !== detailRequestId) return
-  detailLoading.value = false
-  if (resp.code === SUCCESS_CODE && resp.data) {
-    detail.value = resp.data
-  } else {
-    detailError.value = resp.error || '加载用户详情失败'
-  }
+function showDetail(uid: number): void {
+  void loadDetail(uid)
 }
 </script>
 

@@ -63,19 +63,38 @@ func newEngine() *gin.Engine {
 	return r
 }
 
+// base 返回两个表面共用的引擎级中间件链（有序）：RequestID → Recovery → Logger →（可选）CORS。
+//
+// 顺序是这条链的语义本身：request id 必须最先就位，Recovery 的 panic 日志与
+// Logger 的 request_id 字段才带得上它（ADR-0001）。withCORS=false 供不挂跨域头的
+// 表面使用（后台前端与后台同源嵌入）。此前这段顺序抄在 Public 与 AdminConsole
+// 两处 r.Use(...) 里，改一处漏一处没有用例能发现——收归这一个构造后由
+// TestBase_MiddlewareOrder 钉住产出与两表面的接线。
+//
+// 不导出：本包的公开面只有 Public 与 AdminConsole（见包注释）。
+//
+// /api 组内侧的第二层 Recovery（审计开启时）不在这条链上，装配见 Public。
+func base(withCORS bool) []gin.HandlerFunc {
+	base := []gin.HandlerFunc{
+		middleware.RequestID(),
+		middleware.Recovery(),
+		middleware.Logger(),
+	}
+	if withCORS {
+		base = append(base, middleware.CORS())
+	}
+	return base
+}
+
 // Public 组装公开 API 的 engine。
 //
-// 引擎级中间件固定为 RequestID → Recovery → Logger → CORS（ADR-0001）：
-// request id 必须最先就位，panic 日志与响应头才带得上它。审计只挂在 /api 组上：
+// 引擎级中间件取自 base(true)（顺序与构成见 base，ADR-0001）。审计只挂在 /api 组上：
 // 健康探针、Swagger 与头像静态文件不是「某人的一次操作」，不该经过审计中间件。
 // 鉴权一律挂在**路由组**上，不逐路 inline——同一张表里两种挂法并存时，
 // 新加一路很容易跟着错的那份写，且没有用例能发现它裸奔。
 func Public(d Deps) *gin.Engine {
 	r := newEngine()
-	r.Use(middleware.RequestID())
-	r.Use(middleware.Recovery())
-	r.Use(middleware.Logger())
-	r.Use(middleware.CORS())
+	r.Use(base(true)...)
 
 	r.GET("/health", func(c *gin.Context) {
 		errcode.Success(c, gin.H{"status": "ok"})
@@ -157,14 +176,12 @@ func Public(d Deps) *gin.Engine {
 
 // AdminConsole 组装后台 API 的 engine（独立进程内表面，ADR-0009/0010）。
 //
-// 只挂 RequestID + Recovery + Logger：不挂 CORS（前端与后台同源嵌入），也不挂
+// 引擎级中间件取自 base(false)：不挂 CORS（前端与后台同源嵌入），也不挂
 // OperationLog（后台自身流量刻意不入审计库；判定规则在 service.LogService.Record，
 // 见 ADR-0018）。
 func AdminConsole(d AdminDeps) *gin.Engine {
 	r := newEngine()
-	r.Use(middleware.RequestID())
-	r.Use(middleware.Recovery())
-	r.Use(middleware.Logger())
+	r.Use(base(false)...)
 
 	adm := r.Group("/admin")
 	{

@@ -8,10 +8,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
-	"ebook-server/config"
 	"ebook-server/handler"
 	"ebook-server/internal/admin"
 	"ebook-server/middleware"
@@ -69,10 +71,11 @@ func newTableDeps(t *testing.T) tableDeps {
 	uploadRoot := t.TempDir()
 	uploadStore := upload.New(uploadRoot, "")
 
-	credentials := service.NewCredentials(userRepo, tokenRepo)
-	authService := service.NewAuthService(userRepo, tokenRepo, verifications, access, credentials)
+	sessions := service.NewSessions(tokenRepo, userRepo)
+	credentials := service.NewCredentials(userRepo, sessions)
+	authService := service.NewAuthService(userRepo, sessions, verifications, access, credentials)
 	profileService := service.NewProfileService(userRepo, uploadStore)
-	accountService := service.NewAccountService(userRepo, tokenRepo, commentRepo, verifications, profileService)
+	accountService := service.NewAccountService(userRepo, sessions, commentRepo, verifications, profileService)
 	commentService := service.NewCommentService(commentRepo)
 
 	return tableDeps{
@@ -330,7 +333,7 @@ func TestPublicTable_AcceptsTokenFromItsOwnKey(t *testing.T) {
 func TestAdminConsole_RequiresAdminToken(t *testing.T) {
 	td := newTableDeps(t)
 
-	session := admin.NewSession(config.AdminConfig{
+	session := admin.NewSession(admin.SessionConfig{
 		Username:  "admin",
 		Password:  "pass123",
 		JWTSecret: "admin-router-secret",
@@ -487,7 +490,7 @@ var adminTable = []declaredRoute{
 }
 
 func newAdminEngine(td tableDeps) *gin.Engine {
-	session := admin.NewSession(config.AdminConfig{
+	session := admin.NewSession(admin.SessionConfig{
 		Username:  "admin",
 		Password:  "pass123",
 		JWTSecret: "admin-table-secret",
@@ -651,5 +654,59 @@ func TestRequestIDWired(t *testing.T) {
 				t.Fatalf("X-Request-ID = %q, want 客户端值 trace-abc.123", got)
 			}
 		})
+	}
+}
+
+// middlewareIdentity 用反射取每个 gin.HandlerFunc 闭包符号里的中间件构造函数名。
+//
+// 符号形如 ebook-server/middleware.RequestID.func1；构造函数被内联进 base 后变成
+// ebook-server/router.base.RequestID.func1——两端都含构造函数名，取最后一段作身份。
+// 中间件顺序是装配事实：发一次请求的行为探测测不出「谁在谁前面」（RequestID 与
+// Logger 谁先谁后，响应上看不出差别），所以按命名探测有序切片。
+//
+// 红了先别改顺序：这里切的是符号名，若中间件不再以闭包返回（改成具名函数）或被更激进地
+// 内联，取到的会是 `func1` 或空串——那种失败与装配顺序无关，先把原串打出来对照。
+func middlewareIdentity(handlers []gin.HandlerFunc) []string {
+	names := make([]string, len(handlers))
+	for i, h := range handlers {
+		name := runtime.FuncForPC(reflect.ValueOf(h).Pointer()).Name()
+		if idx := strings.LastIndex(name, "/"); idx >= 0 {
+			name = name[idx+1:]
+		}
+		if idx := strings.LastIndex(name, ".func"); idx >= 0 {
+			name = name[:idx]
+		}
+		if idx := strings.LastIndex(name, "."); idx >= 0 {
+			name = name[idx+1:]
+		}
+		names[i] = name
+	}
+	return names
+}
+
+// TestBase_MiddlewareOrder 引擎级中间件链的构成与顺序只此一份（base）。
+//
+// RequestID 必须最先就位：Recovery 的 panic 日志与 Logger 的 request_id 字段都靠它。
+// 顺序此前抄在 Public 与 AdminConsole 两处 r.Use(...) 里，改一处漏一处没有用例能
+// 发现——base 收归单一构造后，这里既钉 base 的产出，也钉两个表面接的就是它的产物。
+func TestBase_MiddlewareOrder(t *testing.T) {
+	td := newTableDeps(t)
+
+	wantWithCORS := []string{"RequestID", "Recovery", "Logger", "CORS"}
+	wantNoCORS := []string{"RequestID", "Recovery", "Logger"}
+
+	if got := middlewareIdentity(base(true)); !slices.Equal(got, wantWithCORS) {
+		t.Errorf("base(true) = %v, want %v", got, wantWithCORS)
+	}
+	if got := middlewareIdentity(base(false)); !slices.Equal(got, wantNoCORS) {
+		t.Errorf("base(false) = %v, want %v（不挂 CORS 的表面拿到同一条链的前缀）", got, wantNoCORS)
+	}
+
+	// 两个表面的引擎级链就是 base 的产物：绕过 base 或改挂载顺序会在这里现形
+	if got := middlewareIdentity(Public(td.deps).Handlers); !slices.Equal(got, wantWithCORS) {
+		t.Errorf("公开表面引擎级链 = %v, want %v", got, wantWithCORS)
+	}
+	if got := middlewareIdentity(newAdminEngine(td).Handlers); !slices.Equal(got, wantNoCORS) {
+		t.Errorf("后台表面引擎级链 = %v, want %v", got, wantNoCORS)
 	}
 }

@@ -9,10 +9,14 @@ import (
 )
 
 // Init 初始化全局 Zap 日志。debug 模式输出彩色日志，release 模式输出 JSON。
+//
+// debug 的取值与 config.ModeDebug 同值（"debug"）：archtest 强制的是反向边——
+// config 不 import pkg；logger 保持不依赖 config，因此以字面量判定，并以注释与
+// config.ModeDebug 双向点名——改任一侧的取值要同步改另一侧。
 func Init(mode string) error {
 	var config zap.Config
 
-	if mode == "debug" {
+	if mode == "debug" { // == config.ModeDebug（见上：logger 不依赖 config）
 		config = zap.NewDevelopmentConfig()
 		config.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
 	} else {

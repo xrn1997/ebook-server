@@ -1,7 +1,10 @@
 package model
 
 import (
+	"encoding/json"
 	"errors"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -53,6 +56,116 @@ func TestCommentFilter_Normalize(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestParseCommentKeyFilters comment_keys 的切分语义（M2 主读路径）。
+//
+// 客户端用 Retrofit 的单个 @Query 把多个键拼成逗号分隔的一个值，因此按逗号切分；
+// 同时容忍 `?comment_keys=a&comment_keys=b` 的重复参数形态（逐个入参处理，不去重）。
+// 键本身永不含逗号（ck1: + 十六进制摘要 + 可选 #章序号），切分无歧义。
+// 空串按「未提供该键」丢弃（`?comment_keys=` 不带值是常见形态）。
+// 长度与个数上限不在这里判定，见 CommentFilter.Normalize。
+func TestParseCommentKeyFilters(t *testing.T) {
+	got := ParseCommentKeyFilters([]string{"a,b", "c", "", "d,e"})
+	want := []string{"a", "b", "c", "d", "e"}
+	if len(got) != len(want) {
+		t.Fatalf("ParseCommentKeyFilters() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("ParseCommentKeyFilters()[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+
+	if got := ParseCommentKeyFilters(nil); len(got) != 0 {
+		t.Errorf("ParseCommentKeyFilters(nil) = %v, want empty", got)
+	}
+	if got := ParseCommentKeyFilters([]string{""}); len(got) != 0 {
+		t.Errorf("ParseCommentKeyFilters([\"\"]) = %v, want empty", got)
+	}
+}
+
+// TestParseLegacyKeyFilters chapter_url 是 URL、可以含逗号，因此不按逗号切分，只丢空值。
+func TestParseLegacyKeyFilters(t *testing.T) {
+	got := ParseLegacyKeyFilters([]string{"http://x/a,b"})
+	if len(got) != 1 || got[0] != "http://x/a,b" {
+		t.Errorf("ParseLegacyKeyFilters() = %v, want [http://x/a,b]（含逗号不得切分）", got)
+	}
+
+	if got := ParseLegacyKeyFilters([]string{"", "http://x/1.html", ""}); len(got) != 1 || got[0] != "http://x/1.html" {
+		t.Errorf("ParseLegacyKeyFilters() = %v, want 只剩非空项", got)
+	}
+	if got := ParseLegacyKeyFilters(nil); len(got) != 0 {
+		t.Errorf("ParseLegacyKeyFilters(nil) = %v, want empty", got)
+	}
+}
+
+// TestCommentKeyBindingTagsMatchMaxCommentKeyLength 钉住 comment_key 各 binding tag
+// 与列约束同源（上限 200）：读过滤常量、创建 tag、迁移两键 tag 针对的是同一列，
+// 不一致就能造出「迁过去就再也提交不出、也就永远读不回来」的键。
+//
+// tag 只能写字面量、引用不了常量，这条反射钉是那份人工同步的守卫之一：它管 model 包里
+// 的三个键 tag。后台 rehashRequest 不在本包、这里的反射扫不到它，由 internal/admin 同包的
+// TestRehashRequestBindingMatchesMaxCommentKeyLength 钉住——两枚钉读同一个常量，
+// 各钉各自包里的 struct。这是对评审「删反射钉」的受控偏离：handler 里那两枚随解析入口
+// 一起删掉，后台那一枚换成钉在自己的 struct 上。
+func TestCommentKeyBindingTagsMatchMaxCommentKeyLength(t *testing.T) {
+	cases := []struct {
+		requestType reflect.Type
+		field       string
+	}{
+		{reflect.TypeOf(CreateCommentRequest{}), "CommentKey"},
+		{reflect.TypeOf(MigrateCommentKeyRequest{}), "OldKey"},
+		{reflect.TypeOf(MigrateCommentKeyRequest{}), "NewKey"},
+	}
+
+	for _, c := range cases {
+		field, ok := c.requestType.FieldByName(c.field)
+		if !ok {
+			t.Fatalf("%s has no field %s", c.requestType.Name(), c.field)
+		}
+		maxValue := bindingMax(t, field.Tag.Get("binding"))
+		if maxValue != MaxCommentKeyLength {
+			t.Errorf("%s.%s binding max=%d, want model limit %d",
+				c.requestType.Name(), c.field, maxValue, MaxCommentKeyLength)
+		}
+	}
+}
+
+// bindingMax 从 binding tag（如 "required,max=200"）里取出 max 的数值。
+func bindingMax(t *testing.T, tag string) int {
+	t.Helper()
+	for _, part := range strings.Split(tag, ",") {
+		if value, found := strings.CutPrefix(strings.TrimSpace(part), "max="); found {
+			maxValue, err := strconv.Atoi(value)
+			if err != nil {
+				t.Fatalf("bad max in binding tag %q: %v", tag, err)
+			}
+			return maxValue
+		}
+	}
+	t.Fatalf("binding tag %q has no max", tag)
+	return 0
+}
+
+// TestChapterURLBindingTagMatchesMaxChapterURLLength 钉住已废弃 chapter_url 写路径的
+// binding tag 与同一列的长度常量（上限 2048）同源。
+//
+// 与 TestCommentKeyBindingTagsMatchMaxCommentKeyLength 同族：struct tag 只能写字面量、
+// 拼不了常量，binding 里的 max=2048 与 MaxChapterURLLength 是两份必须人工同步的数字，
+// 这条反射钉就是那份人工同步的守卫——漏同步当场失败。迁移键不在此列：M2 后 migrate
+// 作用于 comment_key，由上面的用例钉。读路径过滤没有 tag（CommentFilter.Normalize
+// 直接判同一个常量），不在本枚钉的范围里。
+func TestChapterURLBindingTagMatchesMaxChapterURLLength(t *testing.T) {
+	requestType := reflect.TypeOf(CreateCommentRequest{})
+	field, ok := requestType.FieldByName("ChapterURL")
+	if !ok {
+		t.Fatal("CreateCommentRequest has no field ChapterURL")
+	}
+	if maxValue := bindingMax(t, field.Tag.Get("binding")); maxValue != MaxChapterURLLength {
+		t.Errorf("CreateCommentRequest.ChapterURL binding max=%d, want model limit %d",
+			maxValue, MaxChapterURLLength)
 	}
 }
 
@@ -144,6 +257,17 @@ func TestNewAdminCommentView_CarriesNoEmail(t *testing.T) {
 	}
 	if view.User.UID != 42 || view.User.Username != "reader" || view.User.Nickname != "读友" || view.User.Avatar != "/uploads/avatar/a.png" {
 		t.Errorf("User 视图 = %+v", view.User)
+	}
+
+	// 名字承诺的另一半在序列化面上：固定视图不得把 email 带出去（ADR-0015 §3，
+	// 邮箱只在用户详情里看）。CommentUserView 现在没有 Email 字段，这条断言钉的是
+	// 「将来谁给它加上」——那会先在这里变红，而不是等下游表面的用例才发现。
+	raw, err := json.Marshal(view)
+	if err != nil {
+		t.Fatalf("marshal view: %v", err)
+	}
+	if strings.Contains(string(raw), "email") {
+		t.Errorf("后台评论视图携带了 email 面: %s", raw)
 	}
 }
 

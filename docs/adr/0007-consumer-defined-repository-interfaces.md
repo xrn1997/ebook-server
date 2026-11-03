@@ -16,7 +16,7 @@ service 层通过**定义在 service 包内的 Store 接口**访问数据，repo
 
 1. **数据访问接口定义在 `backend/service/ports.go`**：接口只列消费方真正调用的方法。零调用方法不进接口（`UserRepository.Delete` 软删除因此被删除——它与 ADR-0005「不软删」冲突，是危险死代码）。同一文件还定义 `Mailer`。
 
-2. **repository 构造函数接收 `*gorm.DB`**，不再读取包级全局。`pkg/database` 只提供 `Open(path) (*gorm.DB, error)` 与 `Close(db)`（以及迁移入口 `Migrate`），由 `main.go` 装配时使用。配置、JWT 密钥（`jwt.TokenBox`）、数据库连接、验证码存储都按此办理：组装一份依赖不需要先有人初始化过某处全局，也不必为了拿到一枚 token 去改全局。
+2. **repository 构造函数接收 `*gorm.DB`**，不再读取包级全局。`pkg/database` 只提供打开与关闭连接的函数——文件库 `Open(path)`、内存库 `OpenMemory()`、`Close(db)`——加一个迁移入口 `Migrate`（业务实体清单自持在该包内，调用方不传），由 `main.go` 与 `pkg/testdb` 装配时使用。配置、JWT 密钥（`jwt.TokenBox`）、数据库连接、验证码存储都按此办理：组装一份依赖不需要先有人初始化过某处全局，也不必为了拿到一枚 token 去改全局。
 
 3. **测试替身 = `pkg/testdb.Open`**：每个测试独立 `:memory:` 库（强制单连接，避免 SQLite `:memory:` 每连接独立库的池化陷阱），替代三份重复的全局改写式初始化。
 

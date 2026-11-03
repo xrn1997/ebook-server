@@ -37,9 +37,18 @@ Status: accepted
 ## 实现要点
 
 - `model.TokenPayload`（`backend/model/user.go`）：纯凭证载荷 `{token, refresh_token}`，无 `user`。
-- `service/auth.go`：`Refresh` 返回 `*model.TokenPayload`——先按哈希找旧 token，条件删除成功才签发
-  （没删到行说明已被并发刷新消费，回 `model.ErrLoginExpired`/A0230），再经 `issueTokenPayload`
-  签发纯凭证；`issueTokens` 委托 `issueTokenPayload` 后附加 `User`，登录仍返回含 `user` 的 `TokenPair`。
+- `service/sessions.go`：refresh token 的签发/轮换/撤销收编在 `Sessions`——`Consume` 按哈希找旧 token、
+  确认持有者未匿名化后**在同一行上就地换发**：一条打在旧哈希上的条件更新（`repository` 的 `Rotate`），
+  只有改到行的一方才放行（打不中要么是并发刷新的败者，要么是撤销已删掉这行，要么是这条令牌
+  在读取与换发之间到期，三种都回 `model.ErrLoginExpired`/A0230）；`Issue` 签发落库，`Revoke`
+  按用户整批作废（登出/改密/注销共用）。
+- **轮换不拆成「删旧行 + 插新行」**：拆开的那条 INSERT 可能落在并发 `Revoke` 之后，等于在撤销之后
+  又写进一枚撤不掉、活满 30 天的令牌；就地换发让撤销先行时 CAS 得 0 行，失败关闭，库里一行不剩。
+  单次消费与「撤销优先」是同一条件更新的两条性质，拆成两条语句就都保不住。
+- `service/auth.go`：`Refresh` 返回 `*model.TokenPayload`——持有者账号直接取自 `Sessions.Consume`
+  已经读到的那一行（不再二次查 user：多一条 SELECT，且读到的是轮换之后的行，与 `Consume`
+  判过的状态不是同一份），再签 access token 组成纯凭证；`issueTokens` 委托同一段凭证组装，
+  登录仍返回含 `user` 的 `TokenPair`。
 - `handler/auth.go`：`Refresh` 沿用 `errcode.Success(c, pair)`，响应体随返回类型自动变为 `{token, refresh_token}`。
 
 细节以代码与测试为准；本节只保留决定中不可从代码读出的语义（轮换失败即拒绝、身份仅登录下发）。
@@ -70,5 +79,5 @@ Status: accepted
 2. curl 登录返回 `user`；`/api/auth/refresh` 返回体**不含** `user` 键。
 3. 登录→刷新→登出全链路 token 正确轮换。
 
-锚点：`backend/service/auth.go` 的 `Refresh`；`backend/repository/refresh_token.go`。
+锚点：`backend/service/sessions.go` 的 `Consume`；`backend/service/auth.go` 的 `Refresh`；`backend/repository/refresh_token.go`。
 

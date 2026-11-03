@@ -52,25 +52,17 @@ type AvatarCleaner interface {
 	DeleteAvatar(url string) error
 }
 
-// CredentialStore 密码与登录失败计数的写路径（consumer-defined，ADR-0007）。
+// CredentialStore 凭据模块自持的账号存储能力（consumer-defined，ADR-0007）。
 //
 // 失败记账只有一条语句：递增、按阈值上锁、上锁清零都在 RecordFailedLogin 里完成，
 // 由数据库给出「现在是否被锁」；不再整行 Save，也不回到 Go 里比大小。
+// FindByUID 只服务 Change 的旧口令比对：凭据模块不为读一条哈希依赖整份账号读面。
 type CredentialStore interface {
 	Create(ctx context.Context, user *model.User) error
+	FindByUID(ctx context.Context, uid uint) (*model.User, error)
 	UpdatePasswordHash(ctx context.Context, uid uint, hash string) error
 	RecordFailedLogin(ctx context.Context, uid uint, maxAttempts int, until time.Time) (bool, error)
 	ClearLoginFailures(ctx context.Context, uid uint) error
-}
-
-// TokenStore refresh token 存储。签发即落库、轮换即作废（ADR-0003）。
-type TokenStore interface {
-	Create(ctx context.Context, token *model.RefreshToken) error
-	FindByHash(ctx context.Context, hash string) (*model.RefreshToken, error)
-	// DeleteByID 条件删除并返回是否真的删掉一行：轮换的「单次消费」判据。
-	// 两个并发刷新都查到同一令牌时，只有先删到行的那一个可以签发新令牌。
-	DeleteByID(ctx context.Context, id uint) (bool, error)
-	DeleteByUserID(ctx context.Context, userID uint) error
 }
 
 // CommentStore 公开内容（评论）存储。见 CONTEXT.md「公开内容」。
@@ -86,8 +78,9 @@ type CommentStore interface {
 	// 归属由 scope 表达：限定用户 = 本人迁移，不限用户 = 后台全局改键。
 	MigrateKey(ctx context.Context, scope model.CommentKeyScope, oldKey, newKey string) (int64, error)
 	// DeleteScoped 条件软删除：作者 scope 同时匹配 user_id，治理 scope 只匹配 id。
-	// 返回是否真的删掉了一行（RowsAffected），不再「查到就算删成功」。
-	DeleteScoped(ctx context.Context, id uint, scope model.CommentScope) (bool, error)
+	// 返回结果归因 model.DeleteOutcome：RowsAffected 仍是成功判据，0 行时由实现
+	// 判出「不存在」还是「非本人」，service 只做 outcome→错误码的映射。
+	DeleteScoped(ctx context.Context, id uint, scope model.CommentScope) (model.DeleteOutcome, error)
 	// Search 后台评论搜索（内容关键字 + 书名）；零值条件即全量。
 	Search(ctx context.Context, query model.CommentQuery, page, pageSize int) ([]model.Comment, int64, error)
 	Count(ctx context.Context) (int64, error)

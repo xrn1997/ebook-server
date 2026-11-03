@@ -1,14 +1,18 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { fetchStats, SUCCESS_CODE, type Stats } from '../api'
+import { fetchStats, unwrap, type Stats } from '../api'
 
 const stats = ref<Stats | null>(null)
 const error = ref('')
 
+// 只在 mounted 取一次，不另立 loading 标志：stats 为 null 就是模板里的「加载中…」。
+// 就这一处取位，直接经 unwrap 即可，不必上 useAdminDetail
 onMounted(async () => {
-  const resp = await fetchStats()
-  if (resp.code === SUCCESS_CODE) stats.value = resp.data ?? null
-  else error.value = resp.error || '加载失败'
+  const result = await unwrap(fetchStats(), '加载失败')
+  if (result.ok && result.data !== undefined) stats.value = result.data
+  // 成功却没带 data 也是契约漂移：让它落进 else，否则模板永远停在「加载中…」，
+  // 把后端改动藏成一次看似正常的挂起。
+  else error.value = result.ok ? '统计数据格式不正确' : result.message
 })
 </script>
 

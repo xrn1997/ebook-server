@@ -31,7 +31,9 @@ describe('api 模块的令牌存取契约', () => {
     const api = await import('./api')
 
     expect(api.token.value).toBe('')
-    expect(() => api.token.set('abc')).not.toThrow()
+    expect(() => {
+      api.token.set('abc')
+    }).not.toThrow()
     expect(api.token.value).toBe('')
 
     vi.unstubAllGlobals()

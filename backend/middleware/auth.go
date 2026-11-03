@@ -3,8 +3,8 @@ package middleware
 
 import (
 	"ebook-server/pkg/errcode"
+	"ebook-server/pkg/httpx"
 	"ebook-server/pkg/jwt"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -21,24 +21,25 @@ type Parser interface {
 // token 解析由装配点注入的 Parser 完成（不再有「配置已加载」这条隐式前提）。
 func JWTAuth(tokens Parser) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 从 Header 获取 Token
-		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
+		// 空头是「没带凭据」，单独一句话（A0230）；带了但形状不对是另一句。
+		// 形状判定本身下沉到 httpx.BearerToken（两表面共用），两条分支与失败码留在这里。
+		header := c.GetHeader("Authorization")
+		if header == "" {
 			errcode.Error(c, errcode.LoginExpired, "缺少认证令牌")
 			c.Abort()
 			return
 		}
 
 		// 解析 Bearer Token
-		parts := strings.SplitN(authHeader, " ", 2)
-		if !(len(parts) == 2 && parts[0] == "Bearer") {
+		token, err := httpx.BearerToken(header)
+		if err != nil {
 			errcode.Error(c, errcode.LoginExpired, "认证格式错误")
 			c.Abort()
 			return
 		}
 
 		// 解析 Token
-		claims, err := tokens.ParseUser(parts[1])
+		claims, err := tokens.ParseUser(token)
 		if err != nil {
 			errcode.Error(c, errcode.LoginExpired, "无效或过期的认证令牌")
 			c.Abort()

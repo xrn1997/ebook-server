@@ -21,7 +21,6 @@ Go 后端 + Vue 后台管理前端，构建后前端内嵌进单一可执行文�
 - `backend/` — Go 后端（公开 API、后台 API、业务与数据层）
 - `frontend/` — 后台管理前端（构建产物内嵌进 Go 二进制）
 - `docs/` — 架构、ADR、开发手册与文档规范
-- `sql/` — 数据库参考脚本（实际使用 SQLite）
 
 分层、依赖方向与每条语义的主人见 [docs/architecture.md](docs/architecture.md)；构建与测试命令见 [docs/development.md](docs/development.md)。
 
@@ -30,7 +29,7 @@ Go 后端 + Vue 后台管理前端，构建后前端内嵌进单一可执行文�
 ### 环境要求
 
 - Go 1.23+
-- Node.js 20+（仅构建后台前端时需要）
+- Node.js `^20.19.0 || ^22.13.0 || >=24`（仅构建或检查后台前端时需要；下限来自 ESLint 10）
 - Windows 构建服务端 exe 时需要 MinGW-w64（提供 `windres`；WinLibs 自带）
 - 无需安装数据库（SQLite 自动创建）
 
@@ -203,12 +202,13 @@ make clean    # 清理
   鉴权失败自动清除并回登录页
 - **配置与服务控制不在页面里**：`config.yaml` / `.env` 由部署者维护，进程交给 systemd
   或直接启动；后台只做数据管理，不托管密钥
-- 开发/测试：`make frontend-dev` / `make frontend-test`；构建：`make all`
+- 开发：`make frontend-dev`；改前端跑 `make gates`（与 CI 同一条命令，构成见 `docs/development.md`）；构建：`make all`
 
 ## 请求示例
 
 > **统一响应信封**：所有业务端点 HTTP 状态码恒为 200，通过 `code` 业务码区分成败
-> （`"00000"` 表示成功），错误文案位于 `error` 字段，可直达移动端 Toast。
+> （`"00000"` 表示成功）；成功时 `error` 为空串，失败时错误文案位于 `error` 字段，
+> 可直达移动端 Toast。无载荷的成功（如删除）不带 `data` 键。
 
 ### 发送验证码
 

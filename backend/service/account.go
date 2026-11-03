@@ -17,17 +17,17 @@ import (
 // 全部依赖由构造函数注入（ADR-0007）。
 type AccountService struct {
 	users    UserStore
-	tokens   TokenStore
+	sessions *Sessions
 	comments CommentStore
 	codes    *VerificationCodes
 	avatars  AvatarProfile
 }
 
 // NewAccountService 创建账号生命周期服务实例。
-func NewAccountService(users UserStore, tokens TokenStore, comments CommentStore, codes *VerificationCodes, avatars AvatarProfile) *AccountService {
+func NewAccountService(users UserStore, sessions *Sessions, comments CommentStore, codes *VerificationCodes, avatars AvatarProfile) *AccountService {
 	return &AccountService{
 		users:    users,
-		tokens:   tokens,
+		sessions: sessions,
 		comments: comments,
 		codes:    codes,
 		avatars:  avatars,
@@ -65,11 +65,11 @@ func (s *AccountService) SendDeletionCode(ctx context.Context, uid uint) error {
 // 返回的数据副本让用户当场取走自己的内容；服务端不保留可识别信息。
 // 注销不可逆——匿名化后无法再按邮箱找到该账号，密码也已清空。
 //
-// 三次写（清头像列、匿名化、删 refresh token）刻意不包事务：中途失败只会留下
-// 「头像已清但账号未匿名化」或「账号已匿名化但 token 未删」的状态——前者用户重新
+// 三次写（清头像列、匿名化、撤销会话）刻意不包事务：中途失败只会留下
+// 「头像已清但账号未匿名化」或「账号已匿名化但令牌未删」的状态——前者用户重新
 // 登录即可恢复并重试注销；后者只告警不判失败（数据副本是用户唯一的一份，不能
-// 因为一次清理写失败而丢掉），而漏网令牌也续不了期（Refresh 拒绝匿名化账号，见
-// auth.go 的 Refresh），只会自行过期。这是有意的取舍，见 docs/development.md 的
+// 因为一次清理写失败而丢掉），而漏网令牌也续不了期（Consume 拒绝匿名化账号，
+// 见 sessions.go 的 Consume），只会自行过期。这是有意的取舍，见 docs/development.md 的
 // 「当前已知问题」。
 func (s *AccountService) Delete(ctx context.Context, uid uint, codeVal string) (*model.UserDataExport, error) {
 	user, err := s.users.FindByUID(ctx, uid)
@@ -100,15 +100,16 @@ func (s *AccountService) Delete(ctx context.Context, uid uint, codeVal string) (
 		return nil, err
 	}
 
-	// 立即失效全部 refresh token。刻意放在匿名化之后：并发 Refresh 的轮换若插在
-	// 前面几步之间完成，这里能把它刚写入的新令牌一并扫掉。仍漏网的（轮换写入落在
-	// 本删除之后）也续不了期——Refresh 对匿名化账号一律拒绝（isAnonymized），
-	// 漏网令牌最多存活到自身过期，「注销后无限续期的会话」因此不成立。
+	// 立即撤销该账号的全部会话（Sessions.Revoke）。刻意放在匿名化之后：并发 Refresh
+	// 的轮换若插在前面几步之间完成，这里能把它刚写入的新令牌一并扫掉。仍漏网的
+	// （轮换写入落在本撤销之后）也续不了期——Consume 对匿名化账号一律拒绝
+	// （isAnonymized），漏网令牌最多存活到自身过期，「注销后无限续期的会话」
+	// 因此不成立。
 	//
 	// 失败只告警：此刻账号已经匿名化、数据副本也已构建，把它判成整体失败会让用户
 	// 拿不到那份唯一的副本，而漏网令牌本来就没有续期路径。
-	if err := s.tokens.DeleteByUserID(ctx, uid); err != nil {
-		zap.L().Warn("注销后删除 refresh token 失败，令牌最多存活到自身过期",
+	if err := s.sessions.Revoke(ctx, uid); err != nil {
+		zap.L().Warn("注销后撤销会话失败，令牌最多存活到自身过期",
 			zap.Uint("uid", uid), zap.Error(err))
 	}
 
@@ -170,8 +171,8 @@ func anonymizeUser(user *model.User) {
 // isAnonymized 判断账号是否已被匿名化注销（唯一写入方是 anonymizeUser）。
 //
 // 匿名化清空密码哈希，正常账号必然持有 bcrypt 哈希，空哈希即「已注销」。
-// Refresh 续期前必须问一次：注销与并发刷新的竞态可能让轮换写入的令牌漏过
-// DeleteByUserID，若它还能继续轮换，就会在账号注销后留下无限续期的会话。
+// Consume 续期前必须问一次：注销与并发刷新的竞态可能让轮换写入的令牌漏过
+// Sessions.Revoke，若它还能继续轮换，就会在账号注销后留下无限续期的会话。
 func isAnonymized(user *model.User) bool {
 	return user.Password == ""
 }

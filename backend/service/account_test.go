@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"ebook-server/model"
 	"ebook-server/pkg/upload"
@@ -138,30 +139,32 @@ func TestAuthService_DeleteAccount_RevokesRefreshTokens(t *testing.T) {
 	}
 }
 
-// rotationRaceStore 在轮换消费旧令牌的瞬间插入一段回调，用于复现注销与并发刷新
-// 的竞态最坏交错：Refresh 已消费旧令牌、尚未写入新令牌时，注销的全部写恰好完成。
+// rotationRaceStore 在轮换落库的瞬间插入一段回调，用于复现注销与并发刷新的最坏交错：
+// 本请求已查到旧令牌、尚未完成轮换时，注销的全部写恰好完成。
 type rotationRaceStore struct {
-	TokenStore
-	onConsumed func()
+	refreshTokenStore
+	onRotating func()
 }
 
-func (s *rotationRaceStore) DeleteByID(ctx context.Context, id uint) (bool, error) {
-	consumed, err := s.TokenStore.DeleteByID(ctx, id)
-	if consumed && s.onConsumed != nil {
-		hook := s.onConsumed
-		s.onConsumed = nil // 只插一次
+func (s *rotationRaceStore) Rotate(ctx context.Context, id uint, oldHash, newHash string, expiresAt time.Time) (bool, error) {
+	if s.onRotating != nil {
+		hook := s.onRotating
+		s.onRotating = nil // 只插一次
 		hook()
 	}
-	return consumed, err
+	return s.refreshTokenStore.Rotate(ctx, id, oldHash, newHash, expiresAt)
 }
 
-// TestAuthService_Refresh_RacingDeleteIssuesOnlyDeadTokens 注销与并发刷新的竞态不留活口。
+// TestAuthService_Refresh_RacingDeleteLeavesNoSession 注销与并发刷新的竞态不留活口。
 //
-// 竞态最坏交错：Refresh 消费旧令牌之后、写入新令牌之前，注销的全部写完成——新令牌
-// 漏过 DeleteByUserID 留在库里。断言两层：竞态窗口内的轮换照常完成（签发端无法感知
-// 刚发生的注销），但这枚漏网的令牌不得再续期——否则一条会话能在账号注销后无限续期，
-// 继续以「已注销用户_x」发言（Refresh 对匿名化账号一律 ErrAccountNotFound）。
-func TestAuthService_Refresh_RacingDeleteIssuesOnlyDeadTokens(t *testing.T) {
+// 竞态最坏交错：Refresh 查到旧令牌之后、轮换落库之前，注销的全部写完成。轮换是
+// 一条打在旧哈希上的条件更新——行已被撤销删掉，CAS 得 0 行，本次刷新直接失败关闭，
+// 库里不会再出现一枚躲过 Revoke 的新令牌，该账号一行不留。
+//
+// 旧写法（条件删旧行 + 插新行）在这里会把新令牌落在撤销之后，只剩「匿名化账号不得
+// 续期」这道兜底：那次刷新虽然拿不到新令牌，账号注销后库里仍躺着一行 30 天有效期的
+// 活口，且要等它自己过期。
+func TestAuthService_Refresh_RacingDeleteLeavesNoSession(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
 
@@ -170,29 +173,33 @@ func TestAuthService_Refresh_RacingDeleteIssuesOnlyDeadTokens(t *testing.T) {
 
 	users := repository.NewUserRepository(testDB)
 	tokensRepo := repository.NewRefreshTokenRepository(testDB)
-	raceStore := &rotationRaceStore{TokenStore: tokensRepo}
+	raceStore := &rotationRaceStore{refreshTokenStore: tokensRepo}
+	raceSessions := NewSessions(raceStore, users)
 	raceAuth := NewAuthService(
 		users,
-		raceStore,
+		raceSessions,
 		NewVerificationCodes(testCodes, testMails),
 		testTokens,
-		NewCredentials(users, raceStore),
+		NewCredentials(users, raceSessions),
 	)
 
-	// 在轮换消费旧令牌的瞬间跑完整个注销：新令牌的写入将落在注销之后
-	raceStore.onConsumed = func() {
+	// 在轮换即将落库的瞬间跑完整个注销：这次轮换将看到行已不在
+	raceStore.onRotating = func() {
 		if _, err := testAccount.Delete(testCtx, user.UID, seedCode(t, FlowDeletion, "race@example.com")); err != nil {
 			t.Errorf("注销在刷新窗口内执行失败: %v", err)
 		}
 	}
 
-	payload, err := raceAuth.Refresh(testCtx, pair.RefreshToken)
-	if err != nil {
-		t.Fatalf("竞态窗口内的轮换应照常完成: %v", err)
+	if _, err := raceAuth.Refresh(testCtx, pair.RefreshToken); err != model.ErrLoginExpired {
+		t.Fatalf("撤销在先的刷新应失败关闭 (ErrLoginExpired), got %v", err)
 	}
 
-	if _, err := raceAuth.Refresh(testCtx, payload.RefreshToken); err != model.ErrAccountNotFound {
-		t.Errorf("注销后漏网的 refresh token 应被拒绝 (ErrAccountNotFound), got: %v", err)
+	var rows int64
+	if err := testDB.Table("refresh_tokens").Where("user_id = ?", user.UID).Count(&rows).Error; err != nil {
+		t.Fatal(err)
+	}
+	if rows != 0 {
+		t.Fatalf("注销后的账号仍留有 %d 行 refresh token, want 0（竞态复活了会话）", rows)
 	}
 }
 
@@ -266,7 +273,7 @@ func TestAccountService_Delete_RemovesAvatarFile(t *testing.T) {
 	profile := NewProfileService(users, store)
 	account := NewAccountService(
 		users,
-		repository.NewRefreshTokenRepository(testDB),
+		NewSessions(repository.NewRefreshTokenRepository(testDB), users),
 		repository.NewCommentRepository(testDB),
 		NewVerificationCodes(testCodes, &recordingMailer{}),
 		profile,
@@ -301,9 +308,10 @@ func TestAccountService_Delete_ReturnsExportWhenTokenRevokeFails(t *testing.T) {
 	defer cleanupTestDB(t)
 
 	users := repository.NewUserRepository(testDB)
+	failing := failingTokenStore{refreshTokenStore: repository.NewRefreshTokenRepository(testDB)}
 	account := NewAccountService(
 		users,
-		failingTokenStore{TokenStore: repository.NewRefreshTokenRepository(testDB)},
+		NewSessions(failing, users),
 		repository.NewCommentRepository(testDB),
 		NewVerificationCodes(testCodes, &recordingMailer{}),
 		testUsers,

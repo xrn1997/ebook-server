@@ -75,22 +75,62 @@ func TestError(t *testing.T) {
 	}
 }
 
-func TestSuccessMsg(t *testing.T) {
-	c, w := setupErrcodeContext()
-	SuccessMsg(c, "操作成功", gin.H{"id": 1})
+// TestEnvelopeShape 信封键名的唯一主人是 model.Response：code / error / data。
+//
+// 包里曾有第二个出口用 gin.H 手拼信封（带成功文案），键名因此存了两份、审计与
+// 客户端各自对着两份键名解析。删掉那条出口后，这条用例盯住两个标准出口的键集合
+// 不再长出第二种形状，且整个响应体能按 model.Response 解码。
+func TestEnvelopeShape(t *testing.T) {
+	t.Run("成功出口", func(t *testing.T) {
+		c, w := setupErrcodeContext()
+		Success(c, gin.H{"id": 1})
 
-	var resp map[string]interface{}
-	json.Unmarshal(w.Body.Bytes(), &resp)
+		assertEnvelopeKeys(t, w.Body.Bytes(), "code", "error", "data")
+		var env model.Response
+		if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
+			t.Fatalf("成功出口不是 model.Response 形状: %v", err)
+		}
+		if env.Code != SuccessCode || env.Error != "" {
+			t.Errorf("信封 = %+v, want code=%s error=空", env, SuccessCode)
+		}
+	})
 
-	if resp["code"] != SuccessCode {
-		t.Errorf("Expected code '%s', got %v", SuccessCode, resp["code"])
+	t.Run("错误出口", func(t *testing.T) {
+		c, w := setupErrcodeContext()
+		Error(c, BadRequest, "参数错误")
+
+		assertEnvelopeKeys(t, w.Body.Bytes(), "code", "error")
+		var env model.Response
+		if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
+			t.Fatalf("错误出口不是 model.Response 形状: %v", err)
+		}
+		if env.Code != BadRequest || env.Error != "参数错误" {
+			t.Errorf("信封 = %+v, want code=%s error=参数错误", env, BadRequest)
+		}
+	})
+}
+
+// assertEnvelopeKeys 断言响应体的 JSON 键集合与给定清单完全一致（不多不少）。
+func assertEnvelopeKeys(t *testing.T, body []byte, want ...string) {
+	t.Helper()
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatalf("decode envelope: %v", err)
 	}
-	if resp["error"] != "操作成功" {
-		t.Errorf("Expected error '操作成功', got %v", resp["error"])
+	wantSet := map[string]bool{}
+	for _, key := range want {
+		wantSet[key] = true
 	}
-	data := resp["data"].(map[string]interface{})
-	if data["id"].(float64) != 1 {
-		t.Errorf("Expected data.id 1, got %v", data["id"])
+	for key := range raw {
+		if !wantSet[key] {
+			t.Errorf("信封多出键 %q: %s", key, body)
+		}
+	}
+	for key := range wantSet {
+		if _, ok := raw[key]; !ok {
+			t.Errorf("信封缺键 %q: %s", key, body)
+		}
 	}
 }
 

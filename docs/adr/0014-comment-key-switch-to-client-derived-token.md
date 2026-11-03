@@ -35,13 +35,19 @@ token `comment_key`，跨仓库契约见 android-ebook 仓库的 M2 评论 API �
 * **这是针对旧客户端的破坏性变更**：只发 `chapter_url` 的 pre-M2 客户端此后无法再发评论
   （读不受影响）。接受该代价，因为「静默丢评论」比「旧客户端发不出评论」严重得多。
 * 长度上限 200 是防脏数据与防打满绑定变量，**不是**格式校验：`ck1:` + 64 位十六进制 +
-  `#章序号` 实际 69+ 字节，留的是算法版本递增的余量。三处约束（读过滤常量、创建 tag、
-  迁移 tag）由 `TestCommentKeyLengthLimitMatchesModelBinding` 用反射钉成同一个数。
+  `#章序号` 实际 69+ 字节，留的是算法版本递增的余量。tag 只能写字面量、引用不了常量，
+  因此一致性由两枚反射钉各自守住：model 包的
+  `TestCommentKeyBindingTagsMatchMaxCommentKeyLength` 管创建与迁移的三个键 tag；
+  `backend/internal/admin` 的 `TestRehashRequestBindingMatchesMaxCommentKeyLength` 管后台
+  rehash 的两个 tag。`CommentService.MigrateKeys` 的字节级长度检查只在 tag 放行之后兜底，
+  不能替代 tag 本身——被 tag 提前拒掉的请求进不了服务层。
 
 ### 3. `GET /api/comments?comment_keys=` 逗号分隔多键返回并集，优先于旧参数
 
 * 真实客户端用单个 `@Query` 把多个键拼成逗号串，因此解析按逗号切分，同时容忍
   `?comment_keys=a&comment_keys=b` 的重复参数形态。键本身永不含逗号，切分无歧义。
+  切分入口在 `model.ParseCommentKeyFilters`（旧键对应 `model.ParseLegacyKeyFilters`，
+  不切分只丢空串），handler 只递查询参数原文。
 * 两参数同时出现时 `comment_keys` 胜出、`book_name` 不参与收窄（书名已不是聚合维度）——
   否则结果集是交集还是并集全靠实现顺序。
 * 两条入参上限与 `chapter_url` 同源（一条语句的绑定变量总数），因此共用一枚
@@ -111,7 +117,8 @@ token `comment_key`，跨仓库契约见 android-ebook 仓库的 M2 评论 API �
   空 `comment_keys` 被忽略、两条入参上限、`chapter_url` 兼容读路径仍读出旧行、
   迁移作用于 `comment_key`（含空旧键收拢本人旧行、迁往空键退回、幂等重试返回 0、用户隔离）、
   后台 rehash 跨用户生效 / 同键 A0305 / 空 old_key A0400 / 未带后台 token A0403、
-  三处长度约束反射钉死一致。
+  comment_key 各 binding tag 与列约束由 model 包与 backend/internal/admin 包的两枚反射钉
+  各自钉住（后台 tag 的运行时字节检查只兜放行后的请求）。
 * 响应视图新增 `comment_key`，其余字段（user 四字段、`add_time` 上海时区）不变。
 
 锚点：`backend/model/comment.go` 的 `CommentKey`；`backend/service/comment.go` 的 `Create`；`backend/handler/comment.go`。

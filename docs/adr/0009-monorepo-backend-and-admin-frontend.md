@@ -37,7 +37,7 @@ Superseded in part by: 0024（desktop 成员撤销）
 ebook-server/
 ├── backend/        # Go module（现全部 Go 代码迁入，go.mod/go.sum 一并迁移）
 ├── frontend/       # Vue 3 + Vite 后台前端（独立 npm 工具链，不入 Go module）
-├── docs/ sql/ README.md AGENTS.md CONTEXT.md TESTING.md config.yaml
+├── docs/ README.md AGENTS.md CONTEXT.md TESTING.md config.yaml
 └── Makefile        # build = 前端 build → 灌 dist → go build(单 exe)
 ```
 
