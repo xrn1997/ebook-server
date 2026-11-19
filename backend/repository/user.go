@@ -58,7 +58,7 @@ func (r *UserRepository) Update(ctx context.Context, user *model.User) error {
 	return r.db.WithContext(ctx).Save(user).Error
 }
 
-// UpdateProfile 只更新本次提交的展示字段/头像列，不触碰密码/登录计数。
+// UpdateProfile 只更新请求提交的展示字段/头像列，不触碰密码/登录计数。
 //
 // 没提交的列不出现在 UPDATE 里：并发改昵称与头像时，后写的一方不会把前者覆盖回旧值。
 func (r *UserRepository) UpdateProfile(ctx context.Context, uid uint, update model.ProfileUpdate) error {
@@ -85,19 +85,18 @@ func (r *UserRepository) UpdateAvatar(ctx context.Context, uid uint, avatar stri
 
 // CountByAvatar 统计头像仍指向该文件的账号数（含当前账号）。
 //
-// 比较的是 URL 的文件名而不是整串 URL：头像 URL 的主机取自上传时的请求 Host
-// （同一文件可能以 localhost 或内网 IP 两种写法入库），按整串比较会漏掉换主机写法
-// 的引用，进而误删别人的文件。文件名比较还必须忽略大小写：Windows/macOS 的文件
-// 系统不区分大小写，`A.png` 与 `a.png` 是同一个文件；按字面比较会让攻击者用大写
-// 变体绕过引用计数，再触发删除（上传生成的名字全是小写）。反过来，文件名相同的
-// 两个不同文件只会让计数偏大、文件多留一会儿——这比误删安全。
+// 比较 URL 的文件名而不是整串 URL：头像 URL 的主机取自上传时的请求 Host，同一文件
+// 可能以不同主机写法入库，按整串比较会漏掉引用、误删别人的文件。文件名比较还必须
+// 忽略大小写：Windows/macOS 文件系统不区分大小写，按字面比较会让攻击者用大写变体
+// 绕过引用计数再触发删除（上传生成的名字全是小写）。反过来，同名的不同文件只会让
+// 计数偏大、文件多留一会儿——这比误删安全。
 //
-// 计数**包含当前账号自己**：调用方在 UpdateProfile 之后才调用本方法，此时当前行
-// 已是最新 URL。若新旧 URL 只是 host 不同、文件仍是同一个，这一票就会把文件留下；
-// 排除自己则会把当前用户正在使用的头像删掉。ClearAvatar 先清空列再调用，自己自然不计。
+// 计数**包含当前账号自己**：调用方在 UpdateProfile 之后才调用，此时当前行已是最新
+// URL，新旧 URL 只是主机写法不同时这一票会把文件留下；排除自己则会删掉当前用户
+// 正在使用的头像。ClearAvatar 先清空列再调用，自己自然不计。
 //
-// 头像更新是低频操作，这里读全部非空头像再在 Go 里比较文件名；用户量增长后可改为
-// 维护文件名索引，但不要退回整串 URL 的等值比较——那正是漏掉引用、误删文件的来源。
+// 实现是读全部非空头像在 Go 里比文件名（头像更新是低频操作）；用户量增长后可改
+// 维护文件名索引，但不要退回整串 URL 的等值比较——那正是漏引用、误删文件的来源。
 func (r *UserRepository) CountByAvatar(ctx context.Context, avatar string) (int64, error) {
 	name := avatarFileName(avatar)
 	if name == "" {
@@ -150,13 +149,12 @@ func (r *UserRepository) UpdatePasswordHash(ctx context.Context, uid uint, hash 
 //
 // 判定不靠「先递增、再读回、由 Go 比大小」：读回来的数可能是并发另一个请求的递增，
 // 也可能已经被一次并发成功登录清零——那样该锁的没锁、不该锁的提前锁。
-// UPDATE 的右值全部取自同一行的旧值，所以 CASE 里的 `login_attempts + 1` 与写入的
-// 新计数必然同源；随后那次回读只是转述行的状态，不再参与决策。
+// UPDATE 的右值全部取自同一行的旧值，阈值判定在两条赋值之间是同一个判断；
+// 随后的回读只是转述行的状态，不参与决策。
 func (r *UserRepository) RecordFailedLogin(ctx context.Context, uid uint, maxAttempts int, until time.Time) (bool, error) {
 	result := r.db.WithContext(ctx).Model(&model.User{}).Where("uid = ?", uid).
 		UpdateColumns(map[string]any{
-			// 两个 CASE 的右值都取自旧行，所以「是否达到阈值」在两条赋值之间是同一个判断：
-			// 达到就清零并上锁（锁定期从下一次失败重新计），没达到就只累加。
+			// 两个 CASE 的右值都取自旧行：达到阈值就清零上锁，没达到就只累加。
 			"login_attempts": gorm.Expr("CASE WHEN login_attempts + 1 >= ? THEN 0 ELSE login_attempts + 1 END", maxAttempts),
 			"locked_until": gorm.Expr(
 				"CASE WHEN login_attempts + 1 >= ? THEN ? ELSE locked_until END",

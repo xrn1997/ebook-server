@@ -147,8 +147,8 @@ const (
 // 规则表在 schema.go（validationRules），启动校验按同一份文案拒绝：
 //   - 空 jwt.secret 是最容易踩到、后果又最重的一种：密钥为空时 HMAC 仍然「工作」，
 //     于是任何客户端都能自行签出任意 uid 的 access token，而公开 API 仍会接受这些令牌。
-//     它偏偏又极易发生——配置文件里的显式空值优先于 SetDefault，默认值兜不住它，
-//     而把密钥留空、改由 `.env` 提供正是常见写法。
+//     显式空值优先于 SetDefault，默认值兜不住它，而把密钥留空、改由 `.env` 提供
+//     正是常见写法。
 //   - 空 upload.dir 在 net/http 里等于进程当前目录，会把同目录下的 config.yaml、
 //     .env 与数据库一并公开到 /uploads 之下。
 //   - 后台监听通配地址会撕开 ADR-0010 的网络隔离。
@@ -161,10 +161,9 @@ func (c *Config) validate() error {
 		for _, weak := range c.builtInSecrets() {
 			problems = append(problems, weak+" 仍是代码内置的默认值")
 		}
-		// 仓库里公开的占位值和内置默认值是同一类风险，只是来源不同：前者是
-		// .env.example / config.yaml 的样板串，后者是源码里的常量。两者在
-		// release 下都不能继续用——复制 .env.example 不改内容就上线，等于用一把
-		// 全网读得到的密钥签名。
+		// 仓库里公开的占位值（.env.example / config.yaml 的样板串）与源码里的内置默认值
+		// 同类风险：复制样板不改内容就上线，等于用一把全网读得到的密钥签名。
+		// 两者在 release 下都不能继续用。
 		for _, weak := range placeholderSecrets(fieldValues(c)) {
 			problems = append(problems, weak+" 仍是仓库里公开的占位值")
 		}
@@ -199,7 +198,7 @@ func (c *Config) builtInSecrets() []string {
 // 注意 smtp.password 这条看似多余的默认值：viper 的 Unmarshal 只遍历它「已知」的键
 // （默认值 / 配置文件 / BindEnv），未注册的键即使开了 AutomaticEnv 也不会被查到——
 // 注册它是为了让该键始终有个可覆盖的落点（SMTP 口令可从 `.env` 提供）。
-// 登记了 Env 的键还会显式 BindEnv，见下面的说明。
+// 登记了 Env 的键还会显式 BindEnv。
 func setDefaults(v *viper.Viper) {
 	for _, d := range fieldDefaults {
 		key := d.Section + "." + d.Key

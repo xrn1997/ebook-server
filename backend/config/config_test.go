@@ -70,8 +70,8 @@ smtp:
 	}
 }
 
-// TestLoadSecretsFromEnv 覆盖同类键的既有契约，防止 smtp 的改动回退掉
-// JWT_SECRET / ADMIN_PASSWORD 的覆盖能力（这两个键早有 SetDefault，故一直可用）。
+// TestLoadSecretsFromEnv 覆盖同类键的同一契约，防止 smtp 的改动回退掉
+// JWT_SECRET / ADMIN_PASSWORD 的覆盖能力（这两个键也登记了默认值，覆盖同理生效）。
 func TestLoadSecretsFromEnv(t *testing.T) {
 
 	path := writeTempYaml(t, `server:
@@ -270,7 +270,7 @@ smtp:
 //
 // viper 的显式空值优先于 SetDefault：若把 "" 原样交给 net.JoinHostPort，
 // 得到的是 ":9091"，net.Listen 会绑定所有网卡——ADR-0010 的网络隔离失效。
-// 空串在文档中的含义一直是「用默认回环地址」，这里钉住它真的落到绑定值上。
+// 空串在文档中的含义是「用默认回环地址」，这里钉住它真的落到绑定值上。
 func TestLoadNormalizesEmptyAdminListenAddr(t *testing.T) {
 	unsetEnv(t, "JWT_SECRET", "ADMIN_JWT_SECRET")
 

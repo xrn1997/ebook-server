@@ -77,9 +77,8 @@ func TestError(t *testing.T) {
 
 // TestEnvelopeShape 信封键名的唯一主人是 model.Response：code / error / data。
 //
-// 包里曾有第二个出口用 gin.H 手拼信封（带成功文案），键名因此存了两份、审计与
-// 客户端各自对着两份键名解析。删掉那条出口后，这条用例盯住两个标准出口的键集合
-// 不再长出第二种形状，且整个响应体能按 model.Response 解码。
+// 这条用例盯住两个标准出口的键集合不长出第二种形状，且整个响应体能按
+// model.Response 解码。
 func TestEnvelopeShape(t *testing.T) {
 	t.Run("成功出口", func(t *testing.T) {
 		c, w := setupErrcodeContext()
@@ -172,8 +171,8 @@ func TestError_Codes(t *testing.T) {
 
 // TestFrom_ResolvesThroughWrappedErrors 业务码沿包装链查找。
 //
-// 表原来是 `errorCodes[err]` 的同一性查找，等于在每条 service 接口上偷偷写一条
-// 「领域错误不许用 %w 包装」的约束——破了的静默落 C0500，且没有任何提示。
+// 同一性查找（errorCodes[err]）会把 %w 包装过的领域错误静默落 C0500，
+// 等于禁止 service 包装领域错误且没有任何提示。
 func TestFrom_ResolvesThroughWrappedErrors(t *testing.T) {
 	wrapped := fmt.Errorf("重置密码失败：%w", model.ErrCommentKeySame)
 	if got := From(wrapped); got != CommentKeySame {
@@ -192,7 +191,7 @@ func (e unhashableError) Error() string { return "unhashable" }
 
 // TestFrom_UnhashableErrorDoesNotPanic 未经登记的任意 error 都必须安全落 C0500。
 //
-// 旧的 map[error]string 查表会对不可哈希的动态类型 panic；错误映射是兜底路径，
+// map[error]string 查表会对不可哈希的动态类型 panic；错误映射是兜底路径，
 // 不能因为错误本身的形状把服务器打崩。
 func TestFrom_UnhashableErrorDoesNotPanic(t *testing.T) {
 	if got := From(unhashableError{"x"}); got != ServerError {

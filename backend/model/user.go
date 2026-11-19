@@ -104,9 +104,9 @@ type DeleteAccountRequest struct {
 	Code string `json:"code" binding:"required,len=6"`
 }
 
-// ProfileUpdate 资料列的部分更新；nil 表示本次不修改该列。
+// ProfileUpdate 资料列的部分更新；nil 表示不修改该列。
 //
-// 用「只写本次提交的列」而不是「读整行再写回三列」：两个设备同时改昵称与头像时，
+// 只写请求提交的列，而不是「读整行再写回三列」：两个设备同时改昵称与头像时，
 // 后者不会把前者刚写入的字段覆盖回旧值。空串仍表示不修改（与请求语义一致）。
 type ProfileUpdate struct {
 	Username *string

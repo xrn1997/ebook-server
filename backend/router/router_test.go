@@ -29,8 +29,8 @@ import (
 	"gorm.io/gorm"
 )
 
-// 路由表此前住在 main() 里：没有 interface，因而没有用例。handler 测试各自另抄一份
-// 「它需要的那几行路由」，于是真实装配漏挂中间件时没人能发现——本文件跑的是真表。
+// 本文件跑的是真表：真实装配漏挂中间件或路由会在这里暴露，
+// 而不是 handler 各自抄的影子路由（路由表的唯一真相在 router 包）。
 
 // denyAll 永远拒绝的 jwt.Parser adapter（这个 seam 上的第二个 adapter）。
 //
@@ -279,8 +279,8 @@ func TestPublicTable_PublicRoutesStayOpen(t *testing.T) {
 
 // TestPublicTable_UploadsServesOnlyAvatars /uploads/avatar 放出头像，同级的其他文件不放。
 //
-// 挂载点曾经是整个 upload.dir（即 config 的 upload.dir，相对服务端工作目录解析），
-// 于是 GET /uploads/.env 与 GET /uploads/ebook.db 都回 200——把后台口令、JWT 密钥
+// 挂载整个 upload.dir（即 config 的 upload.dir，相对服务端工作目录解析）会让
+// GET /uploads/.env 与 GET /uploads/ebook.db 都回 200——把后台口令、JWT 密钥
 // 与全部评论一次性交出去。这里两头都断：头像必须仍然可取（收窄别把功能改坏），
 // 兄弟文件必须取不到。
 func TestPublicTable_UploadsServesOnlyAvatars(t *testing.T) {
@@ -433,7 +433,7 @@ func (w *countingRecorder) Record(_ context.Context, _ model.OperationRecord) er
 // 且只挂在 /api 组上。
 //
 // Deps.Logs 为 nil 表示「不记审计」，非 nil 时中间件必须在 /api 链上——这个分支
-// 此前只出现在生产装配里：路由用例一律传 nil，删掉中间件也不会有人发现。
+// 不钉住的话，删掉中间件也不会有人发现。
 //
 // /health 与 /uploads/avatar 不经过审计中间件：它们不是「某人的一次操作」。
 func TestPublicTable_OperationLogMountedWhenRecorderGiven(t *testing.T) {
@@ -854,8 +854,8 @@ func middlewareIdentity(handlers []gin.HandlerFunc) []string {
 // TestBase_MiddlewareOrder 引擎级中间件链的构成与顺序只此一份（base）。
 //
 // RequestID 必须最先就位：Recovery 的 panic 日志与 Logger 的 request_id 字段都靠它。
-// 顺序此前抄在 Public 与 AdminConsole 两处 r.Use(...) 里，改一处漏一处没有用例能
-// 发现——base 收归单一构造后，这里既钉 base 的产出，也钉两个表面接的就是它的产物。
+// 这里既钉 base 的产出，也钉两个表面接的就是它的产物——顺序只有一个家，
+// 谁绕过 base 或改挂载顺序都会在这里现形。
 func TestBase_MiddlewareOrder(t *testing.T) {
 	td := newTableDeps(t)
 

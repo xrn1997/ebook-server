@@ -43,8 +43,8 @@ func TestOpenAppliesSQLitePragmas(t *testing.T) {
 
 // TestDSNOfCarriesConstraintsOnBothShapes 按连接生效的 pragma 在两类库上都要附加。
 //
-// 内存库曾经被原样返回（「由测试库自己管理」），于是所有走 :memory: 的用例都在
-// 外键关闭的库里跑——比生产宽松，违反约束的写入只有到部署机才报错。
+// 只在文件库上附加，:memory: 用例就会跑在外键关闭的库里——比生产宽松，
+// 违反约束的写入只有到部署机才报错。
 // journal_mode=WAL 是文件库独有的：内存库没有 WAL 可言，不附加。
 func TestDSNOfCarriesConstraintsOnBothShapes(t *testing.T) {
 	memory := dsnOf(":memory:")

@@ -158,12 +158,11 @@ func (s *rotationRaceStore) Rotate(ctx context.Context, id uint, oldHash, newHas
 // TestAuthService_Refresh_RacingDeleteLeavesNoSession 注销与并发刷新的竞态不留活口。
 //
 // 竞态最坏交错：Refresh 查到旧令牌之后、轮换落库之前，注销的全部写完成。轮换是
-// 一条打在旧哈希上的条件更新——行已被撤销删掉，CAS 得 0 行，本次刷新直接失败关闭，
+// 一条打在旧哈希上的条件更新——行已被撤销删掉，CAS 得 0 行，该次刷新直接失败关闭，
 // 库里不会再出现一枚躲过 Revoke 的新令牌，该账号一行不留。
 //
-// 旧写法（条件删旧行 + 插新行）在这里会把新令牌落在撤销之后，只剩「匿名化账号不得
-// 续期」这道兜底：那次刷新虽然拿不到新令牌，账号注销后库里仍躺着一行 30 天有效期的
-// 活口，且要等它自己过期。
+// 条件删旧行 + 插新行的写法会把新令牌落在撤销之后，只剩「匿名化账号不得续期」这道
+// 兜底：刷新拿不到新令牌，但库里仍躺一行 30 天有效期的活口，要等它自己过期。
 func TestAuthService_Refresh_RacingDeleteLeavesNoSession(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
@@ -183,7 +182,7 @@ func TestAuthService_Refresh_RacingDeleteLeavesNoSession(t *testing.T) {
 		NewCredentials(users, raceSessions),
 	)
 
-	// 在轮换即将落库的瞬间跑完整个注销：这次轮换将看到行已不在
+	// 在轮换即将落库的瞬间跑完整个注销：该轮换将看到行已不在
 	raceStore.onRotating = func() {
 		if _, err := testAccount.Delete(testCtx, user.UID, seedCode(t, FlowDeletion, "race@example.com")); err != nil {
 			t.Errorf("注销在刷新窗口内执行失败: %v", err)

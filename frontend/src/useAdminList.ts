@@ -28,12 +28,7 @@ export function useAdminList<T>(load: (params: ListParams) => Promise<Envelope<P
   const hasPrev = computed(() => page.value > 1)
   const hasNext = computed(() => page.value < pageCount.value)
 
-  /**
-   * 请求序号：筛选条件改得快时，先发的那次可能后回。
-   * 只认最新一次发出的响应，慢回的旧响应整段丢弃——否则第 2 页的慢包会把
-   * 已经落地的第 1 页覆盖掉，用户在看到的却是另一套筛选条件下的行。
-   * 守卫实现与 useAdminDetail 共用 requestGuard。
-   */
+  /** 请求序号：先发后回的慢响应整段丢弃，防旧结果覆盖新筛选（与 useAdminDetail 共用 `requestGuard`）。 */
   const requests = createRequestGuard()
 
   /** 拉取一页；成功时清空错误，失败时只留一句可直接展示的中文原因 */
@@ -49,7 +44,7 @@ export function useAdminList<T>(load: (params: ListParams) => Promise<Envelope<P
         error.value = result.message
         return
       }
-      // data 缺失按空页处理（既有语义）；但 data 存在而 list/total 形状不对时，
+      // data 缺失按空页处理；但 data 存在而 list/total 形状不对时，
       // `?? []` 会把「后端改了字段名」渲染成「没有匹配的行」。契约漂移要报错。
       const found = result.data
       if (found && (!Array.isArray(found.list) || typeof found.total !== 'number')) {

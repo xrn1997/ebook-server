@@ -92,7 +92,7 @@ func TestSessions_IssueThenConsume_RotatesInPlace(t *testing.T) {
 	if !after.ExpiresAt.After(time.Now().Add(RefreshTokenTTL - time.Hour)) {
 		t.Fatalf("新令牌的到期时间不是 now+RefreshTokenTTL: %v", after.ExpiresAt)
 	}
-	// 库里始终只有一行：轮换不留第二行——旧写法「删旧行 + 插新行」会把新行落在
+	// 库里始终只有一行：轮换不留第二行——删旧行 + 插新行的写法会把新行落在
 	// 并发撤销之后，等于给已注销账号留一枚 30 天有效期的活口。
 	var rows int64
 	if err := db.Model(&model.RefreshToken{}).Count(&rows).Error; err != nil {
@@ -158,11 +158,11 @@ func TestSessions_Consume_RaceLosesWithErrLoginExpired(t *testing.T) {
 }
 
 // TestSessions_Consume_RejectsRotationAfterRevoke 撤销落在「查到旧行」与「轮换落库」之间时，
-// 本次刷新必须失败关闭，而不是把新令牌写在撤销之后。
+// 该次刷新必须失败关闭，而不是把新令牌写在撤销之后。
 //
-// 这是登出/改密/注销与并发刷新的最坏交错：旧写法（删旧行 + 插新行）在这里会让新令牌
-// 躲过按 user_id 的批量撤销，活满整个 TTL；改成打在旧哈希上的条件更新后，行已不在，
-// CAS 得到 0 行，会话不可能被复活。
+// 这是登出/改密/注销与并发刷新的最坏交错：删旧行 + 插新行的写法会让新令牌躲过按
+// user_id 的批量撤销、活满整个 TTL；打在旧哈希上的条件更新则在行已不在时 CAS 得
+// 0 行，会话不可能被复活。
 func TestSessions_Consume_RejectsRotationAfterRevoke(t *testing.T) {
 	db := testdb.Open(t)
 	users := repository.NewUserRepository(db)

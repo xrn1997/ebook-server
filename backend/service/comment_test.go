@@ -105,10 +105,10 @@ func TestCommentService_Create_RejectsOversizedMultibyteChapterURL(t *testing.T)
 	}
 }
 
-// TestCommentService_Create_WithChapter 创建带聚合键与章节归属的评论（M2 + ADR-0011）。
+// TestCommentService_Create_WithChapter 创建带聚合键与章节归属的评论（ADR-0011）。
 //
 // comment_key 是唯一的聚合键（必填），chapter_url/chapter_name/book_name 只是
-// 过渡期兼容与展示快照——两列同时写入，旧客户端与新客户端才都能读到。
+// 兼容读路径与展示快照——两列同时写入，旧客户端与新客户端才都能读到。
 func TestCommentService_Create_WithChapter(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
@@ -139,7 +139,7 @@ func TestCommentService_Create_WithChapter(t *testing.T) {
 	}
 }
 
-// ── M2 主读路径：List(CommentKeys) ────────────────────────────────────────
+// ── 主读路径：List(CommentKeys) ────────────────────────────────────────
 
 // TestCommentService_List_CommentKeys_SingleKey 单键查询即精确匹配该键。
 //
@@ -298,8 +298,8 @@ func TestCommentService_LegacyChapterURLStillReadable(t *testing.T) {
 
 // TestCommentService_List_LegacyKeys_SingleKey 已废弃路径：单键即精确匹配（ADR-0011）。
 //
-// M2 后聚合键换成 comment_key，这里守的是「旧客户端带 chapter_url + book_name 仍能查到」
-// 这条兼容承诺，不是主读路径（主路径见 List(CommentKeys)）。
+// 这里守的是「旧客户端带 chapter_url + book_name 仍能查到」这条兼容承诺，
+// 不是主读路径（主路径见 List(CommentKeys)）。
 func TestCommentService_List_LegacyKeys_SingleKey(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
@@ -344,7 +344,7 @@ func TestCommentService_List_ByBookName(t *testing.T) {
 	user := serviceRegister(t, authService, "book_filter@example.com", "password123")
 	commentService := testComments
 
-	// 书A 两个不同章节 + 书B 一条 + 无章节一条（都是 chapter_url 时代的历史行）
+	// 书A 两个不同章节 + 书B 一条 + 无章节一条（都是换键前的历史行）
 	seedLegacyComment(t, user.UID, "A1", "https://s/book/1/1.html", "书A")
 	seedLegacyComment(t, user.UID, "A2", "https://s/book/1/2.html", "书A")
 	seedLegacyComment(t, user.UID, "B", "https://s/book/2/1.html", "书B")
@@ -770,7 +770,7 @@ func TestCommentService_MigrateKey_SameKey(t *testing.T) {
 
 // TestCommentService_MigrateKey_BookLevelToChapter 旧键为空 = 把本人未换键的历史行收进真实桶。
 //
-// M2 之前这些行就是「书籍级评论」（没有 chapter_url 可用），换轨后它们统一表现为
+// 这批行入库时是「书籍级评论」（没有 chapter_url 可用），现在统一表现为
 // comment_key 为空。合并书籍时客户端先做这一步，否则会留下一批谁也读不回来的孤儿。
 func TestCommentService_MigrateKey_BookLevelToChapter(t *testing.T) {
 	setupTestDB(t)
@@ -853,8 +853,8 @@ func TestCommentService_MigrateKey_UserIsolation(t *testing.T) {
 
 // TestCommentService_MigrateKeys_Rules 改键规则只有一处实现，两个 scope 共用。
 //
-// migrate（本人）与 rehash（全员）的差别只在归属，规则本身必须一致地成立——
-// 此前后台路径自己抄了一遍判重与长度，其中长度那份没有用例钉住。
+// migrate（本人）与 rehash（全员）的差别只在归属，规则本身必须一致地成立；
+// 这里两个 scope 共用一份用例钉住判重与长度。
 func TestCommentService_MigrateKeys_Rules(t *testing.T) {
 	long := strings.Repeat("k", model.MaxCommentKeyLength+1)
 

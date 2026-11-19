@@ -35,9 +35,8 @@ const (
 	// 前缀里的 /uploads/ 只是 URL 空间，与磁盘上的 upload.dir 没有对应关系；真正的
 	// 挂载目标是 AvatarDir（<upload.dir>/avatar）。挂载点刻意收窄到头像子目录而不是
 	// 整个 upload.dir：静态服务会把根目录下的每个文件都公开出去，而服务端的工作
-	// 目录（也就是相对 upload.dir 解析的地方）同时放着 config.yaml、.env 与数据库
-	// 文件。本服务唯一会写的公开资源就是头像，多挂一层目录只是把兄弟文件递到陌生人
-	// 手里。gin 的 Static 不接受带尾斜杠的路径，这个值刚好合用。
+	// 目录同时放着 config.yaml、.env 与数据库文件。gin 的 Static 不接受带尾斜杠的
+	// 路径，这个值刚好合用。
 	AvatarURLPrefix = "/uploads/" + AvatarSubdir
 )
 
@@ -97,7 +96,7 @@ func (s *Store) SaveAvatar(header *multipart.FileHeader) (string, error) {
 	name := newAvatarName(ext)
 	dstPath := filepath.Join(s.avatarDir, name)
 	// 写盘前兜底确保目录存在（目录可能在运行期被清理）；MkdirAll 幂等，已存在时零开销。
-	// 与 New() 的启动建目录互补：目录缺失时此处自动重建，不再依赖重启。
+	// 与 New() 的启动建目录互补：目录缺失时此处自动重建。
 	if err := os.MkdirAll(s.avatarDir, 0o755); err != nil {
 		return "", fmt.Errorf("ensure avatar dir: %w", err)
 	}

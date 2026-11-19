@@ -1,9 +1,8 @@
 // Package router 装配本服务的两张路由表：公开 API 与后台管理 API。
 //
-// 路由表是一段实现而不是一堆语句：住在 main() 里时它没有 interface，因此无法被
-// 测试——handler 测试只能另抄一份「自己需要的几行路由」，真实装配是否漏挂中间件
-// 没有任何用例能发现（见 ADR-0001 响应信封与认证模型、ADR-0010 后台网络隔离）。
-// 本包的 interface 就是 Public 与 AdminConsole 两个函数：给依赖，拿 engine。
+// 路由表是可测试的实现而不是 main() 里的散句：本包的 interface 就是 Public 与
+// AdminConsole 两个函数——给依赖，拿 engine；真实装配漏挂中间件/路由由本包与
+// handler 的真表用例发现（ADR-0001、ADR-0010）。
 package router
 
 import (
@@ -70,17 +69,10 @@ type AdminDeps struct {
 
 // newEngine 创建一个 Gin 引擎；trustLoopbackProxy 决定是否采信回环代理的转发头。
 //
-// 公开表面在 Nginx 后面：Nginx 终止 TLS 后把真实客户端 IP 写进 X-Forwarded-For，
-// 应用端口只绑回环。因此公开引擎只信任 127.0.0.1 / ::1：
-//   - Nginx 转来的请求（对端是回环）采信 X-Forwarded-For，审计与请求日志拿到真实 IP；
-//   - 外部直连（对端不是回环）仍取连接对端地址，客户端无法伪造 X-Forwarded-For；
-//   - 若应用被错误地绑到 0.0.0.0，公网直连同样伪造不了代理头。
-//
-// 后台表面没有反向代理：远程管理走 SSH 隧道，隧道连接的对端就是回环。若这里也采信
-// 回环代理头，隧道用户就能轮换 X-Forwarded-For 绕过按 IP 的登录锁定分桶（ADR-0010）。
-// 因此后台传 false，ClientIP 始终取连接对端地址。
-//
-// 不信任任意来源是底线：Gin 默认信任所有代理，任何人都能把审计里的 IP 改成别的值。
+// 公开表面在 Nginx 后面（Nginx 覆写 X-Forwarded-For），只信任 127.0.0.1/::1 转来的
+// 代理头；后台表面没有反向代理，ClientIP 始终取连接对端地址，否则 SSH 隧道用户能
+// 轮换 X-Forwarded-For 绕过按 IP 的登录锁定分桶（ADR-0027）。Gin 默认信任所有代理，
+// 任何人都能把审计里的 IP 改成别的值，两表面都必须显式设置。
 func newEngine(trustLoopbackProxy bool) *gin.Engine {
 	r := gin.New()
 	if !trustLoopbackProxy {
@@ -103,9 +95,8 @@ func newEngine(trustLoopbackProxy bool) *gin.Engine {
 //
 // 顺序是这条链的语义本身：request id 必须最先就位，Recovery 的 panic 日志与
 // Logger 的 request_id 字段才带得上它（ADR-0001）。withCORS=false 供不挂跨域头的
-// 表面使用（后台前端与后台同源嵌入）。此前这段顺序抄在 Public 与 AdminConsole
-// 两处 r.Use(...) 里，改一处漏一处没有用例能发现——收归这一个构造后由
-// TestBase_MiddlewareOrder 钉住产出与两表面的接线。
+// 表面使用（后台前端与后台同源嵌入）。顺序与构成由 TestBase_MiddlewareOrder 钉住
+// 产出与两表面的接线。
 //
 // 不导出：本包的公开面只有 Public 与 AdminConsole（见包注释）。
 //
@@ -126,8 +117,8 @@ func base(withCORS bool) []gin.HandlerFunc {
 //
 // 引擎级中间件取自 base(true)（顺序与构成见 base，ADR-0001）。审计只挂在 /api 组上：
 // 健康探针、Swagger 与头像静态文件不是「某人的一次操作」，不该经过审计中间件。
-// 鉴权一律挂在**路由组**上，不逐路 inline——同一张表里两种挂法并存时，
-// 新加一路很容易跟着错的那份写，且没有用例能发现它裸奔。
+// 鉴权一律挂在路由组上、不逐路 inline：同一张表里两种挂法并存时，新加一路很容易
+// 跟着错的那份写。
 func Public(d Deps) *gin.Engine {
 	r := newEngine(true)
 	r.Use(base(true)...)

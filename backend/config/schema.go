@@ -43,12 +43,10 @@ const (
 //
 // 每个条目都把键登记进 viper 的已知键集合，这一点比默认值本身更重要：viper 的
 // Unmarshal 只遍历已知键（默认值 / 配置文件 / BindEnv），没登记的键即使开了
-// AutomaticEnv 也会被整个跳过——配置文件里没有那一段时，环境变量里的同名值
-// 读不到。
+// AutomaticEnv 也会被整个跳过——配置文件里没有那一段时，环境变量里的同名值读不到。
 //
 // database.path 在此登记但刻意**不**给默认值：缺省文件名由 pkg/database.DefaultPath
-// 决定，这里再写一份就成了两个真相来源。登记它是为了让 DATABASE_PATH 这类覆盖
-// 真的能生效，并让配置加载知道这个键存在。
+// 决定，再写一份就成了两个真相来源。登记它是为了让 DATABASE_PATH 这类覆盖真的生效。
 var fieldDefaults = []fieldDefault{
 	{Section: "server", Key: "port", Value: 9090},
 	// 公开 API 默认只监听回环：对外服务由 Nginx 反代（TLS 终止、限流、访问日志）。
@@ -90,11 +88,11 @@ func (c *Config) normalize() {
 	c.Server.Mode = strings.TrimSpace(c.Server.Mode)
 
 	// 同一个理由覆盖规则表里其余按 TrimSpace 匹配的字符串字段：**校验看到的值必须
-	// 就是运行时使用的值**，否则规则通过的是一个值、程序用的是另一个带空白的兄弟。
+	// 就是运行时使用的值**。
 	//
 	// 后果最实在的是 admin.username：登录把请求里的用户名与配置值做常量时间比较
 	// （internal/admin/auth.go），`username: " admin "` 会通过 config.Load 却永远
-	// 匹配不上「admin」——后台被永久锁死，而且启动时一声不响。
+	// 匹配不上「admin」——后台被永久锁死且启动无告警。
 	// jwt.secret / admin.jwt_secret 不收敛时，密钥字面上带着空白参与 HMAC，
 	// 与「配置里写的那串」不是同一个值；upload.dir 则会把带空白的目录名当路径用。
 	c.Admin.Username = strings.TrimSpace(c.Admin.Username)
@@ -123,7 +121,7 @@ func (c *Config) normalize() {
 //
 // 它们不是代码内置默认值，但同样不能带到 release：把 .env.example 原样复制成
 // .env 就上线，等于用一把全网都读得到的密钥签名、用一个全网都知道的口令登录后台。
-// release 模式必须把它们和内置默认值一样拒掉。
+// release 模式把它们和内置默认值一样拒掉。
 //
 // 键是 section.key，值是该键在仓库里出现过的占位串。
 var shippedPlaceholderSecrets = map[string][]string{

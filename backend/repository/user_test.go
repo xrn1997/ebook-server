@@ -169,7 +169,7 @@ func TestUserRepository_UpdateProfile_DoesNotTouchCredentials(t *testing.T) {
 	}
 }
 
-// TestUserRepository_UpdateProfile_OnlyWritesProvidedColumns 未被本次请求提交的列
+// TestUserRepository_UpdateProfile_OnlyWritesProvidedColumns 未被该请求提交的列
 // 不得出现在 UPDATE 里：并发改昵称与头像时，后写的一方不能把前者覆盖回旧值。
 func TestUserRepository_UpdateProfile_OnlyWritesProvidedColumns(t *testing.T) {
 	setupTestDB(t)
@@ -259,7 +259,7 @@ func TestUserRepository_CredentialWrites_OnlyCredentialColumns(t *testing.T) {
 	}
 
 	// 失败记账：达到阈值与否的判定必须由数据库在同一条语句里给出。
-	// 「先递增再读回」的两步走会把并发的成功清零读进本次判定——该锁的没锁、
+	// 「先递增再读回」的两步走会把并发的成功清零读进判定——该锁的没锁、
 	// 不该锁的提前锁，而 service 层承诺的是原子。
 	until := time.Now().Add(15 * time.Minute).Truncate(time.Second)
 	for i := 1; i <= 4; i++ {

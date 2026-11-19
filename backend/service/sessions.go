@@ -15,13 +15,12 @@ const RefreshTokenTTL = 30 * 24 * time.Hour
 
 // refreshTokenStore 会话模块自持的 refresh token 存储能力（模块私有，不进 ports.go）。
 //
-// 与 ports.go 的 consumer-defined 接口同一套道理，但这份能力只服务 Sessions 自己：
-// 它不是给别的模块的接缝，而是把「一次会话」的数据面收进模块边界内。
-// Issue/Consume/Revoke 的数据面是这一组：签发（Create）、按哈希查未过期行（FindByHash）、
-// 就地轮换（Rotate，条件更新而不是删+插）、按用户撤销（DeleteByUserID）。
-// 过期清理不在这一组语义里，也不进这个接口：FindByHash 只认未过期的行，过期记录因此
-// 行为惰性，回收的只是磁盘；repository 留着 DeleteExpired 当预埋的清理原语，等定时清理
-// 任务真落地时再扩接口（口径见 docs/development.md「当前已知问题」）。
+// 把「一次会话」的数据面收进模块边界内，只服务 Sessions 自己：签发（Create）、
+// 按哈希查未过期行（FindByHash）、就地轮换（Rotate，条件更新而非删+插）、
+// 按用户撤销（DeleteByUserID）。过期清理不在这组语义里、也不进这个接口：
+// FindByHash 只认未过期的行，过期记录行为惰性，回收的只是磁盘；repository 的
+// DeleteExpired 是预埋的清理原语，定时清理任务落地时再扩接口（口径见
+// docs/development.md「当前已知问题」）。
 type refreshTokenStore interface {
 	Create(ctx context.Context, token *model.RefreshToken) error
 	FindByHash(ctx context.Context, hash string) (*model.RefreshToken, error)

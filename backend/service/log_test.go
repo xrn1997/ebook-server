@@ -270,8 +270,7 @@ func TestLogService_GetByUserID_PaginationBoundaries(t *testing.T) {
 
 // TestLogService_GetByUserID_PagingClamp 分页钳制与评论共用同一处实现（model.NormalizePage）。
 //
-// 两条列表曾经各写一份同样的钳制，改缺省或改上限要记着改两处；合并后这里钉住
-// 日志这条路径跟着同一套规则走：越界页码抬到 1，超大 page_size 退回缺省 10，
+// 钉住日志这条路径跟着同一套规则走：越界页码抬到 1，超大 page_size 退回缺省 10，
 // 而钳制不动 Total，也带不出别人的行。
 func TestLogService_GetByUserID_PagingClamp(t *testing.T) {
 	setupTestDB(t)

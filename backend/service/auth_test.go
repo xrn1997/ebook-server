@@ -62,8 +62,8 @@ func TestAuthService_Register_WrongCode(t *testing.T) {
 
 // TestAuthService_Register_TooManyAttempts 注册验证码错到上限应回尝试超限（A0241）。
 //
-// 这条曾经是坏的：校验点写成 `!= ResultOK`，把「尝试超限」和「码不对」「无码」
-// 一起折成 ErrCodeInvalid，于是 A0241 在 /api/auth/register 上永远不可达。
+// 钉住校验点要精确区分 ResultTooManyAttempts：折成 `!= ResultOK` 会把「尝试超限」
+// 与「码不对」「无码」一起折进 ErrCodeInvalid，A0241 在 /api/auth/register 上就不可达。
 func TestAuthService_Register_TooManyAttempts(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)

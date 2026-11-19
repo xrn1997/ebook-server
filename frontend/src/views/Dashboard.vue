@@ -10,8 +10,7 @@ const error = ref('')
 onMounted(async () => {
   const result = await unwrap(fetchStats(), '加载失败')
   if (result.ok && result.data !== undefined) stats.value = result.data
-  // 成功却没带 data 也是契约漂移：让它落进 else，否则模板永远停在「加载中…」，
-  // 把后端改动藏成一次看似正常的挂起。
+  // 成功却没带 data 也是契约漂移：必须落进 else，否则模板永远停在「加载中…」。
   else error.value = result.ok ? '统计数据格式不正确' : result.message
 })
 </script>

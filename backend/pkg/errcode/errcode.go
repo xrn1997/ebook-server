@@ -49,16 +49,14 @@ const (
 
 // errorCodes 领域 sentinel 错误到业务码的唯一映射表。
 //
-// 此前这份映射散落在各 handler 的手写 switch 里，新增错误要改多处，
-// 漏一处就静默退化成 C0500。集中成表后，handler 一律走 From/Respond。
+// 映射集中成表，handler 一律走 From/Respond；漏映射的表现是静默退化成 C0500。
 //
-// 表里只登记**有产生方**的 sentinel——没有产生方的哨兵会把「谁在产生这个错误」
-// 变成读代码时猜不出来的事（ADR-0001 已把用户名重复、通用无权限等哨兵随之删除；
-// 对应的业务码常量保留，因为它们是对外词表的一部分）。
+// 表里只登记**有产生方**的 sentinel（ADR-0001）：没有产生方的哨兵会让「谁在产生
+// 这个错误」无法回答。对应的业务码常量保留——它们是对外词表的一部分。
 //
-// 注意：个别端点需要**覆盖**默认映射（例如登录为防枚举把「账号不存在」
-// 映射成 A0210，见 ADR-0006）。覆盖用 Map 写在调用点并注明理由——
-// 只改这张表而不同步端点，会静默破坏防枚举。
+// 个别端点需要**覆盖**默认映射（例如登录为防枚举把「账号不存在」映射成 A0210，
+// ADR-0006）。覆盖用 Map 写在调用点并注明理由——只改这张表而不同步端点，会静默
+// 破坏防枚举。
 var errorCodes = []struct {
 	err  error
 	code string
@@ -84,21 +82,19 @@ var errorCodes = []struct {
 	// 却在哈希时失败；这条约束由凭据模块判定，业务码属「密码格式不合规」（A0120）。
 	{model.ErrPasswordInvalid, PasswordInvalid},
 
-	// 头像不合规由 pkg/upload 在生产、以 model.ErrInvalidImage 表达：登记在这里而不是
-	// 各 handler 手映射——此前这条错误从未进过表，端点靠 `err == ...` 自己判，
-	// 漏判即静默落 C0500（本表存在的全部理由）。哨兵放 model 而不是能力包，
+	// 头像不合规由 pkg/upload 以 model.ErrInvalidImage 表达，登记在表里而不是各
+	// handler 手映射：漏判即静默落 C0500。哨兵放 model 而不是能力包，
 	// 是为了不让错误映射反向依赖 pkg/upload。
 	{model.ErrInvalidImage, BadRequest},
 }
 
 // From 返回 err 对应的业务码，未登记的 err 一律落通用码 ServerError。
 //
-// errors.Is 会走完整条包装链，因此 service 用 %w 加上下文的错误仍能拿到正确
-// 业务码——此前是 `errorCodes[err]` 的同一性查表，等于在每个 service 的
-// interface 上偷偷写一条「领域错误一律不许包装」的约束，破了的静默落 C0500。
+// errors.Is 会走完整条包装链，service 用 %w 加上下文后仍能拿到正确业务码
+// （同一性查表会把包装过的领域错误静默落 C0500）。
 //
-// 一条链上同时出现两枚已登记 sentinel 时按表序取先者；今天 sentinel 都是叶子，
-// 不存在这种链，不为它加逐层剥离的间接层。
+// 一条链上同时出现两枚已登记 sentinel 时按表序取先者；sentinel 都是叶子，
+// 不为不存在的链加逐层剥离的间接层。
 //
 // 未登记的错误不能回传其 error 文案（可能含驱动/网络细节），
 // 调用方应对 ServerError 使用兜底文案（见 Respond）。

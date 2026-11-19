@@ -14,9 +14,9 @@ import { withVueTs, vueTsConfigs } from '@vue/eslint-config-typescript'
  * 类型面进不了 TS program，`src/router.ts` 与 `src/main.ts` 里每一个 `import './views/X.vue'`
  * 都会被当成 error 类型，压出一批假的 `no-unsafe-assignment`——那是工具链缺口，不是缺陷。
  *
- * 不写格式类规则：仓内没有格式化工具，引一个会造成全仓 reformat 的巨型 diff；ESLint 一旦代替
- * 格式化工具立规就成了和现有排版打架的那一方（`flat/recommended` 带进 `max-attributes-per-line`、
- * `html-self-closing` 这类纯排版规则，所以取 `flat/essential`，只收正确性层）。
+ * 不写格式类规则：仓内没有格式化工具，ESLint 不代替格式化工具立规（裁决），故取
+ * `flat/essential` 只收正确性层——`flat/recommended` 会带进 `max-attributes-per-line`、
+ * `html-self-closing` 这类纯排版规则。
  */
 
 /**
@@ -37,11 +37,9 @@ const successCodeImport = {
 }
 
 export default withVueTs(
-  // `allowComponentTypeUnsafety` 默认 true，而它推入的覆盖配置 `files` 是
-  // `**/*.ts`/`**/*.tsx`/`**/*.mts`/`**/*.vue`——不只 `.vue`。留在这个默认值上，
-  // `no-unsafe-*` 五类在全部生产代码里都是关的，本仓承诺的「边界 any 扩散」门等于不存在。
-  // 取 false 打开它，代价只落在真正操作组件类型的 `src/main.ts` 与 `src/router.ts`，
-  // 由下面那条带理由的作用域豁免承担。
+  // `allowComponentTypeUnsafety` 默认 true，而它推入的覆盖配置命中所有 `.ts`/`.vue`
+  // 而不只 `.vue`：留在默认值上，`no-unsafe-*` 五类在生产代码里等于关掉。取 false 打开，
+  // 代价只落在真正操作组件类型的 `src/main.ts` 与 `src/router.ts`，由下面的作用域豁免承担。
   { allowComponentTypeUnsafety: false },
 
   { ignores: ['dist/**', 'node_modules/**', 'coverage/**'] },
@@ -68,11 +66,10 @@ export default withVueTs(
   },
 
   {
-    // 这两个文件把 `.vue` 组件喂给 `createApp` / `createRouter`。TS-ESLint 取不到 `.vue` 的
-    // 完整类型面，回落到带 `any` 的兜底类型，于是每一条组件 import 都报「error typed」——
-    // 工具链缺口，不是缺陷（与上面否掉手搭 parserOptions 同一个理由）。
-    // 豁免只到真正触发的两条规则、只在这两个文件：`no-unsafe-call`/`member-access`/`return`
-    // 在这里仍然在线，其余所有文件由 `no-unsafe-*` 五类守住。
+    // 这两个文件把 `.vue` 组件喂给 `createApp` / `createRouter`；TS-ESLint 取不到 `.vue` 的
+    // 完整类型面，组件 import 落成 error typed（工具链缺口，同头注释）。豁免只到真正触发的
+    // 两条规则、只在这两个文件：`no-unsafe-call`/`member-access`/`return` 在这里仍然在线，
+    // 其余所有文件由 `no-unsafe-*` 五类守住。
     files: ['src/main.ts', 'src/router.ts'],
     rules: {
       '@typescript-eslint/no-unsafe-assignment': 'off',

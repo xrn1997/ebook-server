@@ -526,7 +526,7 @@ const docTemplate = `{
         },
         "/api/comments": {
             "get": {
-                "description": "获取评论列表。comment_keys 是 M2 聚合键过滤（逗号分隔，返回并集）；\nchapter_url / book_name 已废弃，仅为让未换键的历史行继续可读而保留。",
+                "description": "获取评论列表。comment_keys 是评论聚合键过滤（逗号分隔，返回并集）；\nchapter_url / book_name 已废弃，仅为让未换键的历史行继续可读而保留。",
                 "produces": [
                     "application/json"
                 ],
@@ -537,7 +537,7 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "M2 聚合键列表（逗号分隔，返回并集；最多 50 个，单键最长 200）",
+                        "description": "评论聚合键列表（逗号分隔，返回并集；最多 50 个，单键最长 200）",
                         "name": "comment_keys",
                         "in": "query"
                     },
@@ -587,7 +587,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "创建新评论。comment_key（M2 聚合键）必填，服务端只存不解释其格式；\nchapter_url / chapter_name / book_name 可选，仅作过渡期兼容与展示快照。",
+                "description": "创建新评论。comment_key（评论聚合键）必填，服务端只存不解释其格式；\nchapter_url / chapter_name / book_name 可选，仅作兼容读路径与展示快照。",
                 "consumes": [
                     "application/json"
                 ],
@@ -1193,6 +1193,7 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "avatar": {
+                    "description": "Avatar 只接受 http/https（http_url）：javascript:/data:/file: 都是合法 URL，\n但不是头像地址。注意这**只约束新输入**——users.avatar 是自由文本列，存量行\n可能有收紧前写入的非 http 协议值，本服务不迁移它；渲染侧（Android）仍须把\n返回的 URL 当不可信输入。",
                     "type": "string"
                 },
                 "email": {

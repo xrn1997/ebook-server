@@ -13,7 +13,6 @@ func Recovery() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		defer func() {
 			if err := recover(); err != nil {
-				// 记录错误日志
 				zap.L().Error("panic recovered",
 					zap.String("request_id", GetRequestID(c)),
 					zap.Any("error", err),

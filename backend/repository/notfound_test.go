@@ -24,8 +24,8 @@ func TestTranslateNotFound(t *testing.T) {
 }
 
 // TestNotFoundStopsAtTheSeam 账号查不到时，跨过 seam 的必须是领域哨兵，
-// 而且**不是** gorm 的错误——否则 service 与后台就又得各自判一次「是不是没查到」，
-// 换 ORM 也要跟着改上层（ADR-0007 当年被拒、本次采纳的那个方案）。
+// 而且**不是** gorm 的错误——否则 service 与后台就得各自判一次「是不是没查到」，
+// 换 ORM 也要跟着改上层（ADR-0007 否决的方案）。
 func TestNotFoundStopsAtTheSeam(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)

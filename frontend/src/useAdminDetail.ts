@@ -8,9 +8,8 @@ import { createRequestGuard } from './requestGuard'
  * 请求序号与 useAdminList.loadPage 同一套语义：连续点开两次详情时，
  * 先发后回的旧响应整段丢弃，不覆盖已经落地的新结果。
  *
- * 取哪条记录由 `load(arg)` 的入参给出，而不是让调用方的 fetcher 去闭包读一个可变的外层
- * 变量：本函数在第一个 `await` 之前同步调用 fetcher，所以那种写法今天碰巧是对的，
- * 但一旦有人在前面插入 await（防抖、令牌刷新），它就会读到「当前」而不是「请求时」的 id。
+ * 取哪条记录由 `load(arg)` 的入参给出，不靠调用方 fetcher 闭包读可变的外层变量：
+ * 闭包读到的是调用时的值，fetcher 前一旦插入 await（防抖、令牌刷新），拿到的就不是「请求时」的 id。
  * 刻意不自带 onMounted：视图自己决定何时加载，也让本模块能在无 DOM 环境下直接测。
  */
 export function useAdminDetail<T, A>(
@@ -39,9 +38,8 @@ export function useAdminDetail<T, A>(
         data.value = result.data
       } else {
         data.value = undefined
-        // 详情必然带载荷：成功却没有 data 是契约漂移（字段改名、整键被 omitempty 掉）。
-        // 只判 ok 会把这一格留空——error 空、data 空、loading 落，三链皆假的模板让详情区
-        // 整块消失，把后端改动渲染成「没有这条记录」。与 useAdminList 同一判据：契约漂移要报错。
+        // 详情必然带载荷：成功却没有 data 是契约漂移（字段改名、整键被 omitempty 掉），
+        // 与 useAdminList 同一判据报错；只判 ok 会把它渲染成「没有这条记录」。
         error.value = result.ok ? '详情数据格式不正确' : result.message
       }
     } catch (e) {

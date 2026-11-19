@@ -84,7 +84,7 @@ func TestCheckReportsPackageKey(t *testing.T) {
 // TestMissingAndUnparseableLockfileAreIssues 读不到锁文件不能当成通过。
 //
 // 「文件不在」与「JSON 坏了」都让检查失去意义；静默绿一次，下一次内网 URL 就跟着
-// commit 进来了。前端整体删除时这条会红，那时按当次决定删掉这个门禁包。
+// commit 进来了。前端整体删除时这条会红，届时删掉这个门禁包。
 func TestMissingAndUnparseableLockfileAreIssues(t *testing.T) {
 	root := t.TempDir()
 	if issues := Check(root); len(issues) != 1 || !strings.Contains(issues[0].Message, "missing") {

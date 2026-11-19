@@ -62,13 +62,13 @@ func (s *ProfileService) Update(ctx context.Context, uid uint, req *model.Update
 		update.Avatar = &nextAvatar
 	}
 
-	// 只写本次提交的列：整行 Save 会把并发的登录计数/密码写回旧值，
-	// 把三个字段一起写回则会让并发改不同字段的请求互相覆盖。
+	// 只写请求提交的列：整行 Save 会把并发的登录计数/密码写回旧值，
+	// 读到的字段一起写回则会让并发改不同字段的请求互相覆盖。
 	if err := s.users.UpdateProfile(ctx, uid, update); err != nil {
 		return nil, err
 	}
 
-	// 清理旧头像文件（ADR-0011）：仅当本次确实更换了头像时删除旧文件。
+	// 清理旧头像文件（ADR-0011）：仅当确实更换了头像时才删旧文件。
 	if req.Avatar != "" && oldAvatar != "" && oldAvatar != avatar {
 		s.deleteAvatarIfUnreferenced(ctx, oldAvatar)
 	}

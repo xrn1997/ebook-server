@@ -477,7 +477,7 @@ func TestCommentRepository_FindByChapterURLs_Empty(t *testing.T) {
 	}
 }
 
-// ── M2 主读路径：按 comment_key 过滤 ─────────────────────────────────────
+// ── 主读路径：按 comment_key 过滤 ─────────────────────────────────────
 
 // TestCommentRepository_FindByCommentKeys_SingleKey 单键查询即精确匹配该键。
 //
@@ -592,7 +592,7 @@ func TestCommentRepository_FindByCommentKeys_Pagination(t *testing.T) {
 
 // TestCommentRepository_FindByCommentKeys_SkipsUnkeyedRows comment_key 为空的行不属于任何桶。
 //
-// 空键 = 尚未换键的历史行（M2 之前入库、服务端再也算不出键）。非空键过滤必须把它们
+// 空键 = 换键前入库的历史行（服务端算不出键）。非空键过滤必须把它们
 // 排除在外，否则一次错键迁移就会把无主评论混进别人的章节。
 func TestCommentRepository_FindByCommentKeys_SkipsUnkeyedRows(t *testing.T) {
 	setupTestDB(t)
@@ -635,7 +635,7 @@ func TestCommentRepository_FindByCommentKeys_NoMatch(t *testing.T) {
 
 // TestCommentRepository_FindByChapterURLs_LegacyRowsReadable 旧读路径仍要能读到未换键的历史行。
 //
-// M2 前入库的评论只有 chapter_url，服务端无法把它重算成 comment_key（算键需要作者），
+// 换键前入库的评论只有 chapter_url，服务端无法把它重算成 comment_key（算键需要作者），
 // 因此这些行只能靠 chapter_url 继续可见——这是保留整条废弃路径的唯一理由。
 func TestCommentRepository_FindByChapterURLs_LegacyRowsReadable(t *testing.T) {
 	setupTestDB(t)
@@ -659,8 +659,8 @@ func TestCommentRepository_FindByChapterURLs_LegacyRowsReadable(t *testing.T) {
 
 // TestCommentRepository_MigrateKey_Success 迁移改的是 comment_key，chapter_url 不受影响。
 //
-// 换轨前聚合键就是 chapter_url，所以这里特意留一条「chapter_url = old-key 但
-// comment_key = other-key」的行：它必须原地不动，证明旧列不会再被迁移误伤。
+// 换键前聚合键是 chapter_url，所以这里特意留一条「chapter_url = old-key 但
+// comment_key = other-key」的行：它必须原地不动，证明旧列不会被迁移误伤。
 func TestCommentRepository_MigrateKey_Success(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)
@@ -836,9 +836,9 @@ func TestCommentRepository_Count(t *testing.T) {
 
 // TestCommentRepository_MigrateKey_BookLevel 旧键为空 = 收拢本人尚未换键的历史行。
 //
-// 换轨后空串不再是「书籍级评论」而是「还没有 comment_key 的行」——chapter_url 时代的
-// 书籍级评论正好落在这批里（那时它们就没有章节 URL）。客户端合并书籍后要做的第一件事
-// 就是把它们一次性收进真实的桶，因此 old_key="" 必须精确命中这批行、且只命中这批行。
+// 空串不代表「书籍级评论」而是「还没有 comment_key 的行」——旧契约里的
+// 书籍级评论正好落在这批里（它们没有章节 URL）。客户端合并书籍后要先把它们
+// 一次性收进真实的桶，因此 old_key="" 必须精确命中这批行、且只命中这批行。
 func TestCommentRepository_MigrateKey_BookLevel(t *testing.T) {
 	setupTestDB(t)
 	defer cleanupTestDB(t)

@@ -15,8 +15,8 @@ import (
 
 // UserStore 管理面对账号的访问能力（consumer-defined，ADR-0007）。
 //
-// 只列后台实际需要的方法，由 repository.UserRepository 满足。
-// 全量列表不单列方法：Search 传空关键字即不参与过滤（两份方法只差一个 WHERE 形式）。
+// 只列后台实际需要的方法，由 repository.UserRepository 满足。全量列表不单列方法：
+// Search 传空关键字即不参与过滤。
 type UserStore interface {
 	Count(ctx context.Context) (int64, error)
 	Search(ctx context.Context, keyword string, page, pageSize int) ([]model.User, int64, error)
@@ -27,7 +27,7 @@ type UserStore interface {
 //
 // 由 service.CommentService 满足：列表视图、分页、治理删、统计与全局改键都在
 // 模块内，后台只声明自己需要的能力。两个表面共用同一个模块，但引擎与鉴权仍分离
-// （ADR-0010）。列表不再序列化实体：返回的是固定视图（无 email）。
+// （ADR-0010）。列表序列化固定视图（无 email），不外露实体。
 type CommentModule interface {
 	Count(ctx context.Context) (int64, error)
 	CountByUserID(ctx context.Context, userID uint) (int64, error)
@@ -43,14 +43,12 @@ type LogStore interface {
 	FindBy(ctx context.Context, filter model.LogFilter, page, pageSize int) ([]model.OperationLog, int64, error)
 }
 
-// 后台登录限流参数（防暴力破解的应用层兜底）。
+// 后台登录限流参数（防暴力破解的应用层兜底）。后台登录是暴力破解的主要攻击面
+// （密码门被撞开即用户隐私数据全量泄露），即使已通过独立监听地址做网络隔离，
+// 也要防内网/本机侧的爆破；限流 key 用来源 IP，单进程内存实现（pkg/ratelimit）。
 //
-// 后台登录是暴力破解的主要攻击面（密码门若被撞开，用户隐私数据全量泄露），
-// 必须做应用层兜底——即使后台已通过独立监听地址做了网络隔离，也要防
-// 内网/本机侧的爆破。限流 key 用来源 IP，单进程内存实现（pkg/ratelimit）。
-//
-// loginLockMessage 不进 errcode 表：那是 model 哨兵到业务码的映射，这里没有哨兵
-// ——限流拒绝是本端点自己的判定，码与文案在调用点显式给出（A0241 + 这句文案）。
+// loginLockMessage 不进 errcode 表（那张表是 model 哨兵到业务码的映射，这里没有哨兵）：
+// 限流拒绝是本端点自己的判定，码与文案在调用点显式给出（A0241 + 这句文案）。
 const (
 	loginLimiterLimit  = 5           // 每个窗口最多 5 次尝试
 	loginLimiterWindow = time.Minute // 固定窗口 1 分钟
@@ -64,11 +62,9 @@ type Handler struct {
 	logs         LogStore
 	session      *Session
 	loginLimiter *ratelimit.Limiter
-	// loginMu 让「Peek → 校验口令 → Allow」成为一次原子操作。
-	//
-	// 分开调用时，一批并发请求可以全部通过 Peek（此时还没人记失败），于是限流
-	// 写着的「每分钟 5 次」实际变成「一次并发爆发里任意多次」——口令比对本身很快，
-	// 这正是爆破想要的形态。临界区里只有一次摘要比较，串行化不影响正常登录。
+	// loginMu 让「Peek → 校验口令 → Allow」成为一次原子操作：分开调用时，一批并发
+	// 请求可以全部通过 Peek，「每分钟 5 次」实际变成一次爆发里任意多次。临界区里只有
+	// 一次摘要比较，串行化不影响正常登录。
 	loginMu sync.Mutex
 }
 
@@ -113,9 +109,9 @@ func (h *Handler) Login(c *gin.Context) {
 		return
 	}
 
-	// 绑定失败不占配额；从「是否已锁定」到「记录这次失败」必须在同一临界区里，
-	// 否则并发爆发能绕过限流（见 loginMu）。登录只有单窗口，直接用 Limiter 的
-	// Peek/Allow：成功不记账、失败才记。多窗口形态（发码的双窗口）才走 ratelimit.AllowAll。
+	// 绑定失败不占配额；「是否已锁定」到「记录这次失败」必须在同一临界区里，否则
+	// 并发爆发能绕过限流（见 loginMu）。单窗口直接用 Limiter 的 Peek/Allow：成功不
+	// 记账、失败才记；多窗口形态（发码的双窗口）才走 ratelimit.AllowAll。
 	h.loginMu.Lock()
 	defer h.loginMu.Unlock()
 	if h.loginLimiter.Peek(ip) {
@@ -259,28 +255,21 @@ func (h *Handler) DeleteComment(c *gin.Context) {
 	errcode.Success(c, nil)
 }
 
-// rehashRequest 后台全局改键请求体。
-//
-// binding 上留 required + max=200 只为把契约写进对外文档（Swagger 会照着 tag 标出
-// 「必填」与 maxLength）；真正的判定在评论模块 MigrateKeys 一处——它按字节再查一次
-// 键长，与写这一列的约束同源，超长键无论 tag 写什么都会被 A0400 拒掉。
-// （tag 只能写字面量、引用不了 model.MaxCommentKeyLength：本包 struct 由同包的
-// TestRehashRequestBindingMatchesMaxCommentKeyLength 钉住，model 包那三个键由
-// TestCommentKeyBindingTagsMatchMaxCommentKeyLength 钉住——同一个常量，各钉各自包里的
-// struct。运行时的字节检查只兜「已放行」之后的底，救不了被 tag 提前拒掉的请求。）
+// rehashRequest 后台全局改键请求体。binding 上的 required + max=200 只为把契约写进
+// 对外文档（Swagger 照 tag 标注）；真正的判定在评论模块 MigrateKeys 一处，与
+// comment_key 列的约束同源。tag 只能写字面量、引用不了 model.MaxCommentKeyLength，
+// 故本包 struct 由 TestRehashRequestBindingMatchesMaxCommentKeyLength 钉住同源关系。
 type rehashRequest struct {
 	OldKey string `json:"old_key" binding:"required,max=200"`
 	NewKey string `json:"new_key" binding:"required,max=200"`
 }
 
-// RehashComments 后台全局改键：把所有用户挂在旧聚合键下的评论迁到新键。
-//
-// 这是 M2 客户端派生键的配套运维能力：某个键算错了（归一化规则变更、书名作者
-// 解析出错）会让一堆评论聚错桶，而公开端点的 migrate 只动本人行，救不了别人的评论。
-// 放在后台引擎而非公开 API（ADR-0010）：它按定义要跨用户写数据，
-// 挂到公网端口等于把「任意改全员评论归属」暴露给未认证流量。
-// 新旧相同返回 A0305；无匹配行返回 0（幂等，可重复调用）——两条规则来自
-// 评论模块 MigrateKeys，与公开 migrate 同源。
+// RehashComments 后台全局改键：把所有用户挂在旧聚合键下的评论迁到新键——聚合键
+// 算错（归一化规则变更、书名作者解析出错）时的修复手段，公开端点的 migrate 只动
+// 本人行，救不了别人的评论。放在后台引擎而非公开 API（ADR-0010）：它按定义要跨用户
+// 写数据，挂到公网端口等于把「任意改全员评论归属」暴露给未认证流量。
+// 新旧相同返回 A0305；无匹配行返回 0（幂等，可重复调用）——两条规则来自评论模块
+// MigrateKeys，与公开 migrate 同源。
 //
 // @Summary 后台全局改评论聚合键（跨用户）
 // @Tags 管理后台

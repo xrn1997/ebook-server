@@ -74,7 +74,7 @@ func setup(t *testing.T) (*gin.Engine, *gorm.DB) {
 	)
 
 	// 引擎来自真表：Base 中间件链、/admin/api 鉴权挂载、SPA 与 Swagger 路由都在其中。
-	// 此前这里手抄了 8 条后台路由（路由表的第三份副本），漏挂中间件不会有任何用例变红。
+	// 手抄路由表等于维护第三份副本，漏挂中间件不会有任何用例变红。
 	return router.AdminConsole(router.AdminDeps{Session: session, Handler: h}), db
 }
 
@@ -128,14 +128,12 @@ func TestAdminLogin_BadJSONUsesSharedTranslation(t *testing.T) {
 	}
 }
 
-// TestSession_IssuedTokenClaims 后台 token 的签发者与有效期都取自 pkg/jwt 那一枚单元。
-//
-// Session 既不再自存一份 expire、也不再自写 issuer 字面量：这两条「与用户端一致」的前提
-// 必须由 pkg/jwt 提供，否则改一边忘一边不会有任何地方报错——有效期接错就会把 30 分钟
-// 签成立刻过期或签成永不过期，而 issuer 分叉会让两端 token 的校验规则各说各话。
+// TestSession_IssuedTokenClaims 后台 token 的签发者与有效期都取自 pkg/jwt 那一枚单元：
+// 「与用户端一致」的前提必须由 pkg/jwt 提供，否则改一边忘一边不会有任何地方报错——
+// 有效期接错会把 30 分钟签成立刻过期或永不过期，issuer 分叉会让两端校验规则各说各话。
 func TestSession_IssuedTokenClaims(t *testing.T) {
 	// 刻意用既不是默认值、也不是 setup 那 30 分钟的时长：Session 若把 TTL 写死在自己身上，
-	// 30 这个数会与写死值重合，用例照绿——只有喂给它一个别の数，才测得出「有效期跟着配置走」。
+	// 30 这个数会与写死值重合，用例照绿——只有喂给它一个别的数，才测得出「有效期跟着配置走」。
 	const expireMin = 17
 
 	session := admin.NewSession(admin.SessionConfig{
@@ -198,8 +196,8 @@ func TestAdminLogin_RateLimit(t *testing.T) {
 
 // TestAdminLogin_RateLimitIsAtomicUnderBurst 并发爆发不能绕过失败限流：
 // 「Peek → 校验 → Allow」若分成三步独立加锁，一批同时到达的请求会全部通过 Peek，
-// 于是一次爆发可以试任意多次口令。临界区收进 Handler 后，恰好只有前 limit 次
-// 真正做了密码校验。
+// 于是一次爆发可以试任意多次口令。临界区在 Handler 内，恰好只有前 limit 次
+// 真正做密码校验。
 func TestAdminLogin_RateLimitIsAtomicUnderBurst(t *testing.T) {
 	const burst = 20
 	r, _ := setup(t)
@@ -316,13 +314,10 @@ func TestAdminListLogs(t *testing.T) {
 	}
 }
 
-// TestAdminListPagingUsesSiteDefault 后台列表的分页缺省与公开表面是同一个值。
-//
-// 后台曾自己写了一份 paginate：缺省 20、越界退回 20，与公开的 10 并存，于是
-// 「省略 page_size 会拿到几条」没有唯一答案，改规则的人得记着改两处。现在两侧
-// 都经 httpx.Page → model.NormalizePage，这里钉住端到端结果而不是钉数值本身：
-// 缺省按 model.DefaultPageSize 返回，越界与非数字都退回缺省而不是报错。
-// （真实的管理界面显式传 page_size=20，不受这次收敛影响。）
+// TestAdminListPagingUsesSiteDefault 后台列表的分页缺省与公开表面是同一个值：
+// 「省略 page_size 会拿到几条」只能有一个答案，两侧都经 httpx.Page → model.NormalizePage。
+// 这里钉住端到端结果而不是钉数值本身：缺省按 model.DefaultPageSize 返回，越界与非数字
+// 都退回缺省而不是报错。（真实的管理界面显式传 page_size=20，不受缺省值影响。）
 func TestAdminListPagingUsesSiteDefault(t *testing.T) {
 	r, db := setup(t)
 
@@ -465,7 +460,6 @@ func TestAdminRehashComments_RequiresToken(t *testing.T) {
 // TestAdminToken_WrongRoleRejected 签名正确但 role 不是 admin 的 token 必须被拒。
 //
 // 后台的隔离靠「另一把密钥 + role 声明」两道；只测密钥那道，等于默认第二道不会漏。
-// 这条以前没有任何用例——Session.validate 里的 role 检查无人盯。
 func TestAdminToken_WrongRoleRejected(t *testing.T) {
 	r, _ := setup(t)
 

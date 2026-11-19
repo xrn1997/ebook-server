@@ -27,9 +27,9 @@ func (r *RefreshTokenRepository) Create(ctx context.Context, token *model.Refres
 
 // FindByHash 按哈希查未过期的刷新令牌；查不到返回 model.ErrLoginExpired。
 //
-// 查询本身带 `expires_at > now`，所以「没这条记录」与「记录已过期」在数据层是同一个
-// 结果，对调用方也都是「请重新登录」——哨兵因此直接选 ErrLoginExpired 而不是某个
-// 「记录不存在」：把两者分开的信息在这里没有，硬造一个只会让上层再判一次。
+// 查询带 `expires_at > now`，「没这条记录」与「记录已过期」在数据层是同一个结果，
+// 对调用方都是「请重新登录」——哨兵因此选 ErrLoginExpired 而非「记录不存在」：
+// 分开的信息在这里没有，硬造一个只会让上层再判一次。
 func (r *RefreshTokenRepository) FindByHash(ctx context.Context, hash string) (*model.RefreshToken, error) {
 	var token model.RefreshToken
 	err := r.db.WithContext(ctx).
@@ -73,7 +73,7 @@ func (r *RefreshTokenRepository) DeleteByUserID(ctx context.Context, userID uint
 //
 // 当前无生产调用方，因此不进 service 的 refreshTokenStore 接口：`FindByHash` 只认
 // `expires_at > now` 的行，过期记录对行为完全惰性，回收的只是磁盘（口径见
-// docs/development.md「当前已知问题」）。定时清理任务真落地时再扩接口，别提前留一份
+// docs/development.md「当前已知问题」）。定时清理任务落地时再扩接口，别提前留一份
 // 没人调的对称 API。
 func (r *RefreshTokenRepository) DeleteExpired(ctx context.Context) error {
 	return r.db.WithContext(ctx).

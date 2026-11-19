@@ -13,7 +13,7 @@ import (
 // TestCommentFilter_Normalize 分页钳制与键边界只在这一个函数里判定。
 //
 // 这些上限存在的理由是「一条语句的绑定变量总数」（SQLite 默认 999），而评论列表是
-// 公开端点：不限长度就能被任意人打满并静默落 C0500。它们此前抄在 handler 与后台两处。
+// 公开端点：不限长度就能被任意人打满并静默落 C0500。
 func TestCommentFilter_Normalize(t *testing.T) {
 	long := strings.Repeat("k", MaxCommentKeyLength+1)
 	longURL := strings.Repeat("u", MaxChapterURLLength+1)
@@ -59,7 +59,7 @@ func TestCommentFilter_Normalize(t *testing.T) {
 	}
 }
 
-// TestParseCommentKeyFilters comment_keys 的切分语义（M2 主读路径）。
+// TestParseCommentKeyFilters comment_keys 的切分语义（主读路径）。
 //
 // 客户端用 Retrofit 的单个 @Query 把多个键拼成逗号分隔的一个值，因此按逗号切分；
 // 同时容忍 `?comment_keys=a&comment_keys=b` 的重复参数形态（逐个入参处理，不去重）。
@@ -108,8 +108,7 @@ func TestParseLegacyKeyFilters(t *testing.T) {
 // tag 只能写字面量、引用不了常量，这条反射钉是那份人工同步的守卫之一：它管 model 包里
 // 的三个键 tag。后台 rehashRequest 不在本包、这里的反射扫不到它，由 internal/admin 同包的
 // TestRehashRequestBindingMatchesMaxCommentKeyLength 钉住——两枚钉读同一个常量，
-// 各钉各自包里的 struct。这是对评审「删反射钉」的受控偏离：handler 里那两枚随解析入口
-// 一起删掉，后台那一枚换成钉在自己的 struct 上。
+// 各钉各自包里的 struct。
 func TestCommentKeyBindingTagsMatchMaxCommentKeyLength(t *testing.T) {
 	cases := []struct {
 		requestType reflect.Type
@@ -154,7 +153,7 @@ func bindingMax(t *testing.T, tag string) int {
 //
 // 与 TestCommentKeyBindingTagsMatchMaxCommentKeyLength 同族：struct tag 只能写字面量、
 // 拼不了常量，binding 里的 max=2048 与 MaxChapterURLLength 是两份必须人工同步的数字，
-// 这条反射钉就是那份人工同步的守卫——漏同步当场失败。迁移键不在此列：M2 后 migrate
+// 这条反射钉就是那份人工同步的守卫——漏同步当场失败。迁移键不在此列：migrate
 // 作用于 comment_key，由上面的用例钉。读路径过滤没有 tag（CommentFilter.Normalize
 // 直接判同一个常量），不在本枚钉的范围里。
 func TestChapterURLBindingTagMatchesMaxChapterURLLength(t *testing.T) {

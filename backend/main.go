@@ -49,7 +49,7 @@ import (
 // 是唯一装配点，指的是「把依赖递给谁」，不是「把三十行路由语句写在这里」。
 func main() {
 	// ── 装配依赖（ADR-0007）──────────────────────────────────────────────────
-	// 配置作为一个值往下传：不再有包级全局，也没有「谁必须先加载」这条隐式前提。
+	// 配置作为一个值往下传：无包级全局，也无「谁必须先加载」这条隐式前提。
 	cfg, err := config.Load("config.yaml")
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
@@ -64,9 +64,9 @@ func main() {
 
 // run 装配依赖、启动两个监听并等待退出。
 //
-// 起步阶段的失败（logger/数据库/迁移）当场 log.Fatalf：此时还没有在途请求需要收场，
-// 终止进程与历史行为一致。监听失败不同——另一个监听已经在 Accept，必须走优雅关闭，
-// 因此以非 nil 返回、由 main 换成退出码：run 自己不做任何终止进程的动作。
+// 起步阶段的失败（logger/数据库/迁移）当场 log.Fatalf：此时还没有在途请求需要收场。
+// 监听失败不同——另一个监听已经在 Accept，必须走优雅关闭，因此以非 nil 返回、由 main
+// 换成退出码：run 自己不做任何终止进程的动作。
 func run(cfg *config.Config) error {
 	if err := logger.Init(cfg.Server.Mode); err != nil {
 		log.Fatalf("Failed to init logger: %v", err)
@@ -83,7 +83,7 @@ func run(cfg *config.Config) error {
 	db.Logger = database.NewLogger(cfg.Server.Mode == config.ModeDebug, os.Stdout)
 
 	// 版本化迁移（ADR-0023）：新库执行 SQL 基线；AutoMigrate 时代的旧库先收养再标记基线。
-	// 模型清单自持在 database.Migrate 内部，装配点不再抄一份字面量。
+	// 模型清单自持在 database.Migrate 内部，装配点不抄字面量。
 	if err := database.Migrate(db); err != nil {
 		log.Fatalf("Failed to migrate schema: %v", err)
 	}

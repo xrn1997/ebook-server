@@ -12,11 +12,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// webFS 内嵌的前端静态资源（ADR-0009）。
-//
-// 构建时由 Makefile 把 frontend/dist/* 镜象进本目录（web/），`go build` 时经
-// //go:embed 打进单一二进制。gorm/embed 不允许跨目录 `..`，故产物必须先入本目录再编译。
-// 未构建前端时 web/ 仅含 .gitkeep，/admin 会返回"前端资源缺失"提示。
+// webFS 内嵌的前端静态资源（ADR-0009）。构建时由 Makefile 把 frontend/dist/* 镜像进
+// 本目录（web/），`go build` 时经 //go:embed 打进单一二进制；go:embed 不允许跨目录
+// `..`，故产物必须先入本目录再编译。产物不入库、`make clean` 会清掉；未构建前端时
+// web/ 仅含 .gitkeep，/admin 会返回"前端资源缺失"提示。
 //
 //go:embed all:web
 var webFS embed.FS
@@ -34,10 +33,9 @@ func ServeFrontend(c *gin.Context) {
 	c.Data(http.StatusOK, "text/html; charset=utf-8", data)
 }
 
-// ServeAssets 处理 /admin/assets/*：从内嵌的 web/assets 目录取文件。
-//
-// SPA 的 index.html 以 base=/admin/ 引用 /admin/assets/*；这里把剩余路径定位到
-// web/assets 下的同名文件，避免 StaticFS 在剥前缀后找不到 assets/ 层级的问题。
+// ServeAssets 处理 /admin/assets/*：SPA 的 index.html 以 base=/admin/ 引用
+// /admin/assets/*，这里把剩余路径定位到 web/assets 下的同名文件，避免 StaticFS 在
+// 剥前缀后找不到 assets/ 层级的问题。
 func ServeAssets(c *gin.Context) {
 	reqPath := c.Param("filepath")
 	if reqPath == "" || strings.Contains(reqPath, "..") {
@@ -59,11 +57,9 @@ func ServeAssets(c *gin.Context) {
 	c.Data(http.StatusOK, mimeType(name, data), data)
 }
 
-// mimeType 返回静态资源的 Content-Type。
-//
-// 不能只用 http.DetectContentType：它对 .js 只能识别出 text/plain，而 ES module 要求
-// JS 必须是 text/javascript，否则浏览器会拒绝执行脚本（导致 SPA 白屏）。故对常见
-// 扩展名用固定映射，其余回退到 DetectContentType。
+// mimeType 返回静态资源的 Content-Type。不能只用 http.DetectContentType（.js 只会被
+// 识别成 text/plain）：ES module 要求 JS 必须是 text/javascript，否则浏览器拒绝执行
+// 脚本、SPA 白屏。故常见扩展名用固定映射，其余回退到 DetectContentType。
 func mimeType(name string, data []byte) string {
 	switch strings.ToLower(path.Ext(name)) {
 	case ".js":

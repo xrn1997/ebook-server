@@ -67,7 +67,7 @@ func TestSkipsWorkspaceOnlyProcessDocs(t *testing.T) {
 // TestSkipsInstalledFrontendDeps frontend/node_modules/ 整目录不入库，文档按 Makefile
 // 的戳文件规则点名 `frontend/node_modules/.package-lock.json` 时，全新克隆里它不存在。
 // 跳过判据必须按路径段匹配到任意深度：只匹配仓库根那一段，门禁会在开发机上绿
-// （装过依赖）、在干净检出上红——CI 就是这样红过一次。
+// （装过依赖）、在干净检出上红。
 func TestSkipsInstalledFrontendDeps(t *testing.T) {
 	root := t.TempDir()
 	for _, f := range requiredDocs {
@@ -242,8 +242,8 @@ func TestEachRuleFires(t *testing.T) {
 			want:  "missing path",
 		},
 		{
-			// 顶层文件名不带目录前缀，曾逃过存在性检查：删掉 Dockerfile 之后，
-			// ADR 里那句「树里还有 Dockerfile」一直绿着——恰恰是最需要门禁的一瞬间。
+			// 顶层文件名不带目录前缀，容易逃过存在性检查：Dockerfile 删除后，
+			// ADR 里那句「树里还有 Dockerfile」仍会绿着——恰恰是最需要门禁的一瞬。
 			name:  "顶层裸文件名已不存在",
 			files: map[string]string{"README.md": "# ok\n\n容器构建由 `Dockerfile` 承担\n"},
 			want:  "missing path: Dockerfile",

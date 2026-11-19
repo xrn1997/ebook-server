@@ -52,11 +52,9 @@ func (r Rule) Forbids(importPath string) bool {
 	return false
 }
 
-// modulePath 是本仓库的 Go module 路径。
-//
-// 规则表里的禁令写的是包名（"service"），展开时拼上 module 前缀。这个常量一旦
-// 与 go.mod 对不上，所有禁令都会指向不存在的包——整张规则表静默失效。TestModulePathMatchesGoMod
-// 把这个前提钉住。
+// modulePath 是本仓库的 Go module 路径。规则表里的禁令写的是包名（"service"），展开时
+// 拼上 module 前缀；它与 go.mod 对不上时，所有禁令都指向不存在的包，整张规则表静默失效
+// （TestModulePathMatchesGoMod 把这个前提钉住）。
 const modulePath = "ebook-server"
 
 // Rules 返回当前已成立的依赖方向。
@@ -79,10 +77,8 @@ func Rules() []Rule {
 	}
 }
 
-// matchRule 返回命中最具体的规则（最长前缀）。
-//
-// 用最长前缀而不是「第一条命中」：规则表因此与书写顺序无关，将来加一条更具体的
-// 子包规则不必记得把它排在前面，否则它永远匹配不到。
+// matchRule 返回命中最具体的规则（最长前缀）。用最长前缀而不是「第一条命中」，
+// 规则表因此与书写顺序无关：更具体的子包规则不必记得排在前面。
 func matchRule(importPath string, rules []Rule) (Rule, bool) {
 	var best Rule
 	bestLen := -1
@@ -114,12 +110,9 @@ func Violations(pkgs []Package, rules []Rule) []Violation {
 	return out
 }
 
-// LoadPackages 读取 dir 下所有生产包的 import 面。
-//
-// stdout 与 stderr 必须分开取：go list 会把「go: downloading …」「go: warning: …」
-// 之类的进度与警告写到 stderr，CombinedOutput 把它们拼在 JSON 前面，解码器就会
-// 在合法输出上报错——模块缓存冷启动或依赖有告警时，这条门禁会以与分层无关的
-// 原因变红。
+// LoadPackages 读取 dir 下所有生产包的 import 面。stdout 与 stderr 必须分开取：
+// go list 会把进度与警告写到 stderr，混进 JSON 会让解码器在合法输出上报错，
+// 门禁以与分层无关的原因变红。
 func LoadPackages(dir string) ([]Package, error) {
 	cmd := exec.Command("go", "list", "-json", "./...")
 	cmd.Dir = dir

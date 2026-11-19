@@ -22,11 +22,10 @@ const (
 // 写死而不是启动时生成：每次进程启动都跑一遍哈希没有意义，代价却落在冷启动上。
 const loginHashPlaceholder = "$2a$10$HS7moy/oOUiT4C7sNcetju2f/0OFL9f3nPGbVBo6cufC1pwP7XNou"
 
-// maxPasswordBytes 是 bcrypt 的硬上限：超过 72 字节的输入，GenerateFromPassword
-// 直接返回 ErrPasswordTooLong（自 bcrypt 的 2^8 位密钥调度，72 字节是能进 key schedule
-// 的长度）。请求结构体的 binding 用 max=50 按**字符**计数，25 个汉字的密码就有 75 字节：
-// 能过校验进入模块，哈希时失败，而未登记的 ErrPasswordTooLong 会落成 C0500。
-// 因此在模块边界按字节再判一次，并由 errcode 表映射成 A0120。
+// maxPasswordBytes 是 bcrypt 的硬上限（超过 72 字节 GenerateFromPassword 直接返回
+// ErrPasswordTooLong）。binding 的 max=50 按**字符**计数，25 个汉字的密码就有 75 字节：
+// 能过校验进入模块、哈希时才失败，而未登记的 ErrPasswordTooLong 会落成 C0500。
+// 因此模块边界按字节再判一次，并由 errcode 表映射成 A0120。
 const maxPasswordBytes = 72
 
 // checkPasswordLength 在写库/哈希之前拒绝超出 bcrypt 上限的明文。
@@ -50,7 +49,7 @@ type Credentials struct {
 	sessions *Sessions
 	// compare 是口令摘要比对单元，构造时固定为 bcrypt.CompareHashAndPassword。
 	// 生产路径不覆写它；覆写方只有 auth_test 的两条时序等价用例（未知邮箱比对占位
-	// 摘要、锁定期内仍比对），它们从这道缝上数比对的次数与入参，而不是靠掐表测时。
+	// 摘要、锁定期内仍比对），从这道缝数比对的次数与入参，不掐表测时。
 	// 它不是换算法的接缝：换算法走 NewCredentials 这个装配点。
 	compare func(hashed, plain []byte) error
 }
@@ -136,9 +135,9 @@ func (c *Credentials) Reset(ctx context.Context, uid uint, newPassword string) e
 
 // IsLoginDenied 登录拒绝的折叠规则（ADR-0006）：这四枚哨兵在对外响应里必须完全一致。
 //
-// 折叠判据住在凭据模块，而不是 handler 逐枚列举 model 哨兵：尝试超限与账号锁定
-// 只可能出现在已注册账号上，映射时漏掉任何一枚，五次错误密码就能把
-// 「这个邮箱注册过吗」问出来。handler 只判一次本函数，命中即同一业务码与文案。
+// 折叠判据住这里而非 handler 逐枚列举 model 哨兵——尝试超限与账号锁定只出现在
+// 已注册账号上，映射时漏掉任何一枚，五次错误密码就能问出「这个邮箱注册过吗」。
+// 命中即同一业务码与文案。
 func IsLoginDenied(err error) bool {
 	return errors.Is(err, model.ErrAccountNotFound) ||
 		errors.Is(err, model.ErrPasswordWrong) ||
@@ -148,8 +147,9 @@ func IsLoginDenied(err error) bool {
 
 // RecordFailedLogin 累加一次失败并报告结果。
 //
-// 「达到阈值」的判定交给存储层那条 UPDATE：Go 这边先递增再读回比大小，读到的
-// 可能是并发另一个失败请求的计数，也可能是刚被成功登录清零的值。
+// 「达到阈值」由存储层那条 UPDATE 判出（口径见 repository.RecordFailedLogin）——
+// Go 先递增再读回比大小，读到的可能是并发另一个失败请求的计数，也可能是刚被
+// 成功登录清零的值。
 func (c *Credentials) RecordFailedLogin(ctx context.Context, uid uint) (bool, error) {
 	return c.users.RecordFailedLogin(ctx, uid, maxLoginAttempts, time.Now().Add(loginLockDuration))
 }

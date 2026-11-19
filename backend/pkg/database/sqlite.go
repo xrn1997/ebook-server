@@ -20,14 +20,12 @@ const busyTimeoutMS = 5000
 
 // Open 打开 SQLite 数据库并配置连接池。
 //
-// 路径为空时退回 DefaultPath。返回连接而不是写全局：调用方（装配点）持有它，
-// 于是「必须先 Init 再 GetDB」这条隐式顺序不再是每个使用方的前提。
+// 路径为空时退回 DefaultPath。返回连接而不是写全局：调用方（装配点）持有它。
 //
-// pragma 的取舍在 dsnOf：按连接生效，所以只能放 DSN，不能只在某一条连接上执行。
+// pragma 的取舍在 dsnOf：按连接生效，只能放 DSN。
 //
-// 默认装配非 debug 档（参数占位、只记慢查询与错误）：直接使用 Open 的调用方
-// 不会因为忘记配置 logger 而把 SQL 参数写进生产日志；装配点在读到运行模式后
-// 可用 NewLogger 覆盖。
+// 默认装配非 debug 档（参数占位、只记慢查询与错误）：调用方不会因为忘记配置
+// logger 把 SQL 参数写进生产日志；装配点读到运行模式后可用 NewLogger 覆盖。
 func Open(path string) (*gorm.DB, error) {
 	if path == "" {
 		path = DefaultPath
@@ -45,7 +43,6 @@ func Open(path string) (*gorm.DB, error) {
 		return nil, fmt.Errorf("failed to get database instance: %w", err)
 	}
 
-	// 连接池配置
 	sqlDB.SetMaxIdleConns(5)
 	sqlDB.SetMaxOpenConns(10)
 
@@ -54,8 +51,7 @@ func Open(path string) (*gorm.DB, error) {
 }
 
 // dsnOf 给连接附加 SQLite pragma。busy_timeout 与 foreign_keys 两类库都要附加：
-// 它们是按连接生效的设置，测试库与生产库必须看到同一套约束（ADR-0025）——
-// 只在文件库上开外键，等于所有走 :memory: 的用例都在没有约束的库里跑。
+// 按连接生效的设置，测试库与生产库必须看到同一套约束（ADR-0025）。
 // journal_mode=WAL 只对文件库有意义，内存库不附加。
 func dsnOf(path string) string {
 	constraints := fmt.Sprintf("_pragma=busy_timeout(%d)&_pragma=foreign_keys(1)", busyTimeoutMS)
@@ -71,9 +67,8 @@ func dsnOf(path string) string {
 
 // OpenMemory 打开一个内存库：pragma 与文件库同源，连接池锁成单连接。
 //
-// :memory: 库随连接生灭，池里的每一条新连接都会得到一个空库，所以这里不是
-// 「优化」而是正确性前提。日志静音：调用方是测试，一条 SQL 报错刷屏会把
-// 真正的断言失败埋掉。
+// :memory: 库随连接生灭，池里每条新连接都会得到一个空库，单连接是正确性前提
+// 而不是优化。日志静音：调用方是测试，SQL 报错刷屏会埋掉真正的断言失败。
 func OpenMemory() (*gorm.DB, error) {
 	db, err := gorm.Open(sqlite.Open(dsnOf(":memory:")), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
@@ -92,8 +87,8 @@ func OpenMemory() (*gorm.DB, error) {
 
 // Close 关闭底层连接池，释放 SQLite 文件句柄。
 //
-// 供优雅退出调用：连接池里的空闲连接不会自己断开，句柄不释放时 Windows 上数据库
-// 文件持续被占用，紧接着的备份或替换会失败。
+// 供优雅退出调用：空闲连接不会自己断开，句柄不释放时 Windows 上数据库文件持续
+// 被占用，紧接着的备份或替换会失败。
 func Close(db *gorm.DB) error {
 	if db == nil {
 		return nil

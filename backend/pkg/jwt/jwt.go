@@ -17,8 +17,8 @@ type Claims struct {
 
 // Issuer 签发者标识，用户端与后台端共用同一枚值。
 //
-// 导出是因为后台要自填 RegisteredClaims（声明集不同），不导出它就得抄一份字面量——
-// 而「两端一致」这种话一旦靠抄来维持，改的人会只改一边。
+// 导出是因为后台要自填 RegisteredClaims（声明集不同）；不导出就得抄字面量，
+// 而「两端一致」靠抄写维持不住。
 const Issuer = "ebook-server"
 
 // ErrTokenRejected 验签过程整体通过但 token 被判为不可用。
@@ -34,10 +34,9 @@ var signingMethod = jwt.SigningMethodHS256
 
 // TokenBox 一把密钥加一个有效期构成的签发/解析单元。
 //
-// 密钥与 TTL 由构造函数传入而不是去读包级配置：如此「配置已加载」不再是每个
-// 调用方 interface 上一条没人写出来的前提，测试也无需改写全局就能造出可用的 token。
-// 用户端与后台端各持一个实例（两把互不可用的密钥，ADR-0001/0010），
-// 算法、签发者、过期与验签规则只有一份实现。
+// 密钥与 TTL 由构造函数传入而不读包级配置：调用方不必先保证「配置已加载」，
+// 测试也无需改写全局就能造出可用的 token。用户端与后台端各持一个实例
+// （两把互不可用的密钥，ADR-0001/0010），算法、签发者、过期与验签规则只有一份实现。
 type TokenBox struct {
 	secret []byte
 	expire time.Duration
@@ -45,8 +44,8 @@ type TokenBox struct {
 
 // New 创建 token 单元。
 //
-// expireMin 原样生效（不在这里偷偷兜底成默认值）：默认值属配置层的职责，
-// 见 config.setDefaults；把它抄进 TokenBox 会让「配了 0 分钟」与「没配」无法区分。
+// expireMin 原样生效（不在这里兜底默认值）：默认值属配置层的职责（config.setDefaults），
+// 抄进 TokenBox 会让「配了 0 分钟」与「没配」无法区分。
 func New(secret string, expireMin int) *TokenBox {
 	return &TokenBox{secret: []byte(secret), expire: time.Duration(expireMin) * time.Minute}
 }
@@ -89,12 +88,11 @@ func (t *TokenBox) Issue(claims jwt.Claims) (string, error) {
 //
 // 三条校验都得在这里，不能只靠「签的时候写了」：
 //   - WithValidMethods 挡住算法混淆（见 signingMethod 的说明）。
-//   - WithExpirationRequired：golang-jwt v5 只在声明**带了** exp 时才校验它，
-//     一枚没有 exp 的 token 会因为「没有东西可过期」而永远通过。签发方总是写的，
-//     但密钥一旦泄露或被人离线构造，缺 exp 就是免死金牌——要求它存在才是下限。
+//   - WithExpirationRequired：golang-jwt v5 只在声明**带了** exp 时才校验它；密钥一旦
+//     泄露或被人离线构造，缺 exp 就是免死金牌——要求它存在才是下限。
 //   - WithIssuer：本包与后台共用这一份实现（pkg/jwt.Issuer 是两端同值的唯一来源）。
-//     公开 access token 与后台 token 的真正隔离靠的是两把密钥与不同的声明集，
-//     但类型注释已经把「签发者」算作这套规则的一部分，不校验就是注释与代码不一致。
+//     两端的真正隔离靠两把密钥与不同的声明集，但签发者既已算作规则的一部分，
+//     不校验就是注释与代码不一致。
 func (t *TokenBox) Parse(tokenString string, into jwt.Claims) error {
 	token, err := jwt.ParseWithClaims(tokenString, into,
 		func(*jwt.Token) (interface{}, error) { return t.secret, nil },

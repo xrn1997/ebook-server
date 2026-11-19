@@ -1,7 +1,7 @@
-// Package testdb 提供测试专用的独立 SQLite :memory: 数据库（ADR-0007）。
+// Package testdb 提供测试专用的独立 SQLite :memory: 数据库。
 //
-// 每次调用 Open 都返回一个全新、互不共享状态的库实例，取代历史上
-// 「改写全局 database.DB」的做法——那会导致测试无法并行且互相污染。
+// 每次调用 Open 都返回一个全新、互不共享状态的库实例，测试可并行且互不污染
+// （ADR-0007：不改写全局 database.DB）。
 package testdb
 
 import (
@@ -14,10 +14,8 @@ import (
 
 // Open 创建独立的 :memory: 数据库并完成建表，连接在测试结束时自动关闭。
 //
-// 连接与 pragma 都由 database.OpenMemory 给出：外键约束与写锁等待和生产同源，
-// 测试不再跑在一个「约束没开」的库里。建表走 database.Migrate——与生产同一条
-// 迁移路径，测试库与生产库不再有两套建表事实源（模型清单也自持在 Migrate 内部，
-// 这里同样不传清单）。
+// 连接与 pragma 由 database.OpenMemory 给出（外键约束、写锁等待与生产同源）；
+// 建表走 database.Migrate——与生产同一条迁移路径，建表事实源唯一。
 func Open(t *testing.T) *gorm.DB {
 	t.Helper()
 

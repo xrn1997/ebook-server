@@ -43,10 +43,9 @@ func NewSMTPMailer(cfg SMTPConfig) *SMTPMailer {
 // SMTP 未配置时返回错误：release 模式装配本 adapter 即代表「不允许把验证码
 // 写进日志」，此时发送失败必须显式暴露，而不是悄悄降级。
 //
-// 原始失败原因只在这里留痕：调用方（service.VerificationCodes.Send）把任何
-// 发送失败统一折成 model.ErrMailSendFailed，响应里只有一句「邮件发送失败」——
-// 拨号地址与认证失败原因不该递给未认证调用方。想分清「没配主机」与「证书不对」
-// 的人看服务端日志，不看响应。
+// 原始失败原因只在这里留痕：调用方（service.VerificationCodes.Send）把任何发送
+// 失败统一折成 model.ErrMailSendFailed，响应里只有一句「邮件发送失败」——拨号地址
+// 与认证失败原因不递给未认证调用方，分清「没配主机」与「证书不对」看服务端日志。
 func (m *SMTPMailer) SendCode(to, codeVal string) error {
 	err := m.dispatch(to, codeVal)
 	if err != nil {

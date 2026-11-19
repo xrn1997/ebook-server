@@ -22,31 +22,26 @@ func sum(in string) []byte {
 // roleAdmin 后台 token 必须携带的角色声明。
 const roleAdmin = "admin"
 
-// adminClaims 管理端 JWT 声明。
-//
-// 与公开用户 JWT（pkg/jwt.Claims）完全分离：不同的声明集、不同的签发密钥
-// （admin.jwt_secret），因此公开 access token 无法用于后台，后台 token 也无法用于
-// 公开 API（ADR-0001 §认证模型、ADR-0010 网络隔离）。
+// adminClaims 管理端 JWT 声明。与公开用户 JWT（pkg/jwt.Claims）完全分离：不同的
+// 声明集、不同的签发密钥（admin.jwt_secret），公开 access token 与后台 token 互不
+// 通用（ADR-0001 §认证模型、ADR-0010 网络隔离）。
 type adminClaims struct {
 	Role string `json:"role"`
 	jwt.RegisteredClaims
 }
 
-// Session 后台的凭据校验与 token 生命周期。
-//
-// 它与用户侧共用 pkg/jwt 的 TokenBox 实现——两把密钥、两种声明，一套签发/验签规则。
-// 此前后台另写了一份签发与解析（含算法白名单检查），两处的安全前提会各自漂移；
-// 收成一个 Session 之后，「密钥是谁、有效期多长、接受哪种算法」在构造时就定死。
+// Session 后台的凭据校验与 token 生命周期。与用户侧共用 pkg/jwt 的 TokenBox：
+// 两把密钥、两种声明，一套签发/验签规则——「密钥是谁、有效期多长、接受哪种算法」
+// 在构造时定死，安全前提不随两份实现各自漂移。
 type Session struct {
 	username string
 	password string
 	tokens   *pubjwt.TokenBox
 }
 
-// SessionConfig 是 NewSession 的构造输入：会话只需要凭据与有效期四项。
-//
-// 刻意不复用 config.AdminConfig：admin 包不该知道配置里还有什么——监听地址之类
-// 属于装配层（main.go）的知识，配置 → 这四项的转换留在那个装配点。
+// SessionConfig 是 NewSession 的构造输入：会话只需要凭据与有效期四项。刻意不复用
+// config.AdminConfig：监听地址之类属于装配层（main.go）的知识，admin 包不该知道
+// 配置里还有什么，配置 → 这四项的转换留在那个装配点。
 type SessionConfig struct {
 	Username  string
 	Password  string
@@ -63,12 +58,10 @@ func NewSession(cfg SessionConfig) *Session {
 	}
 }
 
-// Login 校验管理端账号密码，签发管理端 token。
-//
-// 两次都比较**定长摘要**：ConstantTimeCompare 没有短路，但耗时仍随输入长度走，
-// 直接比明文会把「配置里的口令/账号有多长」变成可测的毫秒档。先 SHA-256 一次，
-// 两边都是 32 字节，长度信息随之消失。这里不需要 bcrypt 那一层——口令来自配置文件、
-// 每次登录只比对一次，抗穷举靠的是后台监听隔离与登录限流（ADR-0010），不是这次比较。
+// Login 校验管理端账号密码，签发管理端 token。两次都比较**定长摘要**：直接比明文
+// 会让耗时随输入长度走，把口令长度变成可测的毫秒档；SHA-256 后两边都是 32 字节。
+// 这里不需要 bcrypt——口令来自配置文件、每次登录只比对一次，抗穷举靠的是后台监听
+// 隔离与登录限流（ADR-0010），不靠这次比较。
 func (s *Session) Login(username, password string) (string, error) {
 	userOK := subtle.ConstantTimeCompare(sum(username), sum(s.username)) == 1
 	pwdOK := subtle.ConstantTimeCompare(sum(password), sum(s.password)) == 1
@@ -99,10 +92,9 @@ func (s *Session) validate(tokenString string) error {
 	return nil
 }
 
-// AuthMiddleware 管理端 API 认证中间件。
-//
-// Bearer 头的形状判定与用户侧共用 httpx.BearerToken，但两把密钥永不互认（ADR-0010）：
-// 形状错了与没带 token 在这里回同一句话（A0403），失败码也不同于公开侧的 A0230。
+// AuthMiddleware 管理端 API 认证中间件。Bearer 头的形状判定与用户侧共用
+// httpx.BearerToken，但两把密钥永不互认（ADR-0010）；形状错了与没带 token 在这里
+// 回同一句话（A0403），失败码也不同于公开侧的 A0230。
 func (s *Session) AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token, err := httpx.BearerToken(c.GetHeader("Authorization"))

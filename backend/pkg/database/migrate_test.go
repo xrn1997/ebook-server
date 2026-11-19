@@ -23,9 +23,8 @@ func openRawDB(t *testing.T) *gorm.DB {
 
 // embeddedVersions 从内嵌 FS 派生当前二进制携带的全部迁移版本（按文件名序）。
 //
-// 用例钉的是「应用了内嵌的全部版本、且不重复应用」这条性质，不是「现在恰好有
-// 一个迁移」这个数字：写死数字的人加第一个合法 0002_*.sql 时会撞上两条无关红字，
-// 而被训练成的动作是删断言。
+// 用例钉的是「应用了内嵌的全部版本、且不重复应用」这条性质，不是「恰好有一个迁移」
+// 这个数字：写死数字会让人加第二个迁移时撞上无关红字。
 func embeddedVersions(t *testing.T) []string {
 	t.Helper()
 	files, err := migrationFiles(migrations.FS)
@@ -83,8 +82,8 @@ func TestMigrateAdoptsLegacyDatabase(t *testing.T) {
 		t.Fatalf("Migrate legacy: %v", err)
 	}
 
-	// 收养必须登记内嵌的全部版本，而不是只登记第一个：AutoMigrate 已把库带到
-	// 当前 models 的最新 schema，漏登记的未来迁移会在下次启动时重放并因列已存在而失败。
+	// 收养必须登记内嵌的全部版本，而不是只登记第一个：漏登记的迁移会在下次启动
+	// 重放并因列已存在而失败。
 	if got := appliedVersionsOf(t, db); !reflect.DeepEqual(got, embeddedVersions(t)) {
 		t.Fatalf("adoption registered %v, want %v", got, embeddedVersions(t))
 	}
@@ -92,9 +91,8 @@ func TestMigrateAdoptsLegacyDatabase(t *testing.T) {
 
 // TestMigrateAdoptionMarksEveryEmbeddedVersion 收养必须把当前二进制的全部版本记为已应用。
 //
-// AutoMigrate 已经把库带到当前 models 的最新 schema；若只标记 0001，未来迁移会在
-// 下一次启动时重放。这条用例里的 0002 正是一个非幂等 ALTER：一旦重放就因列已存在
-// 而失败，而失败发生在「迁移收养本应保护的升级路径」上。
+// AutoMigrate 已把库带到当前 models 的最新 schema；若只标记 0001，未来迁移会在
+// 下次启动时重放。用例里的 0002 是非幂等 ALTER，重放即因列已存在而失败。
 func TestMigrateAdoptionMarksEveryEmbeddedVersion(t *testing.T) {
 	db := openRawDB(t)
 	if err := db.AutoMigrate(models...); err != nil {

@@ -12,12 +12,9 @@ import (
 	"gorm.io/gorm"
 )
 
-// 这一组用例是 AutoMigrate 对比用例（TestMigrateSchemaMatchesAutoMigrate）的替代者。
-//
-// 被删掉的那条把「迁移产物」与「AutoMigrate 产物」逐列比一遍；ADR-0025 让测试库也走
-// 迁移之后，两边同源，比较失去了对手。但迁移与模型之间的漂移从此没有任何自动检查：
-// 删掉 0001_init.sql 里的一条 UNIQUE、那个 FK 或一条普通索引，全套用例照绿。这里改成
-// 直接对内嵌迁移的产物断言性质——约束集就是被测对象，不需要第二个实现来对照。
+// 这一组用例直接对内嵌迁移的产物断言约束性质：迁移与模型之间没有自动比对，
+// 删掉 0001_init.sql 里的一条 UNIQUE、那个 FK 或一条普通索引，功能用例照绿
+// （ADR-0025）。约束集就是被测对象，不需要第二个实现来对照。
 
 // tableInfoRow 是 PRAGMA table_info 的一行。
 type tableInfoRow struct {
@@ -95,9 +92,8 @@ func uniqueIndexesOf(t *testing.T, db *gorm.DB, table string) []string {
 //
 // 只收 Origin == "c"：UNIQUE/PRIMARY KEY 的**内联声明**另生 sqlite_autoindex（Origin 为
 // "u"/"pk"），那部分性质已由 uniqueIndexesOf 与 primaryKeyOf 钉住。这里钉的是迁移文件里
-// 显式写下的那批读路径索引——名字与列序都算。删掉一条、改窄一列、换个名字，都不会让任何
-// 功能用例变红：没有测试能观察到一个索引不存在，查询只是悄悄退化成全表扫描。所以这份
-// 期望表是它唯一的看守，也是 ADR-0025 里「普通索引」那一面的接管者。
+// 显式写下的那批读路径索引——名字与列序都算。删索引不会让任何功能用例变红，查询只是
+// 退化成全表扫描，所以这份期望表是唯一看守（ADR-0025 的「普通索引」面）。
 // 列序刻意不排序：多列索引的前缀可用性由顺序决定，换序是真实的行为变化。
 func indexesOf(t *testing.T, db *gorm.DB, table string) []string {
 	t.Helper()
@@ -150,7 +146,7 @@ func primaryKeyOf(t *testing.T, db *gorm.DB, table string) []string {
 // TestMigratedSchemaKeepsItsConstraints 内嵌迁移建出的库必须带着模型依赖的全部约束。
 //
 // 这份期望表按 0001_init.sql 逐条写出：它不跟着模型走，所以「模型改了、迁移没改」
-// 与「迁移被人改窄了」都会在这里变红——后者正是被删掉的对比用例唯一能抓住的东西。
+// 与「迁移被人改窄了」都会在这里变红。
 func TestMigratedSchemaKeepsItsConstraints(t *testing.T) {
 	db := openRawDB(t)
 	if err := Migrate(db); err != nil {
@@ -259,8 +255,7 @@ func TestMigratedUniqueIndexRejectsDuplicateEmail(t *testing.T) {
 
 // TestOpenThenMigrateOnFreshFile 首次安装路径：Open(新文件) + Migrate 建表，重开不重放。
 //
-// 这条组合是生产唯一的启动形状（main.go），而此前 Open 与 Migrate 各自被测、组合没有：
-// 第一次装的用户走的正好是没被覆盖的那一条。重开时数据必须在，且版本登记不得增长——
+// 这条组合是生产唯一的启动形状（main.go）。重开时数据必须在，且版本登记不得增长——
 // 重放会把 `CREATE TABLE`/`ALTER` 再跑一遍，前者靠 IF NOT EXISTS 遮掩，后者直接炸。
 func TestOpenThenMigrateOnFreshFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "fresh.db")

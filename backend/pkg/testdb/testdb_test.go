@@ -16,8 +16,7 @@ import (
 //
 // Open 建表走 database.Migrate 后，四张业务表齐全且 schema_migrations 里登记的正是
 // 内嵌的全部版本；若哪天 Open 退回 AutoMigrate 或别的旁路，这条会当场变红。
-// 期望值从 migrations.FS 派生而不是写死当前那一个版本：加第一个合法 0002_*.sql 的
-// 人应该看到这条继续通过，而不是被训练成删断言。
+// 期望值从 migrations.FS 派生而不是写死当前那一个版本：加第二个迁移时这条应继续通过。
 func TestOpenRunsMigrations(t *testing.T) {
 	db := testdb.Open(t)
 

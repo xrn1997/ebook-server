@@ -45,11 +45,10 @@ var bindActionFieldLabels = map[string]map[string]string{
 
 // RespondBindError 把请求绑定/校验失败回成 A0400 + 一句人话，原始错误只进日志。
 //
-// 为什么处理器不能再写 `"请求参数错误: " + err.Error()`：那是 go-playground/validator 的
-// 英文原文（Key: 'CreateCommentRequest.Content' Error:Field validation for 'Content'
-// failed on the 'max' tag），而统一信封里的 error 字段会被客户端原样 Toast 给用户——
-// 用户于是看见 Go 结构体名与标签名。按 AGENTS.md「错误处理」条：进文案的只能是说给
-// 人听的话，驱动/校验器/第三方系统的原始错误一律就地写日志。
+// 处理器不得拼 `"请求参数错误: " + err.Error()`：validator 的英文原文（如
+// Error:Field validation for 'Content' failed on the 'max' tag）会被客户端原样
+// Toast 给用户，露出 Go 结构体名与标签名。进文案的只能是说给人听的话，
+// 驱动/校验器/第三方系统的原始错误一律就地写日志（AGENTS.md）。
 func RespondBindError(c *gin.Context, err error, action string) {
 	logger.Warn("请求解析失败", zap.String("action", action), zap.Error(err))
 

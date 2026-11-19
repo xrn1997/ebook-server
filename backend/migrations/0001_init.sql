@@ -1,6 +1,6 @@
 -- 0001_init: 当前四个实体的基线 schema（从 GORM AutoMigrate 导出）。
--- 新库直接执行本文件；AutoMigrate 时代的旧库先由 Migrate 收养——收养会把二进制里
--- 内嵌的**全部**版本一次性标记为已应用，不是只标这一个。
+-- 新库直接执行本文件；AutoMigrate 时代的旧库由 Migrate 收养，收养会把内嵌的
+-- **全部**版本一次性标记为已应用，不是只标这一个。
 
 CREATE TABLE IF NOT EXISTS `users` (
   `uid` integer PRIMARY KEY AUTOINCREMENT,

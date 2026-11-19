@@ -20,8 +20,7 @@ async function submit(): Promise<void> {
       error.value = '无法保存登录状态，请检查浏览器是否禁用了本地存储'
       return
     }
-    // 等跳转落地再返回：顺序确定（submit 完成即已到目标页），且 push 的失败落在这一条
-    // 事件链上，而不是变成一个谁也不等的悬空 Promise。
+    // 等跳转落地再返回：push 的失败落在这一条事件链上，不变成无人等待的悬空 Promise。
     await router.push('/')
   } else {
     // 信封成功却没带 token 属于契约漂移：同样报「登录失败」，不能显示空错误条

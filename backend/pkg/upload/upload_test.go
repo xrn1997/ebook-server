@@ -58,9 +58,8 @@ func TestSaveAvatar_Success(t *testing.T) {
 
 // TestSaveAvatar_RecreatesMissingDir 头像目录被外部清掉后仍能保存（自动重建）。
 //
-// 钉的是 commit「头像上传目录被清理后自动重建」那个修复：`git clean`、容器重建、
-// 手工删目录都会让 uploads/avatar 消失，若写盘前不再兜底 MkdirAll，用户看到的是
-// 一次莫名其妙的上传失败——而且只有装过一段时间之后才会撞上。
+// `git clean`、容器重建、手工删目录都会让 uploads/avatar 消失；写盘前若不兜底
+// MkdirAll，用户撞上的是难以归因的上传失败。
 func TestSaveAvatar_RecreatesMissingDir(t *testing.T) {
 	root := t.TempDir()
 	store := New(root, "")
@@ -260,7 +259,7 @@ func TestPublicURL(t *testing.T) {
 
 // TestPublicURL_PrefersConfiguredBase 配置钉死来源后，请求 Host 不再参与拼接。
 //
-// 自托管没有固定域名，头像 URL 原本直接采请求 Host；伪造一枚 Host 就能把任意外链
+// 自托管没有固定域名，头像 URL 按请求 Host 拼接时，伪造一枚 Host 就能把任意外链
 // 写进数据库，再经评论列表分发给其他用户。部署者填了 server.public_base_url 之后，
 // 这条通道被关掉；尾斜杠的两种写法必须给出同一个结果。
 func TestPublicURL_PrefersConfiguredBase(t *testing.T) {

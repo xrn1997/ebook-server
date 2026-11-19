@@ -20,8 +20,7 @@ const migrateTable = "schema_migrations"
 
 // models 是本包自持的全部业务实体清单（唯一一份）。
 //
-// 调用方不再传清单：main.go、testdb 与测试曾经各自抄一份四个实体的字面量，
-// 加一个实体要改三处，漏抄一处的表现是对应路径上缺表，且只有跑到才暴露。
+// 清单自持、调用方不传：多份手写清单会漂移，漏抄一处的表现是对应路径上缺表。
 var models = []interface{}{&model.User{}, &model.Comment{}, &model.OperationLog{}, &model.RefreshToken{}}
 
 // tabler 是 GORM 的自定义表名约定：实体显式声明表名时以它为准。
@@ -29,8 +28,7 @@ type tabler interface{ TableName() string }
 
 // legacyTables 是 AutoMigrate 时代已经存在的表；任一存在即视为遗留库。
 //
-// 表名从 models 派生而不是另抄一份字面量：清单是唯一事实源，
-// 两份手写清单迟早漂移，而漂移的表现是「遗留库不再被识别为遗留库」。
+// 表名从 models 派生而不是另抄字面量：两份清单漂移的表现是遗留库不再被识别。
 var legacyTables = tableNames(models)
 
 // tableNames 把实体清单翻成表名：显式 TableName() 优先，否则退回 GORM 的
@@ -56,14 +54,12 @@ type migrationFile struct {
 // Migrate 执行未应用的迁移。
 //
 // 新库按文件名顺序执行嵌入的 SQL；遗留库（已有业务表、但 schema_migrations 为空）
-// 先对内置 models 清单跑一次 AutoMigrate 收养。清单自持：调用方不传、也不再能传
-// 模型列表（见 models 的注释）。
+// 先对内置 models 清单跑一次 AutoMigrate 收养，清单自持、调用方不传模型列表。
 //
-// 收养后必须把**当前二进制内嵌的全部版本**标记为已应用，而不是只标记 0001：
-// AutoMigrate 已把库带到当前 models 的最新 schema，仍标记为未应用的未来迁移会在
-// 下一次启动时重放，`ALTER TABLE ... ADD COLUMN` 之类立即因列已存在而失败——
-// 恰好砸在收养机制要保护的升级路径上。代价是存量库不会再执行当前版本中的数据迁移；
-// 当前迁移只有 schema 变更，引入数据迁移前必须重新设计收养（见 ADR-0023）。
+// 收养后把**当前二进制内嵌的全部版本**标记为已应用，而不是只标记 0001：AutoMigrate
+// 已把库带到当前 models 的最新 schema，未标记的迁移会在下次启动重放，`ALTER TABLE ...
+// ADD COLUMN` 之类立即因列已存在而失败。代价是存量库不执行当前版本中的数据迁移；
+// 引入数据迁移前必须重新设计收养（ADR-0023）。
 func Migrate(db *gorm.DB) error {
 	return migrateFS(db, migrations.FS, models...)
 }
@@ -157,10 +153,10 @@ func applyMigration(db *gorm.DB, fsys fs.FS, file migrationFile) error {
 
 // splitStatements 切分 SQL，只把**字符串字面量、引号标识符与注释之外**的分号当作语句边界。
 //
-// 按裸分号切分听着够用，实际会在第一条带分号的数据上把一条 INSERT 切成两条非法 SQL，
-// 而失败只出现在真实数据跑起来的那台部署机上。这里按 SQL 词法走一遍：定界符内原样
-// 保留（含 SQL 里用两个单引号表示一个的那层转义），`--` 到行尾、`/* */` 到闭合为止整体丢弃。
-// 逐字节扫描对 UTF-8 安全——多字节字符的后续字节都 >= 0x80，不会撞上这些 ASCII 边界符。
+// 按裸分号切分会把带分号数据的 INSERT 切成两条非法 SQL，且只在真实数据上暴露。
+// 这里按 SQL 词法走：定界符内原样保留（含两个单引号表示一个引号的转义），`--` 到行尾、
+// `/* */` 到闭合为止整体丢弃。逐字节扫描对 UTF-8 安全——多字节字符的后续字节都
+// >= 0x80，不会撞上这些 ASCII 边界符。
 func splitStatements(body string) []string {
 	var out []string
 	var buf []byte
@@ -233,8 +229,8 @@ func appliedVersions(db *gorm.DB) (map[string]bool, error) {
 
 // markAllApplied 把当前二进制内嵌的版本一次性记为已应用（收养专用）。
 //
-// 放在一个事务里：要么整组版本都落下，要么一个都不落。否则部分版本已标记时，
-// 下一次启动会走「正常迁移」路径，把剩下的迁移重新执行到 AutoMigrate 已更新的库上。
+// 放在一个事务里：要么整组都落、要么一个不落；部分标记会让下次启动走正常迁移路径，
+// 把剩余迁移重放到 AutoMigrate 已更新的库上。
 func markAllApplied(db *gorm.DB, files []migrationFile) error {
 	if len(files) == 0 {
 		return nil
@@ -263,11 +259,9 @@ func recordMigration(tx *gorm.DB, version string, appliedAt time.Time) error {
 
 // hasLegacyTables 任一业务表存在即视为遗留库。
 //
-// 表存在性走 GORM 的 Migrator 而不是直接查 sqlite_master：后者是 SQLite 系统表的
-// 方言细节，这道判定不该绑死在它上面（防御性写法，不是多库承诺——迁移 SQL 本身
-// 按 SQLite 方言书写，多库支持不在范围内，见 ADR-0023）。Migrator 吞掉驱动错误，
-// 所以先做一次 `SELECT 1` 探活：连不上就 fail-closed 拒绝启动，不带着半迁移的库
-// 继续服务。
+// 表存在性走 GORM 的 Migrator 而不是 sqlite_master：后者是 SQLite 系统表的方言细节
+// （防御性写法，不是多库承诺——迁移 SQL 按 SQLite 方言书写，见 ADR-0023）。Migrator
+// 吞掉驱动错误，所以先 `SELECT 1` 探活：连不上就 fail-closed 拒绝启动。
 func hasLegacyTables(db *gorm.DB) (bool, error) {
 	var probe int
 	if err := db.Raw("SELECT 1").Scan(&probe).Error; err != nil {

@@ -34,11 +34,11 @@ func (r *CommentRepository) FindByID(ctx context.Context, id uint) (*model.Comme
 	return &comment, nil
 }
 
-// FindByCommentKeys 按 M2 聚合键查评论并集（分页）。
+// FindByCommentKeys 按聚合键查评论并集（分页）。
 //
-// 主读路径。keys 由客户端派生且不透明，服务端只做等值匹配，不解析 `#章序号` 后缀。
-// 传入单个键即精确匹配该键；排序与全局列表一致（created_at DESC）。
-// 不与 book_name 组合过滤：书名在 M2 里只是展示快照，已不参与聚合。
+// 主读路径。keys 由客户端派生且不透明，服务端只做等值匹配，不解析 `#章序号`
+// 后缀；排序与全局列表一致（created_at DESC）。不与 book_name 组合过滤：
+// 书名只是展示快照，不参与聚合。
 func (r *CommentRepository) FindByCommentKeys(ctx context.Context, commentKeys []string, page, pageSize int) ([]model.Comment, int64, error) {
 	var comments []model.Comment
 
@@ -50,11 +50,11 @@ func (r *CommentRepository) FindByCommentKeys(ctx context.Context, commentKeys [
 	return comments, total, nil
 }
 
-// FindByChapterURLs 按旧聚合键（chapter_url）查评论并集（分页）。
+// FindByChapterURLs 按旧聚合键（chapter_url）查评论并集（分页）——只为让换键前的
+// 历史行继续可读而保留（chapter_url 只作兼容读取，不参与聚合）。
 //
-// 已废弃：M2 后 chapter_url 不再是聚合键，此路径只为让未换键的历史行继续可读而保留。
-// 传入单个键即等价于按该键精确匹配，因此不再另设单键方法（两者的查询体只差一个 WHERE 形式）。
-// bookName 为空时不参与过滤；排序与全局列表一致（created_at DESC）。
+// 单键即等值匹配，不另设单键方法；bookName 为空不参与过滤；排序与全局列表一致
+// （created_at DESC）。
 func (r *CommentRepository) FindByChapterURLs(ctx context.Context, chapterURLs []string, bookName string, page, pageSize int) ([]model.Comment, int64, error) {
 	var comments []model.Comment
 
@@ -133,15 +133,15 @@ func (r *CommentRepository) CountByUserID(ctx context.Context, userID uint) (int
 	return count, err
 }
 
-// userScope 只要求「声明本次是否限定用户」：删除的 model.CommentScope 与改键的
-// model.CommentKeyScope 都满足它，scope→WHERE 的展开因此共用一份实现。
+// userScope 只要求「声明是否限定用户」：删除的 model.CommentScope 与改键的
+// model.CommentKeyScope 都满足它，scope→WHERE 的展开共用一份实现。
 type userScope interface {
 	UserID() (userID uint, byUser bool)
 }
 
 // applyUserScope 把 scope 的「是否限定用户」展开成 WHERE user_id 条件。
 //
-// 两份只差一个字段的 WHERE 悄悄分叉，正是要把归属做成数据时要防的。
+// 删除与改键共用一份展开，防两份只差一个字段的 WHERE 悄悄分叉。
 // 限定用户时哪怕 ID 是 0 也照样挂上（匹配 0 行才是安全的结果）。
 func applyUserScope(q *gorm.DB, s userScope) *gorm.DB {
 	userID, byUser := s.UserID()
@@ -192,18 +192,17 @@ func (r *CommentRepository) attributeDeleteMiss(ctx context.Context, id uint, sc
 // MigrateKey 按归属范围批量改键（comment_key 列），返回受影响行数。
 //
 // scope 是唯一变化的东西：限定用户即公开的 migrate（合并书籍 / 改元数据修键），
-// 不限用户即后台的 rehash（桶污染修复，错键上聚集了大量他人评论，逐人迁移不可能）。
-// 两条路径此前各有一份只差 user_id 的 UPDATE，改键语义要修两次。
+// 不限用户即后台的 rehash（桶污染修复——错键上聚集了大量他人评论，逐人迁移不可能）。
 //
 // 只更新 comment_key（聚合键）；chapter_name/book_name 是展示快照不随迁移更新——
 // 快照的语义是「用户当时的所见」，批量改写反而伪造历史。
 // GORM 自动附加 deleted_at IS NULL 条件，软删除记录不受影响。
 //
-// 空旧键要同时认 NULL 与空串：收养旧库时 AutoMigrate 给 comments 补的是不带默认值的
-// TEXT 列，存量行拿到的是 NULL；而本服务自己写入的无键行是空串。SQLite 里拿 NULL 与
-// 空串作等值比较不成真，所以只按空串收拢会恰好漏掉唯一需要它的那批数据——升级过的库上
-// 「收拢我的历史评论」静默返回 migrated_count 0。
-// 分两支而不是统一套 COALESCE：非空键是按索引点查的主路径，把列包进函数会让它退化成全表扫描。
+// 空旧键要同时认 NULL 与空串：升级补列得到的存量行是 NULL，本服务写入的无键行是
+// 空串，SQLite 里 NULL 与空串等值比较不成真——只按空串收拢会恰好漏掉唯一需要它的
+// 那批数据，「收拢我的历史评论」会静默返回 0。
+// 分两支而不是统一套 COALESCE：非空键是按索引点查的主路径，把列包进函数会让它退化成
+// 全表扫描。
 func (r *CommentRepository) MigrateKey(ctx context.Context, scope model.CommentKeyScope, oldKey, newKey string) (int64, error) {
 	q := r.db.WithContext(ctx).Model(&model.Comment{})
 	if oldKey == "" {
@@ -219,15 +218,13 @@ func (r *CommentRepository) MigrateKey(ctx context.Context, scope model.CommentK
 
 // List 按过滤意图取一页评论，并在多种键形态之间定优先级。
 //
-// 优先级（M2 聚合键 > 已废弃的 chapter_url > 本人 > 书名 > 全局）此前写在 handler
-// 的一段 switch 里——也就是住在最浅的那一层；现在只剩这一处。
-// 各形态的具体 SQL 仍由上面各自的 finder 负责，本方法只决定走哪条。
+// 优先级（聚合键 > 已废弃的 chapter_url > 本人 > 书名 > 全局）只有这一处；
+// 各形态的具体 SQL 由上面各自的 finder 负责，本方法只决定走哪条。
 //
-// 「是否按本人过滤」只看 ByUserID，不看 UserID 是否为 0：model.CommentFilter 的注释
-// 已经论证过拿 uid == 0 当哨兵会让一次 uid 为 0 的请求从「返回空列表」变成
-// 「返回所有人的评论」。这里曾经是 `UserID != 0 || ByUserID`，前半句正是那个被
-// 否决的写法——今天 CommentKeys 的优先级让它够不着，但下一个把两个条件并起来的
-// 调用方就会踩中。
+// 「是否按本人过滤」只看 ByUserID，不看 UserID 是否为 0：拿 uid == 0 当哨兵会让
+// uid 为 0 的请求从「返回空列表」变成「返回所有人的评论」（论证见 model.CommentFilter）。
+// 不要写成 `UserID != 0 || ByUserID`——CommentKeys 的优先级让它够不着，但把两个
+// 条件并起来的调用方会踩中。
 func (r *CommentRepository) List(ctx context.Context, filter model.CommentFilter) ([]model.Comment, int64, error) {
 	switch {
 	case len(filter.CommentKeys) > 0:

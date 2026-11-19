@@ -34,7 +34,7 @@ func NewUploadHandler(store *upload.Store) *UploadHandler {
 // @Success 200 {object} model.Response
 // @Router /api/uploads/avatar [post]
 func (h *UploadHandler) UploadAvatar(c *gin.Context) {
-	// 登录态由 router.Public 的鉴权路由组保证（装配点注入解析单元），handler 内不再重复校验
+	// 登录态由 router.Public 的鉴权路由组保证（装配点注入解析单元），handler 内不重复校验
 
 	// 限制请求体大小：超限时 FormFile 会返回 "request body too large"，
 	// 防止恶意超大 multipart 占用内存/磁盘（5MB 上限 + 1MB multipart 开销余量）

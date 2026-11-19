@@ -24,8 +24,8 @@ type UserStore interface {
 
 // ProfileStore 账号资料的读写能力（consumer-defined，ADR-0007）。
 //
-// 只更新本次提交的资料列：整行 Save 会把并发的登录计数/密码写回旧值，
-// 而把读到的三个字段一并写回还会让并发的资料更新互相覆盖。
+// 只更新请求提交的资料列：整行 Save 会把并发的登录计数/密码写回旧值，
+// 把读到的字段一并写回则会让并发的资料更新互相覆盖。
 type ProfileStore interface {
 	FindByUID(ctx context.Context, uid uint) (*model.User, error)
 	UpdateProfile(ctx context.Context, uid uint, update model.ProfileUpdate) error
@@ -55,7 +55,7 @@ type AvatarCleaner interface {
 // CredentialStore 凭据模块自持的账号存储能力（consumer-defined，ADR-0007）。
 //
 // 失败记账只有一条语句：递增、按阈值上锁、上锁清零都在 RecordFailedLogin 里完成，
-// 由数据库给出「现在是否被锁」；不再整行 Save，也不回到 Go 里比大小。
+// 由数据库给出「现在是否被锁」，不整行 Save、不回 Go 里比大小。
 // FindByUID 只服务 Change 的旧口令比对：凭据模块不为读一条哈希依赖整份账号读面。
 type CredentialStore interface {
 	Create(ctx context.Context, user *model.User) error
@@ -67,7 +67,7 @@ type CredentialStore interface {
 
 // CommentStore 公开内容（评论）存储。见 CONTEXT.md「公开内容」。
 //
-// 读路径只有一个 List(filter)：M2 键 / 已废弃的 chapter_url / 本人 / 书名 / 全局
+// 读路径只有一个 List(filter)：聚合键 / 已废弃的 chapter_url / 本人 / 书名 / 全局
 // 五种形态差的是 WHERE，不是五个方法——优先级与边界归评论模块，键形态归实现。
 type CommentStore interface {
 	Create(ctx context.Context, comment *model.Comment) error

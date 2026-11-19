@@ -18,7 +18,7 @@ type Parser interface {
 
 // JWTAuth 用户 access token 认证中间件。
 //
-// token 解析由装配点注入的 Parser 完成（不再有「配置已加载」这条隐式前提）。
+// token 解析由装配点注入的 Parser 完成，不依赖「配置已加载」这条隐式前提。
 func JWTAuth(tokens Parser) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// 空头是「没带凭据」，单独一句话（A0230）；带了但形状不对是另一句。
@@ -30,7 +30,6 @@ func JWTAuth(tokens Parser) gin.HandlerFunc {
 			return
 		}
 
-		// 解析 Bearer Token
 		token, err := httpx.BearerToken(header)
 		if err != nil {
 			errcode.Error(c, errcode.LoginExpired, "认证格式错误")
@@ -38,7 +37,6 @@ func JWTAuth(tokens Parser) gin.HandlerFunc {
 			return
 		}
 
-		// 解析 Token
 		claims, err := tokens.ParseUser(token)
 		if err != nil {
 			errcode.Error(c, errcode.LoginExpired, "无效或过期的认证令牌")
@@ -47,14 +45,13 @@ func JWTAuth(tokens Parser) gin.HandlerFunc {
 		}
 		if claims.UserID == 0 {
 			// 不指名账号的 token 不算已认证：uid 是主键，0 不可能是任何账号。
-			// 数据层不再拿 0 当「不限用户」的哨兵（评论读路径改用显式 ByUserID），
-			// 但下游仍处处假定「当前账号」非 0；这一条让那个假定在入口处成立。
+			// 数据层不拿 0 当「不限用户」的哨兵（评论读路径用显式 ByUserID），
+			// 下游处处假定「当前账号」非 0；这一条让那个假定在入口处成立。
 			errcode.Error(c, errcode.LoginExpired, "无效或过期的认证令牌")
 			c.Abort()
 			return
 		}
 
-		// 将用户信息存入上下文
 		c.Set("user_id", claims.UserID)
 		c.Set("username", claims.Username)
 

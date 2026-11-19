@@ -11,7 +11,7 @@ import (
 	"ebook-server/repository"
 )
 
-// handler_test.go 覆盖后台管理面新增的端点：用户搜索/详情、评论搜索/删除、日志筛选。
+// handler_test.go 覆盖后台管理面的端点：用户搜索/详情、评论搜索/删除、日志筛选。
 // 走真实 repository（:memory: 库），不写 mock——与仓库测试取向一致（ADR-0007）。
 
 func TestAdminSearchUsers(t *testing.T) {

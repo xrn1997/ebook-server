@@ -48,8 +48,8 @@ type Store struct {
 
 // NewStore 创建验证码存储实例。
 //
-// 每个实例独立持有状态：生产由 main.go 创建唯一实例并注入各 service，
-// 测试各建各的——历史上本包曾通过 Default() 暴露全局默认存储（已删除，ADR-0007）。
+// 每个实例独立持有状态：生产由 main.go 创建唯一实例并注入各 service，测试各建各的
+// （ADR-0007：不提供全局默认存储）。
 func NewStore() *Store {
 	return &Store{codes: make(map[string]*item)}
 }
@@ -65,9 +65,8 @@ func NewCode() string {
 
 // Save 以 key 为键保存新生成的验证码并返回该验证码。
 //
-// 本包刻意不提供「写入指定码」的入口：码由这里生成，测试想拿到码就得走
-// 真实的下发链路（VerificationCodes.Send + 记录型 Mailer），
-// 而不是猜调用方的键格式——那会把命名空间约定漏到每个用例里。
+// 刻意不提供「写入指定码」的入口：码由这里生成，测试拿码走真实下发链路
+// （VerificationCodes.Send + 记录型 Mailer），避免键命名约定漏进每个用例。
 func (s *Store) Save(key string) string {
 	codeVal := NewCode()
 

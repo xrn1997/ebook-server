@@ -423,9 +423,9 @@ func TestAuthHandler_SendCode_InvalidJSON(t *testing.T) {
 
 // TestAuthHandler_Register_TooManyAttemptsAtHTTP 注册验证码错到上限在 HTTP 面回 A0241。
 //
-// 校验点历史上写成 `!= ResultOK`，把「尝试超限」与「码不对/无码」一起折成 A0132，
-// 于是 A0241 在 /api/auth/register 上不可达。这里在真表上把第 MaxAttempts 次错码
-// 的信封钉成 A0241（service 层 TestAuthService_Register_TooManyAttempts 同源触发）。
+// 钉住第 MaxAttempts 次错码的信封是 A0241：「尝试超限」不能与「码不对/无码」一起
+// 折成 A0132，否则 A0241 在 /api/auth/register 上不可达（service 层
+// TestAuthService_Register_TooManyAttempts 同源触发）。
 func TestAuthHandler_Register_TooManyAttemptsAtHTTP(t *testing.T) {
 	app := newTestApp(t)
 	router := app.engine
@@ -510,8 +510,8 @@ func TestAuthHandler_Register_ExistingEmailNeedsCodeFirst(t *testing.T) {
 
 // TestAuthHandler_ChangePassword_OldPasswordRejectedAfterChange 改密成功后旧口令立即不可登录。
 //
-// 评审原文是「注销后旧口令」，但注销只撤 token 不改哈希——账号是匿名化而非删除
-// （ADR-0005），旧口令仍可登录是正确语义。这里按现状语义取「改密后旧口令被拒」。
+// 注销只撤 token 不改哈希——账号是匿名化而非删除（ADR-0005），旧口令仍可登录是正确
+// 语义；本用例钉的是「改密后旧口令被拒」这一边。
 func TestAuthHandler_ChangePassword_OldPasswordRejectedAfterChange(t *testing.T) {
 	app := newTestApp(t)
 	router := app.engine

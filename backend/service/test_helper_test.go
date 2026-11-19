@@ -105,11 +105,11 @@ func cleanupTestDB(t *testing.T) {
 	testLogs = nil
 }
 
-// seedLegacyComment 直接经数据层写入一条换轨前的历史行（空 comment_key）。
+// seedLegacyComment 直接经数据层写入一条换键前的历史行（空 comment_key）。
 //
-// 空键是「迁移尚未发生」的既成事实，只能由数据层造出来：CommentService.Create 现在
-// 拒绝空键（那会成为任何 comment_keys 查询都命中不到的黑洞，ADR-0014），测试不能
-// 借创建路径给历史数据开后门。
+// 空键是「迁移尚未发生」的既成事实，只能由数据层造出来：CommentService.Create 拒绝
+// 空键（那会成为任何 comment_keys 查询都命不中的黑洞，ADR-0014），测试不能借创建
+// 路径给历史数据开后门。
 func seedLegacyComment(t *testing.T, userID uint, content, chapterURL, bookName string) {
 	t.Helper()
 

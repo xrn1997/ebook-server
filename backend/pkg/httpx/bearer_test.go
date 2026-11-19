@@ -20,7 +20,7 @@ func TestBearerToken(t *testing.T) {
 		{"无 Bearer 前缀", "Token abc.def.ghi", "", ErrBearerMalformed},
 		{"空头", "", "", ErrBearerMalformed},
 		{"只有前缀没有凭据", "Bearer", "", ErrBearerMalformed},
-		// SplitN 只切一刀：多余空格留在凭据里原样返回，与两个表面此前的解析行为一致。
+		// SplitN 只切一刀：多余空格留在凭据里原样返回。
 		{"多空格保留凭据原样", "Bearer  spaced-token", " spaced-token", nil},
 	}
 	for _, tc := range cases {

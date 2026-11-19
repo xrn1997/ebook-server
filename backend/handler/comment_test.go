@@ -37,7 +37,7 @@ func TestCommentHandler_GetList_Success(t *testing.T) {
 }
 
 // TestCommentHandler_Create_WithChapter 创建带章节快照的评论并校验响应视图契约
-// （ADR-0011 + M2）：comment_key 原样回显、chapter_name/book_name 只作展示快照、
+// （ADR-0011）：comment_key 原样回显、chapter_name/book_name 只作展示快照、
 // user 只含 uid/username/nickname/avatar 四字段（无 email）、add_time 为格式化字符串。
 func TestCommentHandler_Create_WithChapter(t *testing.T) {
 	app := newTestApp(t)
@@ -76,11 +76,11 @@ func TestCommentHandler_Create_WithChapter(t *testing.T) {
 	}
 }
 
-// TestCommentHandler_GetList_ByChapter 已废弃的 chapter_url 过滤仍能读出历史行（M2 兼容路径）。
+// TestCommentHandler_GetList_ByChapter 已废弃的 chapter_url 过滤仍能读出历史行（兼容读路径）。
 //
-// 旧行**必须直接入库**：创建端点在 M2 后强制要求 comment_key，chapter_url 时代那种
-// 「只带章节 URL」的请求已经发不出来了——这正是该兼容读路径存在的全部理由：
-// 让换键之前就存在的数据继续可见，而不是让新客户端有条写入路径。
+// 旧行**必须直接入库**：创建端点强制要求 comment_key，「只带章节 URL」的请求发不出来——
+// 这正是该兼容读路径存在的全部理由：让换键之前就存在的数据继续可见，
+// 而不是让新客户端有条写入路径。
 func TestCommentHandler_GetList_ByChapter(t *testing.T) {
 	app := newTestApp(t)
 	router := app.engine
@@ -89,7 +89,7 @@ func TestCommentHandler_GetList_ByChapter(t *testing.T) {
 	urlA := "https://src.example.com/book/1/2.html"
 	seedLegacyComment(t, app, uid, "A1", urlA)
 	seedLegacyComment(t, app, uid, "A2", urlA)
-	// 一条 M2 新行：有 comment_key、没有 chapter_url，不该被 chapter_url 过滤命中
+	// 一条新行：有 comment_key、没有 chapter_url，不该被 chapter_url 过滤命中
 	createComment(t, router, token, "新行", "ck1:brandnew")
 
 	w := doJSON(t, router, http.MethodGet,
@@ -100,7 +100,7 @@ func TestCommentHandler_GetList_ByChapter(t *testing.T) {
 	}
 }
 
-// seedLegacyComment 直接入库一条 chapter_url 时代的历史行（comment_key 为空）。
+// seedLegacyComment 直接入库一条 comment_key 为空的历史行（只有旧聚合键 chapter_url）。
 //
 // 绕过 HTTP 层是刻意的：见 TestCommentHandler_GetList_ByChapter 的说明。
 func seedLegacyComment(t *testing.T, app *testApp, uid uint, content, chapterURL string) {
@@ -158,10 +158,9 @@ func TestCommentHandler_Create_EmptyContent(t *testing.T) {
 
 // TestCommentHandler_Create_MissingCommentKey 不带 comment_key 的创建必须当场被拒。
 //
-// 这是 M2 换轨留下的最重要一条防线：服务端若像 chapter_url 那样把这个字段当成
-// 可选、静默收下缺键的请求，评论就会落进 comment_key 为空串的桶——而任何
-// comment_keys 查询都不命中空串，那条评论等于写进去就丢了，且没有任何报错迹象。
-// 宁可回 A0400 让客户端立刻发现，也不要这种静默丢失。
+// 缺键的评论会落进 comment_key 为空串的桶——任何 comment_keys 查询都不命中空串，
+// 那条评论等于写进去就丢了，且没有任何报错迹象。宁可回 A0400 让客户端立刻发现，
+// 也不要这种静默丢失（ADR-0014）。
 func TestCommentHandler_Create_MissingCommentKey(t *testing.T) {
 	app := newTestApp(t)
 	router := app.engine
@@ -407,7 +406,7 @@ func TestCommentHandler_GetList_MultiCommentKeys(t *testing.T) {
 // TestCommentHandler_GetList_SingleCommentKey 单键即精确匹配该桶（无等值分支）。
 //
 // 章评键带 # 后缀、作品键不带，服务端一视同仁当不透明字符串——刻意两种都验，
-// 因为「不解析 #」正是 M2 把键派生交给客户端的前提。
+// 因为「不解析 #」正是把键派生交给客户端的前提。
 func TestCommentHandler_GetList_SingleCommentKey(t *testing.T) {
 	app := newTestApp(t)
 	router := app.engine
@@ -448,7 +447,8 @@ func TestCommentHandler_GetList_CommentKeysSkipsLegacyRows(t *testing.T) {
 // TestCommentHandler_GetList_CommentKeysPrecedence comment_keys 提供时旧参数不参与过滤。
 //
 // 两个键参数同时出现属于客户端混用新旧契约，必须有一方明确胜出，否则结果是交集
-// 还是并集全靠实现顺序——这里定成 M2 主路径优先，书名也不再收窄（它已不是聚合维度）。
+// 还是并集全靠实现顺序——这里定成 comment_keys 主路径优先，书名也不参与收窄
+// （它已不是聚合维度）。
 func TestCommentHandler_GetList_CommentKeysPrecedence(t *testing.T) {
 	app := newTestApp(t)
 	router := app.engine
@@ -468,7 +468,7 @@ func TestCommentHandler_GetList_CommentKeysPrecedence(t *testing.T) {
 
 // TestCommentHandler_GetList_EmptyCommentKeysIgnored ?comment_keys= 不带值按未提供处理。
 //
-// 空串在 M2 里虽然对应「未换键的历史行」这个桶，但查询串里留空通常是客户端
+// 空串虽然对应「未换键的历史行」这个桶，但查询串里留空通常是客户端
 // 没有可用键（例如键列表为空时直接不透传），因此退化为全局最新列表而不是空集。
 func TestCommentHandler_GetList_EmptyCommentKeysIgnored(t *testing.T) {
 	app := newTestApp(t)
@@ -538,7 +538,7 @@ func keysQuery(n int) string {
 
 // TestCommentHandler_GetList_ChapterURLLimits 已废弃的 chapter_url 路径两条上限仍然生效。
 //
-// 兼容路径不是「放着不管」的代码：它同样面向未认证流量，两条上限必须与换键前一致。
+// 兼容路径不是「放着不管」的代码：它同样面向未认证流量，两条上限必须照样生效。
 func TestCommentHandler_GetList_ChapterURLLimits(t *testing.T) {
 	app := newTestApp(t)
 	router := app.engine
@@ -573,7 +573,7 @@ func commentTotalUnder(t *testing.T, router *gin.Engine, key string) float64 {
 
 // migrateKey 以 token 身份发一次聚合键迁移请求（token 传空串 = 匿名）。
 //
-// 路径是 M2 契约规定的 /api/comments/migrate（旧名 migrate-key 已随换轨一并改掉）。
+// 路径是契约规定的 /api/comments/migrate。
 func migrateKey(t *testing.T, router *gin.Engine, token, oldKey, newKey string) *httptest.ResponseRecorder {
 	t.Helper()
 	return doJSON(t, router, http.MethodPost, "/api/comments/migrate", map[string]string{
@@ -631,9 +631,9 @@ func TestCommentHandler_MigrateKey_SameKey(t *testing.T) {
 
 // TestCommentHandler_MigrateKey_LegacyUnkeyedRows 旧键为空 = 把本人未换键的历史行收进正确的桶。
 //
-// 这是换轨后最实用的一次性动作：M2 之前入库的行 comment_key 全为空串，用户改了书名作者
-// 算出正确的 ck1 键后，可以把自己的旧评论直接迁进去。
-// 旧行用 seedLegacyComment 造——创建端点现在强制要求带键，空键请求会被当场拒绝。
+// 换键之前入库的行 comment_key 全为空串，用户改了书名作者、算出正确的 ck1 键后，
+// 可以把自己的旧评论直接迁进去。
+// 旧行用 seedLegacyComment 造——创建端点强制要求带键，空键请求会被当场拒绝。
 func TestCommentHandler_MigrateKey_LegacyUnkeyedRows(t *testing.T) {
 	app := newTestApp(t)
 	router := app.engine

@@ -28,10 +28,9 @@ var (
 	ErrPasswordWrong  = errors.New("密码错误")
 	// ErrPasswordInvalid 密码超出凭据模块的硬约束（bcrypt 只接受至多 72 字节）。
 	//
-	// binding 的 max=50 按字符计数，25 个汉字的密码（75 字节）能通过校验，却在
-	// bcrypt.GenerateFromPassword 处得到未登记的 ErrPasswordTooLong——用户看到的
-	// 是 C0500「注册失败」。把这条约束收进模块并登记业务码（A0120），才既挡住
-	// 非法输入又给出一句人话。见 backend/service/credentials.go。
+	// binding 的 max=50 按字符计数，25 个汉字的密码（75 字节）能通过校验，却过不了
+	// bcrypt：把这条约束收进模块并登记业务码（A0120），才既挡住非法输入又给出一句
+	// 人话。见 backend/service/credentials.go。
 	ErrPasswordInvalid = errors.New("密码过长，最多 72 字节（约 24 个汉字）")
 	ErrLoginExpired    = errors.New("登录已过期，请重新登录")
 	ErrCodeInvalid     = errors.New("验证码错误或已过期")
@@ -39,7 +38,7 @@ var (
 	ErrMailSendFailed  = errors.New("邮件发送失败")
 
 	// ErrInvalidImage 上传的图片不符合头像约束。约束本身（扩展名白名单与大小上限）
-	// 由 pkg/upload 定义与执行（ADR-0011），这里只承载「服务端拒收这张图」这一业务事实，
-	// 好让响应码表在 errcode 一处登记：能力包不该反向成为错误映射的依赖。
+	// 由 pkg/upload 定义与执行（ADR-0011），这里只承载「服务端拒收这张图」这一业务
+	// 事实，让响应码表在 errcode 一处登记：能力包不该反向成为错误映射的依赖。
 	ErrInvalidImage = errors.New("仅支持 jpg/png/webp 图片，且大小不超过 5MB")
 )

@@ -9,9 +9,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// 评论列表的边界上限（键数、单键长度、分页钳制）不在这里：它们属查询语义，
-// 由 model.CommentFilter.Normalize 一处判定，映射 A0400。历史上这几个数值抄在
-// handler 与后台两处、其中一处没有测试钉住。
+// 评论列表的边界上限（键数、单键长度、分页钳制）属查询语义，由
+// model.CommentFilter.Normalize 一处判定并映射 A0400，不在 handler 重复。
 
 // CommentHandler 评论 HTTP 处理器。
 type CommentHandler struct {
@@ -27,8 +26,8 @@ func NewCommentHandler(commentService *service.CommentService) *CommentHandler {
 
 // Create 创建评论
 // @Summary 创建评论
-// @Description 创建新评论。comment_key（M2 聚合键）必填，服务端只存不解释其格式；
-// @Description chapter_url / chapter_name / book_name 可选，仅作过渡期兼容与展示快照。
+// @Description 创建新评论。comment_key（评论聚合键）必填，服务端只存不解释其格式；
+// @Description chapter_url / chapter_name / book_name 可选，仅作兼容读路径与展示快照。
 // @Tags 评论
 // @Accept json
 // @Produce json
@@ -59,11 +58,11 @@ func (h *CommentHandler) Create(c *gin.Context) {
 
 // GetList 获取评论列表
 // @Summary 获取评论列表
-// @Description 获取评论列表。comment_keys 是 M2 聚合键过滤（逗号分隔，返回并集）；
+// @Description 获取评论列表。comment_keys 是评论聚合键过滤（逗号分隔，返回并集）；
 // @Description chapter_url / book_name 已废弃，仅为让未换键的历史行继续可读而保留。
 // @Tags 评论
 // @Produce json
-// @Param comment_keys query string false "M2 聚合键列表（逗号分隔，返回并集；最多 50 个，单键最长 200）"
+// @Param comment_keys query string false "评论聚合键列表（逗号分隔，返回并集；最多 50 个，单键最长 200）"
 // @Param chapter_url query []string false "已废弃：旧聚合键（可传多个，返回并集；最多 50 个，单键最长 2048）" collectionFormat(multi)
 // @Param book_name query string false "已废弃：书名（配合 chapter_url 二次过滤，或单独过滤全书）"
 // @Param page query int false "页码" default(1)

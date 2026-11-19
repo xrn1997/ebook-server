@@ -1,7 +1,7 @@
 // Package depscheck 检查依赖清单的可移植性：前端锁文件里的每一条下载源，CI 与全新克隆都得够得着。
 //
-// 它随 go test ./... 运行，因此排在 make gates 的 test-race 阶段——早于第一次 `npm ci`。
-// 放前端测试里没用：`npm ci` 装不上就跑不到那里，正是本次要拦的那一步。
+// 它随 go test ./... 运行，因此排在 make gates 的 test-race 阶段——早于第一次 `npm ci`；
+// 放前端测试里没用：`npm ci` 装不上就跑不到那里。
 package depscheck
 
 import (
@@ -24,16 +24,13 @@ type Issue struct {
 
 // publicRegistries 是 CI 与全新克隆都能解析到的下载源前缀。
 //
-// 判据是「CI 够不够得着」，不是「URL 看着像不像公网」：公网镜像（如
-// mirrors.cloud.tencent.com）确实能访问，但放开到「任何 https host」就等于把内网
-// 域名与拼错的域名一起放过。要新增一类源（git 依赖、公司代理）就显式加前缀，并在
-// docs/development.md 的前端小节写明为什么。
+// 判据是「CI 够不够得着」，不是「URL 看着像不像公网」：公网镜像能访问，但放开到
+// 「任何 https host」会把内网域名与拼错的域名一起放过。要新增一类源（git 依赖、
+// 公司代理）就显式加前缀，并在 docs/development.md 的前端小节写明为什么。
 var publicRegistries = []string{"https://registry.npmjs.org/"}
 
-// lockfile 是 npm lockfileVersion 3 的最小投影。
-//
-// 只取 packages 的键与 resolved：version 与 integrity 由 npm 自己校验，这里管的是
-// 下载地址在别的网络上存不存在。
+// lockfile 是 npm lockfileVersion 3 的最小投影：只取 packages 的键与 resolved。
+// version 与 integrity 由 npm 自己校验，这里管的是下载地址在别的网络上存不存在。
 type lockfile struct {
 	Packages map[string]struct {
 		Resolved string `json:"resolved"`

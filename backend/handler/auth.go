@@ -101,7 +101,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	pair, err := h.authService.Login(c.Request.Context(), &req)
 	if err != nil {
 		// 登录拒绝折叠成同一响应（ADR-0006）：账号不存在、密码错误、尝试超限与锁定
-		// 由凭据模块一处判定（service.IsLoginDenied），这里不再逐枚列 model 哨兵。
+		// 由凭据模块一处判定（service.IsLoginDenied），handler 不逐枚列 model 哨兵。
 		// 锁定/超限只可能发生在已注册账号上，若原样返回 A0241/A0242，
 		// 五次错误密码就能判断某个邮箱是否已注册。
 		if service.IsLoginDenied(err) {

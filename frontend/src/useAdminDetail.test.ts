@@ -82,7 +82,7 @@ describe('useAdminDetail', () => {
 
   it('fetcher 抛编程错误：只留通用文案，原文进控制台', async () => {
     // api 层已经把网络失败翻译成信封，能抛到这里的只剩编程错误；说成运维问题会把真 bug
-    // 藏起来。这条分支此前只靠读代码确认，没有可失败的断言钉着。
+    // 藏起来。
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
     const detail = useAdminDetail<Detail, number>(
       async () => {

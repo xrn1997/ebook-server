@@ -199,7 +199,6 @@ logrotate、审计清理与上线验证见 `deploy/README.md`。用 systemd 或�
 - **验证码存储是内存 map**：单进程可用；多实例部署需迁移到 Redis 或共享存储。
 - **refresh token 过期记录没有定时清理**：登出/改密/注销经 `Sessions.Revoke` 作废该账号全部 refresh token，过期记录交给数据库，暂不设清理任务。`FindByHash` 只认未过期的行，这些记录因此对行为惰性、只占磁盘；`backend/repository/refresh_token.go` 的 `DeleteExpired` 是为清理任务预埋的原语，当前无调用方、也不进 `Sessions` 的 `refreshTokenStore` 接口——任务真落地时再扩接口。
 - **SQLite 写入串行化**：连接使用 WAL + `busy_timeout(5000)` + `foreign_keys(1)`；高并发场景仍需评估迁移到 MySQL/PostgreSQL。
-- **数据库迁移**：新库执行 `backend/migrations` 的 SQL；旧库启动时先 AutoMigrate 收养，并把当前二进制内嵌的全部版本标记为已应用。新增列/索引必须加迁移文件；测试库同走迁移路径，漏写的迁移会在测试中以缺列暴露。
 - **access token 无法主动作废**：改密/重置/注销只删除 refresh token；无状态 access token 在剩余有效期内仍可调通 API。彻底解决需要 token 黑名单。
 - **账号注销不包事务**：依次清头像、匿名化账号、删 refresh token；中途失败可重新登录重试（最后一步失败留下的令牌也续不了期，只会自行过期），不会锁死或丢数据。这是有意的取舍，不是遗漏。
 - **改密与并发登录有竞态窗口**：改密先撤销会话、再写新哈希（fail-closed，顺序与理由见 ADR-0017）。落在这两步之间的登录仍能用**旧口令**换到一枚新的 refresh token，它不会被这次撤销扫到。彻底解决需要 token 版本号或改密时间戳。`Refresh` 的同型窗口不存在：轮换是打在旧哈希上的条件更新，撤销在先必得 0 行、失败关闭（ADR-0003），不会留下「撤销之后才落库的新令牌」；注销漏网的令牌同样在 `service.Sessions.Consume` 的匿名化检查前被拒，「注销后无限续期的会话」不成立。

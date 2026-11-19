@@ -38,7 +38,6 @@ func NewAccountService(users UserStore, sessions *Sessions, comments CommentStor
 //
 // 只含用户资料与自己的评论；刻意不含密码哈希与操作日志——审计记录是服务端
 // 对请求的观察，不属于用户自有内容。
-// ExportUserData 与注销数据副本历史上各有一份实现，此处合并为唯一一份。
 func (s *AccountService) Export(ctx context.Context, uid uint) (*model.UserDataExport, error) {
 	user, err := s.users.FindByUID(ctx, uid)
 	if err != nil {
@@ -65,12 +64,12 @@ func (s *AccountService) SendDeletionCode(ctx context.Context, uid uint) error {
 // 返回的数据副本让用户当场取走自己的内容；服务端不保留可识别信息。
 // 注销不可逆——匿名化后无法再按邮箱找到该账号，密码也已清空。
 //
-// 三次写（清头像列、匿名化、撤销会话）刻意不包事务：中途失败只会留下
-// 「头像已清但账号未匿名化」或「账号已匿名化但令牌未删」的状态——前者用户重新
-// 登录即可恢复并重试注销；后者只告警不判失败（数据副本是用户唯一的一份，不能
-// 因为一次清理写失败而丢掉），而漏网令牌也续不了期（Consume 拒绝匿名化账号，
-// 见 sessions.go 的 Consume），只会自行过期。这是有意的取舍，见 docs/development.md 的
-// 「当前已知问题」。
+// 三次写（清头像列、匿名化、撤销会话）刻意不包事务：中途失败只留下
+// 「头像已清但账号未匿名化」或「账号已匿名化但令牌未删」两种状态——前者用户
+// 重新登录即可恢复并重试注销；后者只告警不判失败（数据副本是用户唯一的一份，
+// 不能因一次清理写失败而丢掉），漏网令牌也续不了期（Consume 拒绝匿名化账号，
+// 见 sessions.go 的 Consume），只会自行过期。有意的取舍，见
+// docs/development.md「当前已知问题」。
 func (s *AccountService) Delete(ctx context.Context, uid uint, codeVal string) (*model.UserDataExport, error) {
 	user, err := s.users.FindByUID(ctx, uid)
 	if err != nil {
@@ -101,13 +100,13 @@ func (s *AccountService) Delete(ctx context.Context, uid uint, codeVal string) (
 	}
 
 	// 立即撤销该账号的全部会话（Sessions.Revoke）。刻意放在匿名化之后：并发 Refresh
-	// 的轮换若插在前面几步之间完成，这里能把它刚写入的新令牌一并扫掉。仍漏网的
-	// （轮换写入落在本撤销之后）也续不了期——Consume 对匿名化账号一律拒绝
+	// 的轮换若插在前面几步之间完成，这里把它刚写入的新令牌一并扫掉。仍漏网的
+	// （轮换写入落在撤销之后）也续不了期——Consume 对匿名化账号一律拒绝
 	// （isAnonymized），漏网令牌最多存活到自身过期，「注销后无限续期的会话」
-	// 因此不成立。
+	// 不成立。
 	//
-	// 失败只告警：此刻账号已经匿名化、数据副本也已构建，把它判成整体失败会让用户
-	// 拿不到那份唯一的副本，而漏网令牌本来就没有续期路径。
+	// 失败只告警：此刻账号已匿名化、数据副本已构建，判成整体失败会让用户
+	// 拿不到那份唯一的副本，而漏网令牌本就没有续期路径。
 	if err := s.sessions.Revoke(ctx, uid); err != nil {
 		zap.L().Warn("注销后撤销会话失败，令牌最多存活到自身过期",
 			zap.Uint("uid", uid), zap.Error(err))
@@ -152,12 +151,12 @@ func (s *AccountService) buildUserDataExport(ctx context.Context, user *model.Us
 
 // anonymizeUser 匿名化账号：抹去可识别信息与凭据，但保留行与公开内容（ADR-0005）。
 //
-// 刻意不设置 DeletedAt——GORM 的 Preload("User") 会自动附加 WHERE deleted_at IS NULL，
-// 一旦软删，评论作者就会被过滤掉，"已注销用户"反而显示不出来。
-// 安全性由 password 清空与 email 占位化保证：该账号无法登录，也无法按邮箱检索。
+// 刻意不设 DeletedAt——GORM 的 Preload("User") 会附加 WHERE deleted_at IS NULL，
+// 软删会让评论作者被过滤掉，「已注销用户」反而显示不出来。
+// 无法登录、无法按邮箱检索由 password 清空与 email 占位化保证。
 //
-// email 改写为 deleted_<uid>@invalid 同时释放了唯一索引，使同一邮箱可以重新注册。
-// uid 自增唯一，占位值之间永不冲突；.invalid 是 RFC 2606 保留 TLD，不会与真实邮箱撞车。
+// email 占位成 deleted_<uid>@invalid 同时释放唯一索引，同一邮箱可重新注册：
+// uid 自增唯一，占位值永不冲突；.invalid 是 RFC 2606 保留 TLD，不与真实邮箱撞车。
 func anonymizeUser(user *model.User) {
 	user.Email = fmt.Sprintf("deleted_%d@invalid", user.UID)
 	user.Username = fmt.Sprintf("已注销用户_%d", user.UID)

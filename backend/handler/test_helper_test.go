@@ -1,6 +1,6 @@
 // 本文件是 handler 用例的公共装配：newTestApp 经 router.Public 真路由表组装引擎，
 // 路由表的唯一真相在 router 包（router_test.go 的 publicTable 双向比对）。
-// handler 用例不再手抄影子路由——漏挂的中间件/路由会在这里的真表装配下暴露。
+// handler 用例不手抄影子路由——漏挂的中间件/路由会在这里的真表装配下暴露。
 package handler_test
 
 import (
@@ -30,7 +30,7 @@ var testCtx = context.Background()
 
 // recordingMailer 记录每次 SendCode 调用；测试经它取回模块下发的码。
 //
-// 用例不再自备固定码：那需要知道存储键的命名空间格式（"reg:"+email 等），
+// 用例不自备固定码：那需要知道存储键的命名空间格式（"reg:"+email 等），
 // 而那格式是验证码模块的私有细节。
 type recordingMailer struct {
 	sent []mailAttempt
@@ -93,10 +93,10 @@ var testCodes *code.Store
 // testApp 一套相互独立的测试应用：独立 :memory: 库、头像目录与真路由引擎。
 //
 // 每个测试通过 newTestApp 获得全新环境，且配置/token 都以值注入——没有全局可改写，
-// 用例之间不互相污染（历史上曾改写全局 database.DB 并共享 code.Default()）。
+// 用例之间不互相污染。
 //
 // 只留用例真正碰得到的三样：引擎（发请求）、库（直接播种）与头像目录（断言文件生命周期）。
-// handler 实例是喂 router.Deps 的一次性装配料，用例一律经真表发 HTTP，不再从结构体上取。
+// handler 实例是喂 router.Deps 的一次性装配料，用例一律经真表发 HTTP，不从结构体上取。
 type testApp struct {
 	db          *gorm.DB
 	engine      *gin.Engine
@@ -156,8 +156,8 @@ func newTestApp(t *testing.T) *testApp {
 
 // doJSON 发一个 JSON 请求并返回响应记录器。
 //
-// 「marshal → NewRequest → 设 Content-Type/Authorization → ServeHTTP」这四步原本
-// 在每个评论用例里抄一遍（AGENTS.md：handler 公共工具放本文件）。
+// 「marshal → NewRequest → 设 Content-Type/Authorization → ServeHTTP」这四步在用例里
+// 各抄一遍会互相漂移（AGENTS.md：handler 公共工具放本文件）。
 // body 传 nil 表示无请求体（GET/DELETE）；token 传空串表示匿名请求。
 func doJSON(t *testing.T, router *gin.Engine, method, path string, body interface{}, token string) *httptest.ResponseRecorder {
 	t.Helper()
@@ -187,8 +187,8 @@ func doJSON(t *testing.T, router *gin.Engine, method, path string, body interfac
 
 // createComment 以 token 身份发一条归属 commentKey 聚合键的评论，失败即终止用例。
 //
-// 键走 M2 契约的 comment_key 字段（创建评论必填）：不带键的创建会被服务端当场拒绝。
-// 需要造 chapter_url 时代的旧行时用 seedLegacyComment——换键后那条写路径已不可达。
+// 键走 comment_key 字段（创建评论必填）：不带键的创建会被服务端当场拒绝。
+// 需要造 comment_key 为空的旧行时用 seedLegacyComment——创建端点没有那条写路径。
 // 刻意断言成功：造数据阶段的失败不是被测行为，留在这里失败比让后续断言
 // 报出迷惑性错误更好定位。
 func createComment(t *testing.T, router *gin.Engine, token, content, commentKey string) {
