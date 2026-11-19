@@ -1,0 +1,9 @@
+[Unit]
+Description=Prune expired ebook-server operation_logs
+After=ebook-server.service
+
+[Service]
+Type=oneshot
+User=ebook
+Group=ebook
+ExecStart=/opt/ebook-server/prune-audit.sh

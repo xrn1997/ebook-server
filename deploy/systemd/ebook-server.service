@@ -1,0 +1,61 @@
+[Unit]
+Description=ebook-server public API (loopback; Nginx terminates TLS)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ebook
+Group=ebook
+WorkingDirectory=/opt/ebook-server
+ExecStart=/opt/ebook-server/ebook-server
+Restart=on-failure
+RestartSec=3s
+
+# 进程权限：非 root、只读系统、私有 /tmp、不能提权。
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+
+# 进程树与 /proc 收敛：服务看不到别的进程，也读不到非 PID 的 /proc 项。
+# （需要 systemd >= 247）
+ProtectProc=invisible
+ProcSubset=pid
+
+# 不允许创建 setuid/setgid 文件、不申请实时调度、不留下 SysV IPC 对象。
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RemoveIPC=true
+
+# 应用绑的是 9090/9091 这类非特权端口，读写自己的部署目录，不需要任何 capability。
+# 清空后即使进程被拿下，也没有 chown/ptrace/net_admin 之类可借用的权限。
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+
+# 只允许写部署目录（SQLite/WAL、uploads、logs）。
+ReadWritePaths=/opt/ebook-server
+
+# 连接与资源上限；应用只监听回环，文件描述符不需要无上限。
+LimitNOFILE=65535
+TasksMax=256
+
+# 日志双写：zap 同时写 /opt/ebook-server/logs/*.log（由 deploy/logrotate 轮转）
+# 与 stdout/stderr（进 journald）。journald 侧靠 SystemMaxUse 兜底，轮转不管它。
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

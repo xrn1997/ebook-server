@@ -15,6 +15,7 @@
 | `TESTING.md` | 测试策略、测试结构、覆盖率口径、测试读数 | 构建/运行命令全集、架构理由 |
 | `docs/architecture.md` | 模块地图、依赖方向、唯一主人清单、不变量 | 决策理由、操作步骤、历史、测试读数 |
 | `docs/development.md` | 构建、运行、测试、生成、发版、环境坑、当前已知问题 | 架构理由、用户用法、决策历史 |
+| `deploy/README.md` | 生产部署 runbook：拓扑、配置、Nginx/systemd、上线验证、备份与残余风险 | 构建细节、架构理由、用户 API 说明 |
 | `docs/adr/` | 一个决策的 why、边界、被否方案、后果 | 当前架构复述、计划、验收清单 |
 | `docs/AGENTS.md` | 文档放置判据、写作规则、生命周期、评审清单 | 业务规则、架构细节 |
 | `docs/agents/` | Issue、标签、领域文档的 agent 约定 | 本仓事实源 |
@@ -51,7 +52,7 @@
 ## 4. 生命周期
 
 - **ADR**：编号只追加、不复用；每篇紧跟标题写 `Status:`；部分取代用 `Superseded in part by: NNNN（范围）`；每篇在 `docs/adr/README.md` 恰好出现一次；正文只写当前真相，日期留在 git；整篇翻案新写一篇并标旧篇，事实漂移就地改。整篇被取代（`Status: superseded by NNNN`）的保留正文当历史，其中的仓内路径不要求仍然存在——docscheck 对这类文档豁免路径存在性检查，其余文档一律照查。
-- **当前事实源**（`README.md`、`CONTEXT.md`、`docs/architecture.md`、`docs/development.md`、`docs/AGENTS.md`）：语义、结构、词汇或操作变化时同批更新；不写历史。
+- **当前事实源**（`README.md`、`CONTEXT.md`、`docs/architecture.md`、`docs/development.md`、`docs/AGENTS.md`、`deploy/README.md`）：语义、结构、词汇或操作变化时同批更新；不写历史。
 - **README**：用户可见事实变化时更新；配置样例、API 端点与部署方式同步。
 - **CONTRIBUTING**：提交信息、PR/Issue 约定、提交前门或发版边界变化时同批更新；构建步骤仍住 `docs/development.md`。
 - **CHANGELOG**：只在发版时追加已发布版本；写用户可见变化与升级注意，未发布改动不预写；逐提交明细留 git。

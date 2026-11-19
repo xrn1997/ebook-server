@@ -52,6 +52,7 @@ var permanentDocs = []string{
 	"docs/architecture.md",
 	"docs/development.md",
 	"docs/AGENTS.md",
+	"deploy/README.md",
 }
 
 var requiredDocs = append(append([]string{}, permanentDocs...),
@@ -64,6 +65,7 @@ var requiredDocs = append(append([]string{}, permanentDocs...),
 // 与 topLevelFiles 保留 Dockerfile 同一口径——删掉的名字恰恰是最需要门禁的一瞬。
 var pathPrefixes = []string{
 	"backend/",
+	"deploy/",
 	"desktop/",
 	"docs/",
 	"frontend/",
