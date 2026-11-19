@@ -27,14 +27,14 @@
 | `config` | 配置缺省值、`.env` 覆盖敏感项、无包级全局；**拒绝不安全配置启动**（空密钥任何模式、内置默认值 `release` 下）；**校验规则拒绝非法值**（`schema_test.go`） |
 | `model` | 分页钳制、评论键边界与归属范围（`CommentKeyScope`）、删除范围（`CommentScope`）与后台固定视图 |
 | `pkg/code` | 验证码存储：TTL、尝试次数、无 `Set` 后门 |
-| `pkg/database` | 迁移的应用与收养（登记内嵌全集、重开不重放）、内嵌迁移产物的约束性质（主键/唯一/NOT NULL/外键）、DSN pragma 与内存库单连接（ADR-0023/0025） |
+| `pkg/database` | 迁移的应用与收养（登记内嵌全集、重开不重放）、内嵌迁移产物的约束性质（主键/唯一/NOT NULL/外键）、DSN pragma 与内存库单连接（ADR-0023/0025）、GORM SQL 日志按运行模式选档（非 debug 不把参数写进日志） |
 | `pkg/errcode` | 哨兵 → 业务码沿包装链查表、端点级 `Map` 覆盖；绑定/校验错误经 `RespondBindError` 翻成中文，并断言 validator 的英文原文不出现在响应里；信封键集合只有 `model.Response` 一种形状 |
 | `pkg/httpx` | 请求取值：分页钳制与数字 ID 边界（详见下节） |
 | `pkg/jwt` | `TokenBox` 签发/解析、算法固定、双 adapter 互不可用 |
 | `pkg/ratelimit` | 固定窗口配额与窗口滚动；多窗口记账的「要么都记、要么都不记」 |
 | `pkg/testdb` | 测试库经与生产同一条 `database.Migrate` 建表、外键约束在测试库里真的生效（ADR-0025） |
 | `pkg/upload` | 头像校验/命名/删除/路径穿越 |
-| `middleware` | 鉴权、CORS、panic 恢复、操作审计中间件只转发事实（路径过滤在 service 层）、有界 JSON 捕获 |
+| `middleware` | 鉴权、CORS、panic 恢复、操作审计中间件只转发事实（路径过滤在 service 层）、有界 JSON 捕获、请求体上限（默认档与路径覆盖档的边界、chunked 兜底） |
 | `repository` | 真 SQL 语义（`:memory:`）+ 「查不到」在边界翻成领域哨兵 + 条件 DELETE 以 `RowsAffected` 判成功、0 行时在本层判出「不存在 / 非本人」归因 + 凭据/资料的列级写各只碰自己的列 |
 | `service` | 认证/账号/评论/验证码业务规则；资料与头像文件生命周期、密码/锁定/会话撤销 |
 | `handler` | HTTP 协议转换与响应信封（`newTestApp` 经 `router.Public` 真表装配整条链） |

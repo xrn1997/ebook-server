@@ -25,6 +25,9 @@ import (
 const (
 	// MaxAvatarBytes 头像文件大小上限：5MB。
 	MaxAvatarBytes = 5 << 20
+	// MaxAvatarBodyBytes 头像请求体的字节上限：5MiB 文件 + 1MiB multipart 边界/字段开销。
+	// 闸在两层引用同一常量：路由表的 BodyLimit 覆盖档与 handler 的 MaxBytesReader。
+	MaxAvatarBodyBytes = MaxAvatarBytes + (1 << 20)
 	// AvatarSubdir 头像子目录名（upload.dir 之下）。
 	AvatarSubdir = "avatar"
 	// AvatarURLPrefix 头像的公开访问前缀：/uploads/avatar。

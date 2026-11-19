@@ -173,7 +173,11 @@ make all
 ./build/ebook-server
 ```
 
-必须在放有 `config.yaml` 的目录启动：工作目录决定配置、数据库、uploads 与日志的落点。后台默认只监听 `127.0.0.1:9091`；远程管理走 SSH 隧道/VPN，不要直接开放后台端口。用 systemd 或其它进程管理器托管时，把工作目录设为部署目录即可。
+必须在放有 `config.yaml` 的目录启动：工作目录决定配置、数据库、uploads 与日志的落点。
+公开 API 与后台都默认只监听回环（`127.0.0.1:9090` / `127.0.0.1:9091`）：公网入口由
+Nginx 终止 TLS 后反代到 9090，后台走 SSH 隧道/VPN。Nginx 站点模板、systemd unit、
+logrotate、审计清理与上线验证见 `deploy/README.md`。用 systemd 或其它进程管理器托管时，
+把工作目录设为部署目录即可。
 
 ## 环境坑
 
@@ -184,6 +188,11 @@ make all
 - **SMTP 未配置**：非 release 模式会退回写日志，便于联调；release 模式仍装配 SMTP adapter，发送时显式报错，避免验证码漏进日志。
 - **配置空值**：配置文件里的显式空值优先于默认值；`jwt.secret`、`admin.jwt_secret`、`upload.dir` 为空一律拒绝启动。真实密钥放 `.env`，不要写进 `config.yaml`。
 - **后台可达性**：默认只听回环地址；需要局域网访问时改 `admin.listen_addr`，不要改成通配地址。
+- **公开 API 可达性**：默认只听 `127.0.0.1:<server.port>`；对外服务必须经 Nginx 反代。
+  确需直连时显式改 `server.listen_addr`，并自行承担明文/限流缺失的后果（ADR-0027）。
+- **生产日志不含 SQL 参数**：非 debug 模式只记慢查询与语句错误，SQL 里的参数一律占位成
+  `?`（档位与阈值见 `backend/pkg/database` 的 `NewLogger` / `gormSlowQuery`）。排查需要实际
+  取值时临时用 debug 模式，不要为了看参数把 release 的档位调低。
 
 ## 当前已知问题
 

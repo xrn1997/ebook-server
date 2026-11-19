@@ -3,6 +3,7 @@ package database
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/glebarez/sqlite"
@@ -23,13 +24,17 @@ const busyTimeoutMS = 5000
 // 于是「必须先 Init 再 GetDB」这条隐式顺序不再是每个使用方的前提。
 //
 // pragma 的取舍在 dsnOf：按连接生效，所以只能放 DSN，不能只在某一条连接上执行。
+//
+// 默认装配非 debug 档（参数占位、只记慢查询与错误）：直接使用 Open 的调用方
+// 不会因为忘记配置 logger 而把 SQL 参数写进生产日志；装配点在读到运行模式后
+// 可用 NewLogger 覆盖。
 func Open(path string) (*gorm.DB, error) {
 	if path == "" {
 		path = DefaultPath
 	}
 
 	db, err := gorm.Open(sqlite.Open(dsnOf(path)), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Info),
+		Logger: NewLogger(false, os.Stdout),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect database: %w", err)

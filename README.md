@@ -367,6 +367,19 @@ make all
 托管，把工作目录设为部署目录即可。后台默认只监听
 `127.0.0.1:9091`，远程管理请走 SSH 隧道/VPN，不要改成通配监听。
 
+公开 API 默认也只监听 `127.0.0.1:9090`：公网入口应由 Nginx 终止 TLS 后反代，应用端口
+不直接暴露。Nginx 站点模板、systemd unit、logrotate、审计清理脚本与上线验证清单见
+[deploy/README.md](deploy/README.md)。生产环境至少确认：
+
+- `SERVER_MODE=release`，JWT/后台密钥与口令不是仓库占位值（`.env`，权限 600）；
+- `SERVER_PUBLIC_BASE_URL=https://<你的域名>`，否则头像 URL 会拼成 `http://`；
+- `api_docs.enabled=false`，`admin.listen_addr=127.0.0.1`；
+- 云安全组与主机防火墙只放行 22/80/443，9090/9091 不对公网开放。
+
+**不经 Nginx 的直连部署**（本机之外的设备、Android 真机联调等）需显式设
+`server.listen_addr: 0.0.0.0` 或 `SERVER_LISTEN_ADDR=0.0.0.0`，并自行承担明文传输与
+限流缺失（ADR-0027）。
+
 ## 配置说明
 
 配置文件 `config.yaml`：
@@ -374,7 +387,8 @@ make all
 ```yaml
 server:
   port: 9090            # 服务端口（config.yaml 与代码默认值一致，均为 9090）
-  mode: debug           # 运行模式: debug, release, test
+  listen_addr: 127.0.0.1  # 仅回环；公网入口由 Nginx 反代（默认值，勿轻易改 0.0.0.0）
+  mode: debug           # 运行模式: debug, release, test（生产用 SERVER_MODE=release 覆盖）
   public_base_url: ""   # 头像等公开资源的来源，如 https://book.example.com；留空则按请求 Host 拼接（仅限受信网络，见 ADR-0011）
 
 database:
@@ -409,7 +423,8 @@ upload:
 
 > 敏感项走本地 `.env`（已被 git 排除）：`JWT_SECRET` 覆盖 `jwt.secret`，`SMTP_PASSWORD` 覆盖
 > `smtp.password`，`ADMIN_PASSWORD` 覆盖 `admin.password`，`ADMIN_JWT_SECRET` 覆盖
-> `admin.jwt_secret`。见 `.env.example`。
+> `admin.jwt_secret`。对外部署再加 `SERVER_MODE=release`、
+> `SERVER_PUBLIC_BASE_URL=https://<域名>`；`SERVER_LISTEN_ADDR` 默认 `127.0.0.1`。见 `.env.example`。
 >
 > **不安全的密钥配置会在启动时被拒绝**：`jwt.secret` / `admin.jwt_secret` / `upload.dir`
 > 留空一律拒绝启动，`mode: release` 下还拒绝代码内置的默认值。注意配置文件里的显式空值

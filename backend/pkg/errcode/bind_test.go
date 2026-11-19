@@ -54,6 +54,8 @@ func TestRespondBindError_SpeaksHuman(t *testing.T) {
 		{"格式不对", &model.LoginRequest{}, `{"email":"not-an-email","password":"secret123"}`, "邮箱格式不正确"},
 		{"定长不符", &model.RegisterRequest{}, `{"email":"a@b.com","code":"12345","password":"secret123"}`, "验证码长度必须为 6 字"},
 		{"链接非法", &model.UpdateUserRequest{}, `{"avatar":"not-a-url"}`, "头像地址不是合法的链接"},
+		// 只接受 http/https：javascript:/data:/file: 都是合法 URL，但不是头像地址。
+		{"头像协议非法", &model.UpdateUserRequest{}, `{"avatar":"javascript:alert(1)"}`, "头像地址不是合法的链接"},
 		// 同一条 min 标签在字符串上量长度、在数值上量取值：把数值也说成「字」，
 		// 客户端读到的就是一句看不懂的话。
 		{"数值下限不说成字", &struct {

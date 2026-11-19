@@ -1,7 +1,8 @@
 server:
   port: 9090
-  mode: debug  # debug, release, test
-  public_base_url: ""  # 头像等公开资源的绝对 URL 来源，如 https://book.example.com；留空则按请求 Host 拼接（仅限受信网络，见 docs/adr/0011）
+  listen_addr: 127.0.0.1  # 仅回环：公网入口由 Nginx 终止 TLS 后反代，勿改成 0.0.0.0
+  mode: debug  # debug, release, test（生产用 .env 的 SERVER_MODE=release 覆盖）
+  public_base_url: ""  # 头像等公开资源的绝对 URL 来源，如 https://book.example.com；生产必须在 .env 钉死为你的域名（SERVER_PUBLIC_BASE_URL）
 
 database:
   path: ebook.db  # SQLite 数据库文件路径

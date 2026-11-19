@@ -31,6 +31,9 @@ const (
 	defaultJWTSecret     = "ebook-secret-key"
 	defaultAdminJWT      = "ebook-admin-secret-key"
 	defaultAdminPassword = "admin123-dev"
+	// defaultServerListenAddr 公开 API 监听地址的默认值：只绑回环，公网入口是
+	// Nginx。下面的默认值注册表与 normalize 的显式空值回落共用同一常量。
+	defaultServerListenAddr = "127.0.0.1"
 	// defaultAdminListenAddr 后台监听地址的默认值；下面的默认值注册表与
 	// normalize 的显式空值回落共用同一常量。
 	defaultAdminListenAddr = "127.0.0.1"
@@ -48,7 +51,9 @@ const (
 // 真的能生效，并让配置加载知道这个键存在。
 var fieldDefaults = []fieldDefault{
 	{Section: "server", Key: "port", Value: 9090},
-	{Section: "server", Key: "mode", Value: ModeDebug},
+	// 公开 API 默认只监听回环：对外服务由 Nginx 反代（TLS 终止、限流、访问日志）。
+	{Section: "server", Key: "listen_addr", Value: defaultServerListenAddr, Env: "SERVER_LISTEN_ADDR"},
+	{Section: "server", Key: "mode", Value: ModeDebug, Env: "SERVER_MODE"},
 	// 公开资源（头像）URL 的来源。留空 = 按请求 Host 拼接，所以它没有内置默认值，
 	// 但必须登记：不登记的话 SERVER_PUBLIC_BASE_URL 覆盖压根不生效。
 	{Section: "server", Key: "public_base_url", Value: "", Env: "SERVER_PUBLIC_BASE_URL"},
@@ -99,6 +104,11 @@ func (c *Config) normalize() {
 	// smtp.host 是 smtp.port 那条 range 规则的 When 依赖：只写空白的 host 若原样留着，
 	// 「没配 SMTP」与「配了个空白」在规则眼里是同一件事，端口检查会被整段跳过。
 	c.SMTP.Host = strings.TrimSpace(c.SMTP.Host)
+
+	c.Server.ListenAddr = strings.TrimSpace(c.Server.ListenAddr)
+	if c.Server.ListenAddr == "" {
+		c.Server.ListenAddr = defaultServerListenAddr
+	}
 
 	c.Admin.ListenAddr = strings.TrimSpace(c.Admin.ListenAddr)
 	if c.Admin.ListenAddr == "" {
@@ -180,6 +190,9 @@ type validationRule struct {
 func validationRules() []validationRule {
 	return []validationRule{
 		{Field: "server.port", Kind: ruleRange, Min: 1, Max: 65535, Message: "server.port 必须在 1-65535 之间"},
+		// 空值由 normalize 回落到回环；显式通配仍允许（脱离 Nginx 直连的部署），
+		// 但默认值不再把 API 摊到所有网卡。
+		{Field: "server.listen_addr", Kind: ruleHost, Message: "server.listen_addr 必须是 IP 地址或 localhost，不能填主机名"},
 		{Field: "server.mode", Kind: ruleOneOf, Values: []string{ModeDebug, ModeRelease, "test"}, Message: "server.mode 必须是 debug、release 或 test"},
 		{Field: "admin.listen_port", Kind: ruleRange, Min: 1, Max: 65535, Message: "admin.listen_port 必须在 1-65535 之间"},
 		{Field: "smtp.port", Kind: ruleRange, Min: 1, Max: 65535, When: "smtp.host", Message: "smtp.port 必须在 1-65535 之间"},

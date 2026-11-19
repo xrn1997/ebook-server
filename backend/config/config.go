@@ -25,7 +25,7 @@ type Config struct {
 // APIDocsConfig Swagger API 文档配置。
 //
 // Swagger UI / OpenAPI spec 会暴露完整接口清单与参数，属于侦察信息。
-// 公开 API 端口（0.0.0.0）默认**不**提供文档（enabled=false，防信息泄露）；
+// 公开 API 端口（默认仅回环，公网入口是 Nginx）默认**不**提供文档（enabled=false，防信息泄露）；
 // 后台引擎（默认仅 127.0.0.1）不受此开关影响、始终提供，供本机管理查阅。
 type APIDocsConfig struct {
 	// Enabled 是否在公开 API 端口提供 Swagger 文档（联调/内网开放时置 true）。
@@ -55,8 +55,13 @@ type AdminConfig struct {
 
 // ServerConfig 服务端配置。
 type ServerConfig struct {
-	Port int    `mapstructure:"port"`
-	Mode string `mapstructure:"mode"` // debug, release, test
+	Port int `mapstructure:"port"`
+	// ListenAddr 公开 API 的监听地址，默认 127.0.0.1。
+	//
+	// 默认只绑回环：公网入口是 Nginx（终止 TLS、限流、访问日志），应用端口不应直接
+	// 暴露在公网。确需脱离 Nginx 直连时再显式改成 0.0.0.0，并自行承担明文与限流责任。
+	ListenAddr string `mapstructure:"listen_addr"`
+	Mode       string `mapstructure:"mode"` // debug, release, test
 	// PublicBaseURL 是公开资源（头像）绝对 URL 的来源，形如 https://book.example.com。
 	//
 	// 留空时按请求 Host 拼接（自托管没有固定域名时的便利，ADR-0011），代价是伪造 Host
@@ -141,7 +146,7 @@ const (
 //
 // 规则表在 schema.go（validationRules），启动校验按同一份文案拒绝：
 //   - 空 jwt.secret 是最容易踩到、后果又最重的一种：密钥为空时 HMAC 仍然「工作」，
-//     于是任何客户端都能自行签出任意 uid 的 access token，而公开 API 绑在 0.0.0.0。
+//     于是任何客户端都能自行签出任意 uid 的 access token，而公开 API 仍会接受这些令牌。
 //     它偏偏又极易发生——配置文件里的显式空值优先于 SetDefault，默认值兜不住它，
 //     而把密钥留空、改由 `.env` 提供正是常见写法。
 //   - 空 upload.dir 在 net/http 里等于进程当前目录，会把同目录下的 config.yaml、

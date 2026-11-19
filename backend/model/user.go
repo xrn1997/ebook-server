@@ -51,7 +51,11 @@ type UpdateUserRequest struct {
 	Username string `json:"username" binding:"omitempty,min=3,max=50"`
 	Nickname string `json:"nickname" binding:"omitempty,min=1,max=50"`
 	Email    string `json:"email" binding:"omitempty,email"`
-	Avatar   string `json:"avatar" binding:"omitempty,url"`
+	// Avatar 只接受 http/https（http_url）：javascript:/data:/file: 都是合法 URL，
+	// 但不是头像地址。注意这**只约束新输入**——users.avatar 是自由文本列，存量行
+	// 可能有收紧前写入的非 http 协议值，本服务不迁移它；渲染侧（Android）仍须把
+	// 返回的 URL 当不可信输入。
+	Avatar string `json:"avatar" binding:"omitempty,http_url"`
 }
 
 // ModifyPwdRequest 已登录修改密码请求

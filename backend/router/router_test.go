@@ -621,6 +621,173 @@ func TestEnginesIgnoreForwardedFor(t *testing.T) {
 	}
 }
 
+// TestPublicTrustsLoopbackProxyHeaders 回环代理（Nginx）传给公开表面的代理头要采信。
+//
+// 外部直连仍取对端地址（TestEnginesIgnoreForwardedFor），只有对端是
+// 127.0.0.1/::1 的反代请求才允许改写客户端 IP。少了这条，Nginx 后面的审计 IP
+// 会全部退化成 127.0.0.1，请求日志里的来源地址失去区分度。
+//
+// IPv4 与 IPv6 回环、X-Forwarded-For 与 X-Real-IP 两个头都要各自钉住：信任列表里
+// 删掉 "::1" 或换掉其中一个头名，都必须有用例变红（ADR-0027）。
+func TestPublicTrustsLoopbackProxyHeaders(t *testing.T) {
+	td := newTableDeps(t)
+	engine := Public(td.deps)
+	engine.GET("/test-client-ip", func(c *gin.Context) {
+		c.String(http.StatusOK, c.ClientIP())
+	})
+
+	for _, tc := range []struct {
+		name       string
+		remoteAddr string
+		header     string
+	}{
+		{"回环IPv4 + XFF", "127.0.0.1:1234", "X-Forwarded-For"},
+		{"回环IPv6 + XFF", "[::1]:1234", "X-Forwarded-For"},
+		{"回环IPv4 + X-Real-IP", "127.0.0.1:1234", "X-Real-IP"},
+		{"回环IPv6 + X-Real-IP", "[::1]:1234", "X-Real-IP"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/test-client-ip", nil)
+			req.RemoteAddr = tc.remoteAddr
+			req.Header.Set(tc.header, "203.0.113.9")
+			w := httptest.NewRecorder()
+			engine.ServeHTTP(w, req)
+
+			if got := w.Body.String(); got != "203.0.113.9" {
+				t.Fatalf("ClientIP() = %q, want 回环代理传来的 203.0.113.9", got)
+			}
+		})
+	}
+}
+
+// TestAdminIgnoresLoopbackProxyHeaders 后台表面没有反向代理，回环连接也不得采信代理头。
+//
+// 后台远程管理走 SSH 隧道，隧道连接的对端就是 127.0.0.1；若后台也信任回环代理头，
+// 隧道用户就能轮换 X-Forwarded-For 绕过按 IP 的登录锁定分桶（ADR-0010）。
+func TestAdminIgnoresLoopbackProxyHeaders(t *testing.T) {
+	td := newTableDeps(t)
+	engine := newAdminEngine(td)
+	engine.GET("/test-client-ip", func(c *gin.Context) {
+		c.String(http.StatusOK, c.ClientIP())
+	})
+
+	for _, tc := range []struct {
+		remoteAddr string
+		want       string
+	}{
+		{"127.0.0.1:1234", "127.0.0.1"},
+		{"[::1]:1234", "::1"},
+	} {
+		t.Run(tc.remoteAddr, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/test-client-ip", nil)
+			req.RemoteAddr = tc.remoteAddr
+			req.Header.Set("X-Forwarded-For", "203.0.113.9")
+			req.Header.Set("X-Real-IP", "203.0.113.9")
+			w := httptest.NewRecorder()
+			engine.ServeHTTP(w, req)
+
+			if got := w.Body.String(); got != tc.want {
+				t.Fatalf("ClientIP() = %q, want 对端地址 %s（后台不应采信代理头）", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestPublicBodyLimitWired BodyLimit 必须真的挂在公开表面的 /api 组上。
+//
+// 中间件单测只证明它自己正确；挂载点消失时全仓没有一条用例会红，而「应用层
+// 兜底闸」恰好是 ADR-0027 里承诺给「Nginx 配置漏了」那两种情况用的。
+func TestPublicBodyLimitWired(t *testing.T) {
+	td := newTableDeps(t)
+	engine := Public(td.deps)
+
+	t.Run("普通JSON超限被拒", func(t *testing.T) {
+		body := strings.NewReader(`{"email":"` + strings.Repeat("a", maxJSONBodyBytes) + `"}`)
+		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", body)
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, req)
+
+		if got := w.Body.String(); !strings.Contains(got, "请求体过大") {
+			t.Fatalf("超限报文未被 BodyLimit 拒绝: %s", truncate(got))
+		}
+	})
+
+	t.Run("恰好等于上限不算超限", func(t *testing.T) {
+		// 256 KiB 整的合法 JSON：限额必须放行到下游（这里是绑定/凭据失败，
+		// 而不是「请求体过大」）。边界写成 >= 时会在这里现形。
+		pad := strings.Repeat("a", maxJSONBodyBytes-len(`{"email":"","password":""}`))
+		req := httptest.NewRequest(http.MethodPost, "/api/auth/login",
+			strings.NewReader(`{"email":"`+pad+`","password":""}`))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, req)
+
+		if got := w.Body.String(); strings.Contains(got, "请求体过大") {
+			t.Fatalf("恰好等于上限的报文被误拒: %s", truncate(got))
+		}
+	})
+
+	t.Run("头像上传路径走大额度档", func(t *testing.T) {
+		// 300 KiB（>256 KiB 默认档，<6 MiB 覆盖档）且未带 token：
+		// 命中的必须是鉴权而不是「请求体过大」。路径字面量与路由登记若漂移
+		// （覆盖表匹配不到实际登记的路径），这里会先红。
+		body := strings.NewReader(`{"avatar":"` + strings.Repeat("a", 300<<10) + `"}`)
+		req := httptest.NewRequest(http.MethodPost, avatarUploadPath, body)
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, req)
+
+		if got := w.Body.String(); strings.Contains(got, "请求体过大") {
+			t.Fatalf("头像上传被默认档误伤: %s", truncate(got))
+		}
+	})
+}
+
+// TestAdminBodyLimitWired 后台表面同样必须有请求体上限（无 Nginx 在前，
+// 登录在鉴权之前，见 AdminConsole 注释）。
+func TestAdminBodyLimitWired(t *testing.T) {
+	td := newTableDeps(t)
+	engine := newAdminEngine(td)
+
+	body := strings.NewReader(`{"username":"` + strings.Repeat("a", maxJSONBodyBytes) + `"}`)
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/login", body)
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+
+	if got := w.Body.String(); !strings.Contains(got, "请求体过大") {
+		t.Fatalf("后台超限报文未被拒绝: %s", truncate(got))
+	}
+}
+
+// TestAvatarRouteMatchesBodyLimitConstant 头像上传的实际登记路径必须等于
+// BodyLimit 覆盖表用的 avatarUploadPath。
+//
+// 二者一个由 api.Group("/uploads")+POST("/avatar") 拼出、一个由 upload.AvatarURLPrefix
+// 派生；任一侧改动都可能让上传静默落回 256 KiB 档而测试仍绿。这条把它们钉成同一值。
+func TestAvatarRouteMatchesBodyLimitConstant(t *testing.T) {
+	td := newTableDeps(t)
+	engine := Public(td.deps)
+
+	want := http.MethodPost + " " + avatarUploadPath
+	found := false
+	for _, ri := range engine.Routes() {
+		if ri.Method+" "+ri.Path == want {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("路由表中找不到 %s（avatarUploadPath 与实际登记路径漂移了）", want)
+	}
+}
+
+// truncate 把可能到 MB 级的响应体剪短再进断言消息，失败输出保持可读。
+func truncate(s string) string {
+	if len(s) > 200 {
+		return s[:200] + "…"
+	}
+	return s
+}
+
 // TestRequestIDWired 两个表面都必须装 RequestID。
 //
 // 关联 id 由 middleware.RequestID 写入响应头与 gin context，Logger 的 request_id

@@ -13,7 +13,7 @@
 | 0007 | repository 接口由消费方定义，测试替身用 SQLite :memory: | accepted | repository 接口由消费方定义，测试替身用 SQLite :memory: |
 | 0008 | 发码编排收拢进验证码发送纵深模块 | accepted | 验证码的发送与校验收拢进纵深模块 |
 | 0009 | 前后端 monorepo 重组 | accepted；部分被 0024 取代（desktop 成员撤销） | backend/frontend 单仓分层 |
-| 0010 | 后台管理系统网络隔离与登录限流 | accepted | 后台独立引擎与 JWT，默认仅回环监听并限流 |
+| 0010 | 后台管理系统网络隔离与登录限流 | accepted；公开 API 监听与代理头部分被 0027 取代 | 后台独立引擎与 JWT，默认仅回环监听并限流 |
 | 0011 | 评论章节归属与头像文件上传 | accepted；§1 聚合键与空键语义被 0014 取代 | 章节评论归属与头像文件生命周期 |
 | 0012 | 桌面管理应用：Go 后端 sidecar 复用 | superseded by 0024 | Electron 以 sidecar 复用 Go 后端，主进程持有管理凭据 |
 | 0013 | 评论聚合键迁移、多键并集查询与后台管理面扩展 | accepted；§1、§2 被 0014 取代 | 评论聚合键迁移、多键并集查询与后台管理面 |
@@ -30,3 +30,4 @@
 | 0024 | 后台收敛为内嵌 web 唯一表面 | accepted | 删除桌面端与 sidecar，web 后台补位数据管理 |
 | 0025 | 测试库与生产同走版本化迁移 | accepted | 测试库建表走 Migrate，AutoMigrate 退出测试建表 |
 | 0026 | 前端编译器档位与门禁收成一条 make gates | accepted | 开高摩擦标志、建类型感知 lint、补 CI 跑 make gates |
+| 0027 | 公开 API 默认只监听回环，代理头只信任回环 | accepted | 默认 127.0.0.1 监听；仅回环代理头可信；Nginx 终止 TLS |

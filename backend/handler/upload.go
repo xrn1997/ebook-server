@@ -38,7 +38,7 @@ func (h *UploadHandler) UploadAvatar(c *gin.Context) {
 
 	// 限制请求体大小：超限时 FormFile 会返回 "request body too large"，
 	// 防止恶意超大 multipart 占用内存/磁盘（5MB 上限 + 1MB multipart 开销余量）
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, upload.MaxAvatarBytes+(1<<20))
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, upload.MaxAvatarBodyBytes)
 
 	file, err := c.FormFile("avatar")
 	if err != nil {

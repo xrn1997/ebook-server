@@ -116,7 +116,7 @@ func unsetEnv(t *testing.T, keys ...string) {
 //
 // 复现的是常见配置形态：config.yaml 显式写 secret: ""，而 viper 里
 // 「配置文件中的显式值」优先于 SetDefault，默认值兜不住空串。空 HMAC 密钥意味着
-// 任何客户端都能自行签发任意 uid 的 access token，而公开 API 绑在 0.0.0.0。
+// 任何客户端都能自行签发任意 uid 的 access token，而公开 API 仍会接受这些令牌。
 func TestLoadRejectsEmptyJWTSecret(t *testing.T) {
 	unsetEnv(t, "JWT_SECRET", "ADMIN_JWT_SECRET")
 
@@ -291,6 +291,48 @@ admin:
 	if cfg.Admin.ListenAddr != "127.0.0.1" {
 		t.Fatalf("admin.listen_addr = %q, want 127.0.0.1", cfg.Admin.ListenAddr)
 	}
+}
+
+// TestLoadServerListenAddrContract 公开 API 监听地址的三条契约（ADR-0027）：
+// 未配置 → 回环默认；SERVER_LISTEN_ADDR 环境变量 → 覆盖生效；
+// YAML 显式空值 → normalize 收敛回环，绝不把 "" 交给 net.JoinHostPort 变成「所有网卡」。
+//
+// schema_test 只测了 normalize/规则表这两层；注册表漏填 Env 或未登记键时，
+// 环境变量覆盖会**静默不生效**——只有走一遍真 Load 才能抓到。
+func TestLoadServerListenAddrContract(t *testing.T) {
+	unsetEnv(t, "JWT_SECRET", "ADMIN_JWT_SECRET", "SERVER_LISTEN_ADDR", "SERVER_MODE")
+	const base = "server:\n  port: 9090\n  mode: test\njwt:\n  secret: s\nadmin:\n  jwt_secret: a\n"
+
+	t.Run("未配置落回环", func(t *testing.T) {
+		cfg, err := Load(writeTempYaml(t, base))
+		if err != nil {
+			t.Fatalf("Load 失败: %v", err)
+		}
+		if cfg.Server.ListenAddr != "127.0.0.1" {
+			t.Fatalf("server.listen_addr = %q, want 127.0.0.1", cfg.Server.ListenAddr)
+		}
+	})
+
+	t.Run("环境变量覆盖", func(t *testing.T) {
+		t.Setenv("SERVER_LISTEN_ADDR", "0.0.0.0")
+		cfg, err := Load(writeTempYaml(t, base))
+		if err != nil {
+			t.Fatalf("Load 失败: %v", err)
+		}
+		if cfg.Server.ListenAddr != "0.0.0.0" {
+			t.Fatalf("SERVER_LISTEN_ADDR 未生效: got %q, want 0.0.0.0", cfg.Server.ListenAddr)
+		}
+	})
+
+	t.Run("显式空值收敛回环", func(t *testing.T) {
+		cfg, err := Load(writeTempYaml(t, "server:\n  port: 9090\n  mode: test\n  listen_addr: \"\"\njwt:\n  secret: s\nadmin:\n  jwt_secret: a\n"))
+		if err != nil {
+			t.Fatalf("Load 失败: %v", err)
+		}
+		if cfg.Server.ListenAddr != "127.0.0.1" {
+			t.Fatalf("显式空 listen_addr = %q, want 127.0.0.1（空串绑全部网卡）", cfg.Server.ListenAddr)
+		}
+	})
 }
 
 // TestLoadRejectsBuiltInSecretsInRelease 生产模式不得用仓库里可读的默认密钥。

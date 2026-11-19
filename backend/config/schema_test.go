@@ -49,6 +49,8 @@ func TestValidationRulesRejectInvalidValues(t *testing.T) {
 	}{
 		{"端口越界", &Config{Server: ServerConfig{Port: 70000}}, "server.port"},
 		{"运行模式非法", &Config{Server: ServerConfig{Mode: "prod"}}, "server.mode"},
+		{"公开监听主机名", &Config{Server: ServerConfig{ListenAddr: "my-host.local"}}, "server.listen_addr"},
+		{"公开监听星号", &Config{Server: ServerConfig{ListenAddr: "*"}}, "server.listen_addr"},
 		{"用户 token 有效期为零", &Config{JWT: JWTConfig{ExpireMin: 0}}, "jwt.expire_min"},
 		{"后台 token 有效期越界", &Config{Admin: AdminConfig{ExpireMin: 700000}}, "admin.expire_min"},
 		{"后台端口越界", &Config{Admin: AdminConfig{ListenPort: 0}}, "admin.listen_port"},
@@ -71,6 +73,20 @@ func TestValidationRulesRejectInvalidValues(t *testing.T) {
 				t.Fatalf("validate() = %v, want contains %q", err, c.want)
 			}
 		})
+	}
+}
+
+// TestServerListenAddrDefaultsToLoopback 显式空值与未配置都落到回环，而不是所有网卡。
+//
+// 这是安全默认本身：`server.listen_addr: ""` 若原样交给 net.JoinHostPort 会得到
+// `:9090`，等于监听 0.0.0.0；normalize 必须把它收敛成回环。
+func TestServerListenAddrDefaultsToLoopback(t *testing.T) {
+	for _, raw := range []string{"", "  "} {
+		cfg := &Config{Server: ServerConfig{ListenAddr: raw}}
+		cfg.normalize()
+		if cfg.Server.ListenAddr != "127.0.0.1" {
+			t.Errorf("ListenAddr(%q) = %q, want 127.0.0.1", raw, cfg.Server.ListenAddr)
+		}
 	}
 }
 

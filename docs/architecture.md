@@ -8,18 +8,19 @@
 
 ```
                  ┌─────────────────────────────────────────┐
-  Android 客户端 │ 公开 API  0.0.0.0:<server.port>         │
+  Android 客户端 │ Nginx 443（TLS 终止、边缘限流）          │
                  └──────────────┬──────────────────────────┘
-                                │
-                                │  Go 后端（单进程）
+                                │ HTTP 127.0.0.1:<server.port>
                                 │
                  ┌──────────────┴──────────────────────────┐
-                 │ 后台 API 127.0.0.1:<admin.listen_port>  │
-                 │ 内嵌后台前端 /admin                     │
+                 │  公开 API 127.0.0.1:<server.port>        │
+                 │  后台 API 127.0.0.1:<admin.listen_port>  │
+                 │  内嵌后台前端 /admin                     │
                  └─────────────────────────────────────────┘
 ```
 
-- 公开 API 与后台 API 是两个独立 Gin 引擎、两个监听地址；后台默认只监听回环地址（ADR-0010）。
+- 公开 API 与后台 API 是两个独立 Gin 引擎、两个监听地址；两者默认都只监听回环地址
+  （ADR-0010、ADR-0027）。公网入口是 Nginx，应用端口不直接暴露。
 - 后台前端源码在 `frontend/`，构建产物镜象进 `backend/internal/admin/web` 并由 go:embed 进二进制；运行时不另起前端服务。
 
 ## 2. 依赖方向
@@ -47,7 +48,7 @@ handler → service → repository → model
 | 响应信封、业务码、端点级覆盖 | `backend/pkg/errcode` + `model.SuccessCode` + ADR-0001/0006 | 错误文案的 UI 呈现 |
 | 配置字段、默认值、环境变量覆盖、校验规则 | `backend/config/config.go` 的 `mapstructure` 标签 + `backend/config/schema.go` + ADR-0016 | 运行时环境探测 |
 | 请求作用域取消与超时 | `backend/service/ports.go` 的 ctx 签名 + `backend/repository` 的 `WithContext` + ADR-0022 | 外部没有取消路径的 helper（SMTP/文件删除） |
-| SQLite 连接参数（WAL/busy_timeout/foreign_keys） | `backend/pkg/database` 的 `dsnOf` + `database_test.go` | 业务查询 |
+| SQLite 连接参数与 GORM 日志档位（WAL/busy_timeout/foreign_keys；debug/非 debug SQL 日志） | `backend/pkg/database` 的 `dsnOf`/`NewLogger` + `database_test.go`/`logger_test.go` | 业务查询 |
 | schema 版本与迁移 | `backend/migrations` + `backend/pkg/database` 的 `Migrate` + ADR-0023/0025 | 字段的业务语义 |
 | 请求关联 id | `backend/middleware/requestid.go` + Logger | 业务身份 |
 | 请求取值：分页/数字 ID 边界与 Authorization Bearer 头形状 | `backend/pkg/httpx` 的 `Page`/`PathUint`/`QueryUint`/`BearerToken` | 两个表面各自的失败码（A0230 / A0403）与业务判据 |
@@ -66,9 +67,13 @@ handler → service → repository → model
 - 业务端点 HTTP 恒为 200，成败由 `{code,error,data}` 信封表述；请求绑定/校验失败是唯一例外出口 `errcode.RespondBindError`。
 - 需要登录的路由一律挂在路由组上，不逐路 inline；新路由必须登记进路由表测试。
 - 审计只挂 `/api` 组；`/admin*` 与 `/health` 不是任何人的操作，不入库。
-- 两个引擎都不信任客户端代理头（`SetTrustedProxies(nil)`）；审计 IP 与后台登录限流只认连接对端地址。
+- 公开引擎只信任回环代理（`SetTrustedProxies([]string{"127.0.0.1", "::1"})`，ADR-0027）：
+  Nginx 转来的 `X-Forwarded-For` 才被采信，外部直连仍取连接对端地址。后台引擎不信任
+  任何代理头（`SetTrustedProxies(nil)`）：SSH 隧道对端即回环，代理头不得改变登录限流分桶。
+- 请求体在应用层有上限（`middleware.BodyLimit`）：`/api` 与后台统一 256 KiB，头像上传
+  单独放宽到 5 MiB 文件 + multipart 余量（ADR-0027）。
 - 后台使用独立 JWT；管理员凭据只来自部署配置，页面仅持有短期管理 token。
-- 配置的显式空值优先于默认值；`config.Load` 拒绝空密钥、非法端口、非法运行模式/有效期与通配后台监听。
+- 配置的显式空值优先于默认值；`config.Load` 拒绝空密钥、非法端口、非法运行模式/有效期、非法监听地址与通配后台监听。
 - service/repository 的请求作用域方法第一参数是 `context.Context`；handler 传 `c.Request.Context()`，repository 使用 `WithContext`。
 - 建表与结构变更走 `backend/migrations` 的版本化迁移；新增 schema 变更必须加迁移文件——生产与测试库同一条路径。
 - Logger 中间件不读取 request body；请求关联 id 由 `RequestID` 中间件写入响应头与上下文。

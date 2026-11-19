@@ -22,11 +22,12 @@ Go 后端 + 内嵌 web 后台；公开 API 与后台 API 是两个独立监听�
 - 依赖方向 `handler → service → repository → model`；gorm 类型不出 repository；装配只在 `backend/main.go`。
 - 路由表住 `backend/router/router.go`；新路由必须登记并过 `backend/router/router_test.go`；需要登录的路由挂在路由组上。
 - 响应信封与业务码只走 `backend/pkg/errcode`；成功码常量是 `model.SuccessCode`（数据层比较用），errcode 以别名引用。绑定/校验错误只走 `errcode.RespondBindError`；未登记错误不回原始文案，只写日志。
-- 配置字段写在 `backend/config/config.go` 的 `mapstructure` 标签里；默认值、环境变量覆盖与校验规则只住 `backend/config/schema.go`；`config.Load` 拒绝空密钥、非法端口、非法运行模式/有效期与通配后台监听。
+- 配置字段写在 `backend/config/config.go` 的 `mapstructure` 标签里；默认值、环境变量覆盖与校验规则只住 `backend/config/schema.go`；`config.Load` 拒绝空密钥、非法端口、非法运行模式/有效期、非法监听地址与通配后台监听。
 - 评论聚合键 `comment_key` 服务端只存不解释；创建评论缺键回 `A0400`；`chapter_url`/`book_name` 只作兼容/展示。作者删与后台治理删共用 `CommentService.Delete(id, scope)`，以 `RowsAffected` 为成功判据。
 - 账号注销是**匿名化**而非删除：清空可识别信息、不设 `DeletedAt`，公开内容保留；导出副本在清空前构建。
 - 操作审计只挂 `/api` 组；`/admin*` 与 `/health` 不入库；跨用户审计读取只在后台 `/admin/api/logs`。
 - 后台是独立 Gin 引擎 + 独立 JWT，默认只监听 `127.0.0.1`；远程管理走 SSH 隧道/VPN。
+- 公开 API 默认只监听 `127.0.0.1`（`server.listen_addr`），公网入口由 Nginx 终止 TLS；公开引擎的代理头只信任 `127.0.0.1`/`::1`，Nginx 必须覆写 `X-Forwarded-For`；后台引擎不信任代理头（ADR-0027）。
 - 管理员凭据不进前端；后台 token 存浏览器 `localStorage`，只用于同源 `/admin/api` 调用，鉴权失败立即清除并回登录页。
 - 头像文件与资料列同生命周期；换头像删旧文件前按文件名确认没有其他账号引用；注销时尽力删除。
 - service/repository 的请求作用域方法第一参数是 `context.Context`；handler 传 `c.Request.Context()`，repository 使用 `WithContext`。

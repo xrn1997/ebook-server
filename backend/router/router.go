@@ -20,6 +20,23 @@ import (
 	ginSwagger "github.com/swaggo/gin-swagger"
 )
 
+// 请求体上限的两档（middleware.BodyLimit 的额度来源）：
+//   - 普通 JSON：最大的正常报文是 1000 字评论（UTF-8 下约 3 KiB）加少量字段名，
+//     256 KiB 留了足够余量，也远低于会威胁内存的量级；
+//   - 头像上传：5 MiB 文件 + multipart 开销，单独放宽 1 MiB 余量。
+const (
+	maxJSONBodyBytes = 256 << 10
+	// 头像档直接取 upload 包的单一来源，与 handler 内的 MaxBytesReader 同值。
+	maxAvatarBodyBytes = upload.MaxAvatarBodyBytes
+)
+
+// avatarUploadPath 是头像上传端点的完整路径（/api/uploads/avatar），供 BodyLimit
+// 的覆盖表使用。它由 upload.AvatarURLPrefix 派生，但路由登记是 api.Group("/uploads")
+// 加 POST("/avatar") 拼出来的——两侧任一处漂移，上传都会静默降回 256 KiB 档，
+// 客户端表现为「稍大的图片莫名失败」。因此路由测试把覆盖表路径与实际登记路径
+// 钉成同一值（TestAvatarRouteMatchesBodyLimitConstant）。
+const avatarUploadPath = "/api" + upload.AvatarURLPrefix
+
 // Handlers 公开表面上挂的处理器集合。
 type Handlers struct {
 	Auth    *handler.AuthHandler
@@ -51,15 +68,34 @@ type AdminDeps struct {
 	Handler *admin.Handler
 }
 
-// newEngine 创建两个表面共用的 Gin 引擎，并关掉代理头信任。
+// newEngine 创建一个 Gin 引擎；trustLoopbackProxy 决定是否采信回环代理的转发头。
 //
-// 服务直接暴露，没有受控反向代理：Gin 默认信任任意来源的 X-Forwarded-For，
-// 任何人都能把审计里的 IP 改成别的值，也能让后台登录限流按伪造 IP 分桶
-// （ADR-0010 的限流因此形同虚设）。SetTrustedProxies(nil) 让 ClientIP 始终取
-// 连接的对端地址。
-func newEngine() *gin.Engine {
+// 公开表面在 Nginx 后面：Nginx 终止 TLS 后把真实客户端 IP 写进 X-Forwarded-For，
+// 应用端口只绑回环。因此公开引擎只信任 127.0.0.1 / ::1：
+//   - Nginx 转来的请求（对端是回环）采信 X-Forwarded-For，审计与请求日志拿到真实 IP；
+//   - 外部直连（对端不是回环）仍取连接对端地址，客户端无法伪造 X-Forwarded-For；
+//   - 若应用被错误地绑到 0.0.0.0，公网直连同样伪造不了代理头。
+//
+// 后台表面没有反向代理：远程管理走 SSH 隧道，隧道连接的对端就是回环。若这里也采信
+// 回环代理头，隧道用户就能轮换 X-Forwarded-For 绕过按 IP 的登录锁定分桶（ADR-0010）。
+// 因此后台传 false，ClientIP 始终取连接对端地址。
+//
+// 不信任任意来源是底线：Gin 默认信任所有代理，任何人都能把审计里的 IP 改成别的值。
+func newEngine(trustLoopbackProxy bool) *gin.Engine {
 	r := gin.New()
-	_ = r.SetTrustedProxies(nil)
+	if !trustLoopbackProxy {
+		// nil 让 ClientIP 始终取连接对端地址；后台没有代理，不需要转发头。
+		if err := r.SetTrustedProxies(nil); err != nil {
+			panic("router: 关闭受信任代理失败: " + err.Error())
+		}
+		return r
+	}
+	// 回环列表在编译期就是合法字面量；SetTrustedProxies 仍返回 error，吞掉它会让
+	// 未来改坏列表时静默退化为「不信任任何代理」（Nginx 后的审计 IP 全成 127.0.0.1），
+	// 这里让它启动即失败（装配期 panic，符合「不安全配置拒绝启动」的既有口径）。
+	if err := r.SetTrustedProxies([]string{"127.0.0.1", "::1"}); err != nil {
+		panic("router: 受信任代理列表非法: " + err.Error())
+	}
 	return r
 }
 
@@ -93,7 +129,7 @@ func base(withCORS bool) []gin.HandlerFunc {
 // 鉴权一律挂在**路由组**上，不逐路 inline——同一张表里两种挂法并存时，
 // 新加一路很容易跟着错的那份写，且没有用例能发现它裸奔。
 func Public(d Deps) *gin.Engine {
-	r := newEngine()
+	r := newEngine(true)
 	r.Use(base(true)...)
 
 	r.GET("/health", func(c *gin.Context) {
@@ -119,6 +155,9 @@ func Public(d Deps) *gin.Engine {
 		// 引擎级 Recovery 仍保留给其余表面；/api 的 panic 由这一层先接住。
 		api.Use(middleware.Recovery())
 	}
+	// 请求体上限是 Nginx client_max_body_size 之外的第二道闸：JSON 端点 256 KiB
+	// 足够容纳密码/验证码/1000 字评论，头像单独放宽到 5 MiB + multipart 余量。
+	api.Use(middleware.BodyLimit(maxJSONBodyBytes, map[string]int64{avatarUploadPath: maxAvatarBodyBytes}))
 
 	auth := api.Group("/auth")
 	{
@@ -180,10 +219,14 @@ func Public(d Deps) *gin.Engine {
 // OperationLog（后台自身流量刻意不入审计库；判定规则在 service.LogService.Record，
 // 见 ADR-0018）。
 func AdminConsole(d AdminDeps) *gin.Engine {
-	r := newEngine()
+	r := newEngine(false)
 	r.Use(base(false)...)
 
 	adm := r.Group("/admin")
+	// 后台没有 Nginx 在前面，且 admin.listen_addr 允许改成内网 IP（ADR-0010）：
+	// 未认证的 /admin/api/login 直连 ShouldBindJSON，不设上限时一个超大 JSON
+	// 就能在未登录状态下打内存。后台没有上传端点，统一 JSON 档即可。
+	adm.Use(middleware.BodyLimit(maxJSONBodyBytes, nil))
 	{
 		adm.POST("/api/login", d.Handler.Login)
 

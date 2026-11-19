@@ -80,6 +80,7 @@ func run(cfg *config.Config) error {
 	if err != nil {
 		log.Fatalf("Failed to open database: %v", err)
 	}
+	db.Logger = database.NewLogger(cfg.Server.Mode == config.ModeDebug, os.Stdout)
 
 	// 版本化迁移（ADR-0023）：新库执行 SQL 基线；AutoMigrate 时代的旧库先收养再标记基线。
 	// 模型清单自持在 database.Migrate 内部，装配点不再抄一份字面量。
@@ -122,7 +123,7 @@ func run(cfg *config.Config) error {
 	commentService := service.NewCommentService(commentRepo)
 	logService := service.NewLogService(logRepo)
 
-	// 公开 API（监听 0.0.0.0:<server.port>）
+	// 公开 API（监听 server.listen_addr:<server.port>，默认 127.0.0.1；公网入口是 Nginx）
 	engine := router.Public(router.Deps{
 		Handlers: router.Handlers{
 			Auth:    handler.NewAuthHandler(authService),
@@ -148,11 +149,11 @@ func run(cfg *config.Config) error {
 	// 刻意不用 r.Run()：它内部自建 http.Server 且不暴露出去，于是收不到停止信号时
 	// 只能被直接终止——在途请求丢失、SQLite 只能靠自身日志文件兜底恢复。
 	// 要与后台一样能被 Shutdown，就必须自己持有 Server。
-	// 两个 Server 都设 ReadHeaderTimeout：公开监听绑的是 0.0.0.0:<port>，直接把
-	// `:port` 挂到公网时，慢开发送请求头（Slowloris）能让连接池里的槽位无限期悬着。
+	// 两个 Server 都设 ReadHeaderTimeout：应用默认只监听回环，但 Nginx 转发来的
+	// 慢请求头同样会占住连接槽位（Slowloris）；边缘超时是第一道，这里是第二道。
 	// 这里自建 Server 就是为了不把超时交给 r.Run() 的默认值。
 	publicSrv := &http.Server{
-		Addr:              fmt.Sprintf(":%d", cfg.Server.Port),
+		Addr:              net.JoinHostPort(cfg.Server.ListenAddr, strconv.Itoa(cfg.Server.Port)),
 		Handler:           engine,
 		ReadHeaderTimeout: readHeaderTimeout,
 	}

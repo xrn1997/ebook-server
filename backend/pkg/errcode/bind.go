@@ -92,7 +92,7 @@ func bindMessage(fe validator.FieldError, action string) string {
 		return label + "长度必须为 " + fe.Param() + " 字"
 	case "email":
 		return label + "格式不正确"
-	case "url":
+	case "url", "http_url":
 		return label + "不是合法的链接"
 	default:
 		return label + "不符合要求"
