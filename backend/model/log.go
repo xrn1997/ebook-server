@@ -13,7 +13,7 @@ import "time"
 type OperationLog struct {
 	ID uint `json:"id" gorm:"primaryKey"`
 	OperationRecord
-	RequestBody string    `json:"request_body" gorm:"type:text"`
+	RequestBody string `json:"request_body" gorm:"type:text"`
 	// CreatedAt 挂索引：后台日志列表按 created_at DESC 分页（repository/log.go），
 	// operation_logs 是最大的表，没有索引时翻页退化为全表扫描 + 排序。
 	CreatedAt time.Time `json:"created_at" gorm:"index"`
