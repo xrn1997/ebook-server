@@ -4,7 +4,7 @@
 
 ## 环境要求
 
-- Go 1.23 或更高版本（`backend/go.mod` 的 `go` 指令即最低版本）。
+- Go 1.26 或更高版本（`backend/go.mod` 的 `go` 指令即最低版本；`x/crypto v0.57` 要求 `go 1.26.0`）。
 - Node.js `^20.19.0 || ^22.13.0 || >=24` 与 npm（构建/测试 `frontend/` 时需要）。下限来自 ESLint 10；
   没开 `engine-strict`，所以低版本上 `npm ci` 只警告，真正起不来的是 `make frontend-lint`（取舍见 `ADR-0026`）。
 - GNU make（仓库不自带；Windows 上装 MinGW 的 `mingw32-make` 也可，但命令名需自行对应）。

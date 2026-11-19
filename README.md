@@ -7,7 +7,7 @@ Go 后端 + Vue 后台管理前端，构建后前端内嵌进单一可执行文�
 
 ## 技术栈
 
-- **语言**: Go 1.23
+- **语言**: Go 1.26
 - **Web 框架**: Gin
 - **ORM**: GORM + SQLite（glebarez/sqlite，纯 Go 驱动，零配置）
 - **认证**: JWT（用户 token 与后台管理 token 相互隔离）
@@ -28,7 +28,7 @@ Go 后端 + Vue 后台管理前端，构建后前端内嵌进单一可执行文�
 
 ### 环境要求
 
-- Go 1.23+
+- Go 1.26+
 - Node.js `^20.19.0 || ^22.13.0 || >=24`（仅构建或检查后台前端时需要；下限来自 ESLint 10）
 - Windows 构建服务端 exe 时需要 MinGW-w64（提供 `windres`；WinLibs 自带）
 - 无需安装数据库（SQLite 自动创建）
